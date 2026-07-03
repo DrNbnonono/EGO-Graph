@@ -4,13 +4,18 @@ EGO-Graph means Evidence-Guided Orchestration Graph. The system converts an auth
 
 The first delivery slice uses the `web_pentest` overlay and the controlled fixture at `scenarios/web_pentest/basic`. The shared core stays scenario-neutral; overlays provide tools, prompts, report sections, and default targets.
 
+The current agent loop is `plan -> tool_select -> policy_check -> execute -> observe -> update_evidence -> evaluate -> replan/done`. Every step writes append-only trajectory events. The default planner is deterministic for repeatable demos; an optional model-backed planner can be enabled through OpenAI-compatible model environment variables and automatically falls back when unavailable.
+
+Storage uses JSONL as the append-only audit trail and SQLite as the query/index layer for runs,
+events, evidence, artifacts, and reports.
+
 Primary packages:
 
 - `apps/ego-cli`: terminal CLI and Ink TUI.
 - `apps/ego-api`: local Hono API for `ego serve`.
 - `packages/core`: task specs, mission graph, trajectory events, and runner.
+- `packages/llm`: OpenAI-compatible model provider abstraction.
 - `packages/tools`: tool registry and permission policy.
 - `packages/overlays`: scenario overlays.
 - `packages/storage`: trajectory storage.
 - `packages/report`: report generation.
-

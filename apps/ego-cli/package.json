@@ -14,6 +14,7 @@
   "dependencies": {
     "@ego-graph/core": "workspace:*",
     "@ego-graph/ego-api": "workspace:*",
+    "@ego-graph/llm": "workspace:*",
     "@ego-graph/overlays": "workspace:*",
     "@ego-graph/report": "workspace:*",
     "@ego-graph/shared": "workspace:*",

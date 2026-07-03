@@ -26,6 +26,8 @@ describe("ego run", () => {
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("run-cli-001");
       expect(result.stdout).toContain("complete");
+      expect(result.stdout).toContain("Decision Trace");
+      expect(result.stdout).toContain("fixture.attack_surface");
       expect(result.stdout).toContain("Fixture contains an exposed admin hint");
     } finally {
       await rm(egoHome, {recursive: true, force: true});

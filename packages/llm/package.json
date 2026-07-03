@@ -1,5 +1,5 @@
 {
-  "name": "@ego-graph/core",
+  "name": "@ego-graph/llm",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,9 +12,6 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@ego-graph/llm": "workspace:*",
-    "@ego-graph/shared": "workspace:*",
-    "@ego-graph/tools": "workspace:*",
     "zod": "^3.24.1"
   }
 }

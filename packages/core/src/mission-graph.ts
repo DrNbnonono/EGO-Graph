@@ -2,10 +2,17 @@ import type {TaskSpec} from "./task-spec.js";
 
 export type MissionNodeKind =
   | "parse_task"
+  | "goal"
+  | "subgoal"
   | "plan"
+  | "tool_select"
   | "safety_gate"
   | "execute_tools"
+  | "action"
+  | "observation"
+  | "update_evidence"
   | "evaluate"
+  | "verdict"
   | "report";
 
 export type MissionNodeStatus = "pending" | "ready" | "running" | "complete" | "blocked";
@@ -28,10 +35,17 @@ export type MissionGraph = {
 export function createInitialMissionGraph(task: TaskSpec): MissionGraph {
   const kinds: MissionNodeKind[] = [
     "parse_task",
+    "goal",
+    "subgoal",
     "plan",
+    "tool_select",
     "safety_gate",
     "execute_tools",
+    "action",
+    "observation",
+    "update_evidence",
     "evaluate",
+    "verdict",
     "report",
   ];
 
@@ -50,6 +64,22 @@ export function createInitialMissionGraph(task: TaskSpec): MissionGraph {
     id: `graph-${task.id}`,
     taskId: task.id,
     status: "planned",
+    nodes,
+  };
+}
+
+export function updateMissionNodeStatus(
+  graph: MissionGraph,
+  kind: MissionNodeKind,
+  status: MissionNodeStatus,
+): MissionGraph {
+  const nodes = graph.nodes.map((node) => (node.kind === kind ? {...node, status} : node));
+  const hasBlockedNode = nodes.some((node) => node.status === "blocked");
+  const allComplete = nodes.every((node) => node.status === "complete");
+
+  return {
+    ...graph,
+    status: hasBlockedNode ? "blocked" : allComplete ? "complete" : "running",
     nodes,
   };
 }

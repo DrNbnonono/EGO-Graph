@@ -30,6 +30,9 @@ describe("ego replay", () => {
       );
 
       expect(result.stdout).toContain("task.parsed");
+      expect(result.stdout).toContain("decision.made");
+      expect(result.stdout).toContain("decision=use_tool");
+      expect(result.stdout).toContain("findings=Fixture contains an exposed admin hint");
       expect(result.stdout).toContain("run.completed");
     } finally {
       await rm(egoHome, {recursive: true, force: true});

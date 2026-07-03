@@ -1,5 +1,5 @@
 import {describe, expect, it} from "vitest";
-import {createFixtureReadTool, ToolRegistry} from "../src/index.js";
+import {createFixtureAttackSurfaceTool, createFixtureReadTool, ToolRegistry} from "../src/index.js";
 
 describe("ToolRegistry", () => {
   it("registers and retrieves a fixture tool", () => {
@@ -7,8 +7,12 @@ describe("ToolRegistry", () => {
     const tool = createFixtureReadTool();
 
     registry.register(tool);
+    registry.register(createFixtureAttackSurfaceTool());
 
     expect(registry.get("fixture.read").name).toBe("fixture.read");
-    expect(registry.list().map((entry) => entry.name)).toEqual(["fixture.read"]);
+    expect(registry.list().map((entry) => entry.name)).toEqual([
+      "fixture.attack_surface",
+      "fixture.read",
+    ]);
   });
 });
