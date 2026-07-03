@@ -62,6 +62,12 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/tools:
+    dependencies:
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+
 packages:
 
   '@esbuild/aix-ppc64@0.21.5':
