@@ -12,6 +12,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@ego-graph/core": "workspace:*",
+    "@ego-graph/overlays": "workspace:*",
+    "@ego-graph/report": "workspace:*",
+    "@ego-graph/shared": "workspace:*",
+    "@ego-graph/storage": "workspace:*",
     "commander": "^12.1.0"
   },
   "devDependencies": {}

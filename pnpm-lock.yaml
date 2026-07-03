@@ -41,6 +41,21 @@ importers:
 
   apps/ego-cli:
     dependencies:
+      '@ego-graph/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@ego-graph/overlays':
+        specifier: workspace:*
+        version: link:../../packages/overlays
+      '@ego-graph/report':
+        specifier: workspace:*
+        version: link:../../packages/report
+      '@ego-graph/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      '@ego-graph/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
       commander:
         specifier: ^12.1.0
         version: 12.1.0
@@ -50,6 +65,9 @@ importers:
       '@ego-graph/shared':
         specifier: workspace:*
         version: link:../shared
+      '@ego-graph/tools':
+        specifier: workspace:*
+        version: link:../tools
       zod:
         specifier: ^3.24.1
         version: 3.25.76
@@ -65,6 +83,8 @@ importers:
       zod:
         specifier: ^3.24.1
         version: 3.25.76
+
+  packages/report: {}
 
   packages/shared: {}
 

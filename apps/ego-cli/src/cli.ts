@@ -1,4 +1,5 @@
 import {Command} from "commander";
+import {handleRunCommand} from "./commands/run.js";
 
 export function createProgram(): Command {
   const program = new Command();
@@ -11,8 +12,9 @@ export function createProgram(): Command {
     .option("--scenario <name>", "scenario overlay name", "web_pentest")
     .option("--task <text>", "natural-language task")
     .option("--input <path>", "path to a task input file")
-    .action(() => {
-      console.log("ego run is not wired yet");
+    .option("--run-id <id>", "stable run id for tests and replay")
+    .action(async (options) => {
+      await handleRunCommand(options);
     });
 
   program
