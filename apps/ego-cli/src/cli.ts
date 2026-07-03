@@ -4,11 +4,18 @@ import {handleEvalCommand} from "./commands/eval.js";
 import {handleReplayCommand} from "./commands/replay.js";
 import {handleRunCommand} from "./commands/run.js";
 import {handleServeCommand} from "./commands/serve.js";
+import {handleTuiCommand} from "./commands/tui.js";
 
 export function createProgram(): Command {
   const program = new Command();
 
-  program.name("ego").description("EGO-Graph cybersecurity agent").version("0.1.0");
+  program
+    .name("ego")
+    .description("EGO-Graph cybersecurity agent")
+    .version("0.1.0")
+    .action(async () => {
+      await handleTuiCommand();
+    });
 
   program
     .command("run")
