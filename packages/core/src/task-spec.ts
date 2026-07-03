@@ -1,4 +1,4 @@
-import {z} from "zod";
+import { z } from "zod";
 
 export const taskSpecSchema = z.object({
   scenario: z.enum([
@@ -15,7 +15,7 @@ export const taskSpecSchema = z.object({
 export type TaskSpecInput = z.input<typeof taskSpecSchema>;
 export type TaskSpec = z.output<typeof taskSpecSchema> & {
   id: string;
-  allowedScope: {kind: "fixture" | "network" | "file"; values: string[]};
+  allowedScope: { kind: "fixture" | "network" | "file"; values: string[] };
 };
 
 export function parseTaskSpec(input: TaskSpecInput): TaskSpec {
@@ -34,6 +34,6 @@ export function parseTaskSpec(input: TaskSpecInput): TaskSpec {
   return {
     ...parsed.data,
     id: `task-${Buffer.from(`${parsed.data.scenario}:${parsed.data.goal}`).toString("hex").slice(0, 12)}`,
-    allowedScope: {kind: scopeKind, values: parsed.data.targets},
+    allowedScope: { kind: scopeKind, values: parsed.data.targets },
   };
 }

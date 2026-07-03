@@ -1,4 +1,4 @@
-import type {ReportDecision, ReportObservation, ReportPolicyDecision} from "./markdown-report.js";
+import type { ReportDecision, ReportObservation, ReportPolicyDecision } from "./markdown-report.js";
 
 export type ReportTrajectoryEvent = {
   type: string;
@@ -16,7 +16,7 @@ export function extractReportDecisions(events: ReportTrajectoryEvent[]): ReportD
         step: index + 1,
         type: String(decision?.type ?? "unknown"),
         rationale: event.message,
-        ...(typeof toolName === "string" && toolName.length > 0 ? {toolName} : {}),
+        ...(typeof toolName === "string" && toolName.length > 0 ? { toolName } : {}),
       };
     });
 }

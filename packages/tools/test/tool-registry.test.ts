@@ -1,5 +1,9 @@
-import {describe, expect, it} from "vitest";
-import {createFixtureAttackSurfaceTool, createFixtureReadTool, ToolRegistry} from "../src/index.js";
+import { describe, expect, it } from "vitest";
+import {
+  createFixtureAttackSurfaceTool,
+  createFixtureReadTool,
+  ToolRegistry,
+} from "../src/index.js";
 
 describe("ToolRegistry", () => {
   it("registers and retrieves a fixture tool", () => {

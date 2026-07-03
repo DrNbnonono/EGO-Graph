@@ -1,4 +1,4 @@
-import type {TaskSpec} from "./task-spec.js";
+import type { TaskSpec } from "./task-spec.js";
 
 export type MissionNodeKind =
   | "parse_task"
@@ -73,7 +73,7 @@ export function updateMissionNodeStatus(
   kind: MissionNodeKind,
   status: MissionNodeStatus,
 ): MissionGraph {
-  const nodes = graph.nodes.map((node) => (node.kind === kind ? {...node, status} : node));
+  const nodes = graph.nodes.map((node) => (node.kind === kind ? { ...node, status } : node));
   const hasBlockedNode = nodes.some((node) => node.status === "blocked");
   const allComplete = nodes.every((node) => node.status === "complete");
 

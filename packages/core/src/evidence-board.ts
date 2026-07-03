@@ -14,7 +14,7 @@ export type EvidenceBoard = {
 };
 
 export function createEvidenceBoard(items: EvidenceBoardItem[] = []): EvidenceBoard {
-  return {items: dedupeEvidence(items)};
+  return { items: dedupeEvidence(items) };
 }
 
 export function addEvidenceItem(board: EvidenceBoard, item: EvidenceBoardItem): EvidenceBoard {

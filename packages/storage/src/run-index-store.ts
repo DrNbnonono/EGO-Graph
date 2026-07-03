@@ -1,5 +1,5 @@
-import {mkdir, readFile, writeFile} from "node:fs/promises";
-import {join} from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 export type RunIndexRecord = {
   runId: string;
@@ -14,12 +14,11 @@ export class JsonRunIndexStore {
   constructor(private readonly directory: string) {}
 
   async upsert(record: RunIndexRecord): Promise<void> {
-    await mkdir(this.directory, {recursive: true});
+    await mkdir(this.directory, { recursive: true });
     const records = await this.list();
-    const next = [
-      ...records.filter((candidate) => candidate.runId !== record.runId),
-      record,
-    ].sort((a, b) => a.runId.localeCompare(b.runId));
+    const next = [...records.filter((candidate) => candidate.runId !== record.runId), record].sort(
+      (a, b) => a.runId.localeCompare(b.runId),
+    );
     await writeFile(this.path(), `${JSON.stringify(next, null, 2)}\n`, "utf8");
   }
 

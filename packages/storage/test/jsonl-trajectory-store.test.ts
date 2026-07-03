@@ -1,9 +1,9 @@
-import {mkdtemp, readFile, rm} from "node:fs/promises";
-import {tmpdir} from "node:os";
-import {join} from "node:path";
-import {createTrajectoryEvent} from "@ego-graph/core";
-import {describe, expect, it} from "vitest";
-import {JsonlTrajectoryStore} from "../src/jsonl-trajectory-store.js";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createTrajectoryEvent } from "@ego-graph/core";
+import { describe, expect, it } from "vitest";
+import { JsonlTrajectoryStore } from "../src/jsonl-trajectory-store.js";
 
 describe("JsonlTrajectoryStore", () => {
   it("appends and replays trajectory events", async () => {
@@ -22,7 +22,7 @@ describe("JsonlTrajectoryStore", () => {
       expect(events[0]?.type).toBe("task.parsed");
       expect(raw.trim()).toContain("Task parsed");
     } finally {
-      await rm(dir, {recursive: true, force: true});
+      await rm(dir, { recursive: true, force: true });
     }
   });
 });

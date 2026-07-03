@@ -1,5 +1,5 @@
-import type {ZodTypeAny} from "zod";
-import type {ToolDefinition} from "./tool-definition.js";
+import type { ZodTypeAny } from "zod";
+import type { ToolDefinition } from "./tool-definition.js";
 
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDefinition<ZodTypeAny, ZodTypeAny>>();

@@ -1,5 +1,5 @@
-import {execa} from "execa";
-import {describe, expect, it} from "vitest";
+import { execa } from "execa";
+import { describe, expect, it } from "vitest";
 
 describe("ego cli help", () => {
   it("prints the public command surface", async () => {

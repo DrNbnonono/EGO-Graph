@@ -1,9 +1,9 @@
-import {mkdirSync} from "node:fs";
-import {createRequire} from "node:module";
-import {dirname} from "node:path";
-import type {DatabaseSync as DatabaseSyncType} from "node:sqlite";
-import {trajectoryEventSchema, type TrajectoryEvent} from "@ego-graph/core";
-import type {RunIndexRecord} from "./run-index-store.js";
+import { mkdirSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname } from "node:path";
+import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
+import { trajectoryEventSchema, type TrajectoryEvent } from "@ego-graph/core";
+import type { RunIndexRecord } from "./run-index-store.js";
 
 export type SqliteEvidenceRecord = {
   id: number;
@@ -55,13 +55,15 @@ type ReportRow = {
   created_at: string;
 };
 
+type DatabaseSyncConstructor = new (path: string) => DatabaseSyncType;
+
 export class SqliteEgoStore {
   private readonly db: DatabaseSyncType;
 
   constructor(private readonly path: string) {
-    mkdirSync(dirname(path), {recursive: true});
+    mkdirSync(dirname(path), { recursive: true });
     const require = createRequire(import.meta.url);
-    const {DatabaseSync} = require("node:sqlite") as typeof import("node:sqlite");
+    const { DatabaseSync } = require("node:sqlite") as { DatabaseSync: DatabaseSyncConstructor };
     this.db = new DatabaseSync(path);
     this.migrate();
   }
@@ -114,7 +116,7 @@ export class SqliteEgoStore {
   async upsertRun(record: RunIndexRecord): Promise<void> {
     const existing = this.db
       .prepare("select created_at from runs where run_id = ?")
-      .get(record.runId) as {created_at: string} | undefined;
+      .get(record.runId) as { created_at: string } | undefined;
     const createdAt = existing?.created_at ?? record.updatedAt;
 
     this.db
@@ -144,8 +146,7 @@ export class SqliteEgoStore {
 
   async getRun(runId: string): Promise<RunIndexRecord | undefined> {
     const row = this.db.prepare("select * from runs where run_id = ?").get(runId) as
-      | RunRow
-      | undefined;
+      RunRow | undefined;
 
     return row ? runRowToRecord(row) : undefined;
   }
@@ -189,8 +190,7 @@ export class SqliteEgoStore {
 
   async getReport(runId: string): Promise<SqliteReportRecord | undefined> {
     const row = this.db.prepare("select * from reports where run_id = ?").get(runId) as
-      | ReportRow
-      | undefined;
+      ReportRow | undefined;
 
     if (!row) {
       return undefined;
@@ -199,7 +199,7 @@ export class SqliteEgoStore {
     return {
       runId: row.run_id,
       markdown: row.markdown,
-      ...(row.report_path ? {reportPath: row.report_path} : {}),
+      ...(row.report_path ? { reportPath: row.report_path } : {}),
       createdAt: row.created_at,
     };
   }
@@ -284,7 +284,7 @@ function runRowToRecord(row: RunRow): RunIndexRecord {
     scenario: row.scenario,
     status: row.status,
     eventCount: row.event_count,
-    ...(row.report_path ? {reportPath: row.report_path} : {}),
+    ...(row.report_path ? { reportPath: row.report_path } : {}),
     updatedAt: row.updated_at,
   };
 }

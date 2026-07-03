@@ -6,4 +6,3 @@
 4. Highlight the finding and report.
 5. Run `ego replay --trajectory-id demo-run-001`.
 6. Explain that every decision and evidence item is trajectory-backed.
-

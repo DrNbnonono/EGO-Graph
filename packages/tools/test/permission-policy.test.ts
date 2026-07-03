@@ -1,5 +1,5 @@
-import {describe, expect, it} from "vitest";
-import {checkPolicyGate, checkToolPermission, createFixtureReadTool} from "../src/index.js";
+import { describe, expect, it } from "vitest";
+import { checkPolicyGate, checkToolPermission, createFixtureReadTool } from "../src/index.js";
 
 describe("permission policy", () => {
   it("allows fixture tools for fixture scope", () => {
@@ -22,13 +22,13 @@ describe("permission policy", () => {
   });
 
   it("blocks tools that require human approval until approved", () => {
-    const tool = {...createFixtureReadTool(), requiresApproval: true};
+    const tool = { ...createFixtureReadTool(), requiresApproval: true };
     const blocked = checkPolicyGate(tool, {
-      allowedScope: {kind: "fixture", values: ["fixture://web-pentest/basic"]},
+      allowedScope: { kind: "fixture", values: ["fixture://web-pentest/basic"] },
       scenario: "web_pentest",
     });
     const allowed = checkPolicyGate(tool, {
-      allowedScope: {kind: "fixture", values: ["fixture://web-pentest/basic"]},
+      allowedScope: { kind: "fixture", values: ["fixture://web-pentest/basic"] },
       scenario: "web_pentest",
       approvedTools: [tool.name],
     });

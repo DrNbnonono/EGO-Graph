@@ -1,5 +1,5 @@
-import {describe, expect, it} from "vitest";
-import {createServer} from "../src/server.js";
+import { describe, expect, it } from "vitest";
+import { createServer } from "../src/server.js";
 
 describe("ego api server", () => {
   it("responds to health checks", async () => {
@@ -8,15 +8,15 @@ describe("ego api server", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({ok: true, service: "ego-api"});
+    expect(body).toEqual({ ok: true, service: "ego-api" });
   });
 
   it("runs the controlled fixture through the HTTP API", async () => {
     const app = createServer();
     const response = await app.request("/runs", {
       method: "POST",
-      body: JSON.stringify({runId: "api-run-test-001"}),
-      headers: {"content-type": "application/json"},
+      body: JSON.stringify({ runId: "api-run-test-001" }),
+      headers: { "content-type": "application/json" },
     });
     const body = await response.json();
 
@@ -34,8 +34,8 @@ describe("ego api server", () => {
     const app = createServer();
     await app.request("/runs", {
       method: "POST",
-      body: JSON.stringify({runId: "api-run-test-002"}),
-      headers: {"content-type": "application/json"},
+      body: JSON.stringify({ runId: "api-run-test-002" }),
+      headers: { "content-type": "application/json" },
     });
 
     const eventsResponse = await app.request("/runs/api-run-test-002/events");
@@ -47,8 +47,8 @@ describe("ego api server", () => {
     const reportResponse = await app.request("/runs/api-run-test-002/report");
     const streamResponse = await app.request("/runs/api-run-test-002/stream");
 
-    expect(runsBody.runs.map((run: {runId: string}) => run.runId)).toContain("api-run-test-002");
-    expect(eventsBody.events.map((event: {type: string}) => event.type)).toContain(
+    expect(runsBody.runs.map((run: { runId: string }) => run.runId)).toContain("api-run-test-002");
+    expect(eventsBody.events.map((event: { type: string }) => event.type)).toContain(
       "decision.made",
     );
     expect(evidenceBody.evidence[0].summary).toContain("admin hint");

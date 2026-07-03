@@ -1,5 +1,5 @@
-import {describe, expect, it} from "vitest";
-import {isModelConfigured, loadModelConfig} from "../src/index.js";
+import { describe, expect, it } from "vitest";
+import { isModelConfigured, loadModelConfig } from "../src/index.js";
 
 describe("model config", () => {
   it("defaults to deterministic fallback", () => {

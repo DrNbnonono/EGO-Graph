@@ -1,5 +1,5 @@
-import {mkdir, writeFile} from "node:fs/promises";
-import {join} from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import {
   createModelBackedPlanner,
   createTrajectoryEvent,
@@ -8,15 +8,15 @@ import {
   type TaskSpecInput,
   type TrajectoryEvent,
 } from "@ego-graph/core";
-import {createChatModelProvider, loadModelConfig} from "@ego-graph/llm";
-import {loadOverlay} from "@ego-graph/overlays";
+import { createChatModelProvider, loadModelConfig } from "@ego-graph/llm";
+import { loadOverlay } from "@ego-graph/overlays";
 import {
   extractReportDecisions,
   extractReportObservations,
   extractReportPolicyDecisions,
   renderMarkdownReport,
 } from "@ego-graph/report";
-import {isScenarioName} from "@ego-graph/shared";
+import { isScenarioName } from "@ego-graph/shared";
 import {
   CompositeTrajectoryStore,
   defaultEgoHome,
@@ -26,13 +26,13 @@ import {
   SqliteEgoStore,
   trajectoryDir,
 } from "@ego-graph/storage";
-import {Hono} from "hono";
+import { Hono } from "hono";
 
 export function createServer(): Hono {
   const app = new Hono();
 
   app.get("/health", (context) => {
-    return context.json({ok: true, service: "ego-api"});
+    return context.json({ ok: true, service: "ego-api" });
   });
 
   app.post("/runs", async (context) => {
@@ -44,7 +44,7 @@ export function createServer(): Hono {
     const scenario = body.scenario ?? body.task?.scenario ?? "web_pentest";
 
     if (!isScenarioName(scenario)) {
-      return context.json({ok: false, error: `Unknown scenario: ${scenario}`}, 400);
+      return context.json({ ok: false, error: `Unknown scenario: ${scenario}` }, 400);
     }
 
     const overlay = loadOverlay(scenario);
@@ -68,7 +68,7 @@ export function createServer(): Hono {
       overlay,
       trajectoryStore: store,
       runId,
-      ...(planner ? {planner} : {}),
+      ...(planner ? { planner } : {}),
     });
     const report = renderMarkdownReport({
       runId: result.runId,
@@ -82,11 +82,11 @@ export function createServer(): Hono {
       policyDecisions: extractReportPolicyDecisions(result.events),
     });
     const reports = reportDir(egoHome);
-    await mkdir(reports, {recursive: true});
+    await mkdir(reports, { recursive: true });
     const reportPath = join(reports, `${result.runId}.md`);
     await writeFile(reportPath, report, "utf8");
     await store.append(
-      createTrajectoryEvent(result.runId, "report.created", "Report written", {reportPath}),
+      createTrajectoryEvent(result.runId, "report.created", "Report written", { reportPath }),
     );
     await sqliteStore.saveReport({
       runId: result.runId,
@@ -119,7 +119,7 @@ export function createServer(): Hono {
     const sqliteStore = new SqliteEgoStore(sqlitePath(defaultEgoHome()));
     const runs = await sqliteStore.listRuns();
 
-    return context.json({ok: true, runs});
+    return context.json({ ok: true, runs });
   });
 
   app.get("/runs/:id", async (context) => {
@@ -128,7 +128,7 @@ export function createServer(): Hono {
     const sqliteStore = new SqliteEgoStore(sqlitePath(egoHome));
     const indexed = await sqliteStore.getRun(runId);
     if (indexed) {
-      return context.json({ok: true, ...indexed});
+      return context.json({ ok: true, ...indexed });
     }
     const store = new JsonlTrajectoryStore(trajectoryDir(egoHome));
     const events = await store.readRun(runId);
@@ -149,7 +149,7 @@ export function createServer(): Hono {
     const runId = context.req.param("id");
     const events = await readEvents(runId);
 
-    return context.json({ok: true, runId, events});
+    return context.json({ ok: true, runId, events });
   });
 
   app.get("/runs/:id/evidence", async (context) => {
@@ -157,7 +157,7 @@ export function createServer(): Hono {
     const sqliteStore = new SqliteEgoStore(sqlitePath(defaultEgoHome()));
     const evidence = await sqliteStore.listEvidence(runId);
 
-    return context.json({ok: true, runId, evidence});
+    return context.json({ ok: true, runId, evidence });
   });
 
   app.get("/runs/:id/report", async (context) => {
@@ -173,8 +173,7 @@ export function createServer(): Hono {
     const store = new JsonlTrajectoryStore(trajectoryDir(egoHome));
     const events = await store.readRun(runId);
     const parsed = events.find((event) => event.type === "task.parsed")?.data.task as
-      | TaskSpecInput
-      | undefined;
+      TaskSpecInput | undefined;
     const evidence = events
       .filter((event) => event.type === "evidence.created")
       .map((event) => ({
@@ -187,14 +186,14 @@ export function createServer(): Hono {
       scenario: parsed?.scenario ?? "unknown",
       goal: parsed?.goal ?? "Unknown goal",
       status,
-      ...(parsed?.targets ? {scope: parsed.targets} : {}),
+      ...(parsed?.targets ? { scope: parsed.targets } : {}),
       evidence,
       decisions: extractReportDecisions(events),
       observations: extractReportObservations(events),
       policyDecisions: extractReportPolicyDecisions(events),
     });
 
-    return context.text(report, 200, {"content-type": "text/markdown; charset=utf-8"});
+    return context.text(report, 200, { "content-type": "text/markdown; charset=utf-8" });
   });
 
   app.get("/runs/:id/stream", async (context) => {

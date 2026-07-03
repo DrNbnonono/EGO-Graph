@@ -1,5 +1,5 @@
-import {readFile} from "node:fs/promises";
-import {handleRunCommand} from "./run.js";
+import { readFile } from "node:fs/promises";
+import { handleRunCommand } from "./run.js";
 
 type EvalCase = {
   id: string;
@@ -8,7 +8,7 @@ type EvalCase = {
   expectedFinding: string;
 };
 
-export async function handleEvalCommand(options: {dataset: string}): Promise<void> {
+export async function handleEvalCommand(options: { dataset: string }): Promise<void> {
   const raw = await readFile(options.dataset, "utf8");
   const cases = raw
     .split(/\r?\n/)

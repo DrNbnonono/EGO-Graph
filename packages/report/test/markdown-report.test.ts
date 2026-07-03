@@ -1,5 +1,5 @@
-import {describe, expect, it} from "vitest";
-import {renderMarkdownReport} from "../src/markdown-report.js";
+import { describe, expect, it } from "vitest";
+import { renderMarkdownReport } from "../src/markdown-report.js";
 
 describe("renderMarkdownReport", () => {
   it("renders a trajectory-backed report", () => {
@@ -8,7 +8,7 @@ describe("renderMarkdownReport", () => {
       scenario: "web_pentest",
       goal: "Assess fixture",
       status: "complete",
-      evidence: [{summary: "Fixture contains an exposed admin hint", source: "fixture.read"}],
+      evidence: [{ summary: "Fixture contains an exposed admin hint", source: "fixture.read" }],
       decisions: [
         {
           step: 1,

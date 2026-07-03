@@ -1,7 +1,7 @@
-import type {ZodTypeAny} from "zod";
-import type {ToolDefinition, ToolRiskLevel, ToolScopeKind} from "./tool-definition.js";
+import type { ZodTypeAny } from "zod";
+import type { ToolDefinition, ToolRiskLevel, ToolScopeKind } from "./tool-definition.js";
 
-export type AllowedScope = {kind: ToolScopeKind; values: string[]};
+export type AllowedScope = { kind: ToolScopeKind; values: string[] };
 export type PolicyGateContext = {
   allowedScope: AllowedScope;
   scenario?: string;
@@ -11,14 +11,13 @@ export type PolicyGateContext = {
 };
 
 export type PermissionDecision =
-  | {allowed: true; reason: string}
-  | {allowed: false; reason: string};
+  { allowed: true; reason: string } | { allowed: false; reason: string };
 
 export function checkToolPermission(
   tool: ToolDefinition<ZodTypeAny, ZodTypeAny>,
   allowedScope: AllowedScope,
 ): PermissionDecision {
-  return checkPolicyGate(tool, {allowedScope});
+  return checkPolicyGate(tool, { allowedScope });
 }
 
 export function checkPolicyGate(
@@ -33,7 +32,7 @@ export function checkPolicyGate(
   }
 
   if (context.allowedScope.values.length === 0) {
-    return {allowed: false, reason: "Task scope is empty"};
+    return { allowed: false, reason: "Task scope is empty" };
   }
 
   if (context.scenario && tool.scenarios && !tool.scenarios.includes(context.scenario)) {
@@ -46,16 +45,17 @@ export function checkPolicyGate(
   const riskLevel = tool.riskLevel ?? tool.permission.risk;
   const allowedRiskLevels = context.allowedRiskLevels ?? ["low", "medium"];
   if (!allowedRiskLevels.includes(riskLevel)) {
-    return {allowed: false, reason: `Tool ${tool.name} risk ${riskLevel} is not allowed`};
+    return { allowed: false, reason: `Tool ${tool.name} risk ${riskLevel} is not allowed` };
   }
 
-  const sandboxProfile = tool.sandboxProfile ?? (tool.permission.requiresSandbox ? "docker" : "none");
+  const sandboxProfile =
+    tool.sandboxProfile ?? (tool.permission.requiresSandbox ? "docker" : "none");
   if (sandboxProfile !== "none" && context.sandboxAvailable === false) {
-    return {allowed: false, reason: `Tool ${tool.name} requires ${sandboxProfile} sandbox`};
+    return { allowed: false, reason: `Tool ${tool.name} requires ${sandboxProfile} sandbox` };
   }
 
   if (tool.requiresApproval && !(context.approvedTools ?? []).includes(tool.name)) {
-    return {allowed: false, reason: `Tool ${tool.name} requires human approval`};
+    return { allowed: false, reason: `Tool ${tool.name} requires human approval` };
   }
 
   return {

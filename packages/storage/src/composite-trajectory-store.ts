@@ -1,4 +1,4 @@
-import type {TrajectoryEvent} from "@ego-graph/core";
+import type { TrajectoryEvent } from "@ego-graph/core";
 
 export type TrajectoryStore = {
   append(event: TrajectoryEvent): Promise<void>;

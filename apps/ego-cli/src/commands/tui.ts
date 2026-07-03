@@ -1,4 +1,4 @@
-import {renderTui} from "../tui.js";
+import { renderTui } from "../tui.js";
 
 export async function handleTuiCommand(): Promise<void> {
   if (process.env.CI === "true") {

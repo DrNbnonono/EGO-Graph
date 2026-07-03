@@ -1,8 +1,8 @@
-import {mkdtemp, rm} from "node:fs/promises";
-import {tmpdir} from "node:os";
-import {join} from "node:path";
-import {execa} from "execa";
-import {describe, expect, it} from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execa } from "execa";
+import { describe, expect, it } from "vitest";
 
 describe("ego run", () => {
   it("runs the controlled web pentest fixture", async () => {
@@ -20,7 +20,7 @@ describe("ego run", () => {
           "--run-id",
           "run-cli-001",
         ],
-        {env: {EGO_HOME: egoHome}},
+        { env: { EGO_HOME: egoHome } },
       );
 
       expect(result.exitCode).toBe(0);
@@ -30,7 +30,7 @@ describe("ego run", () => {
       expect(result.stdout).toContain("fixture.attack_surface");
       expect(result.stdout).toContain("Fixture contains an exposed admin hint");
     } finally {
-      await rm(egoHome, {recursive: true, force: true});
+      await rm(egoHome, { recursive: true, force: true });
     }
   });
 });

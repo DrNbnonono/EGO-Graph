@@ -1,6 +1,6 @@
-import {describe, expect, it} from "vitest";
-import {createFixtureReadTool} from "@ego-graph/tools";
-import {runMission, type AgentPlanner, type MissionTrajectoryStore} from "../src/index.js";
+import { describe, expect, it } from "vitest";
+import { createFixtureReadTool } from "@ego-graph/tools";
+import { runMission, type AgentPlanner, type MissionTrajectoryStore } from "../src/index.js";
 
 describe("runMission", () => {
   it("runs the controlled web pentest fixture and records evidence", async () => {

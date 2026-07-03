@@ -1,9 +1,9 @@
-import {mkdtemp, rm} from "node:fs/promises";
-import {tmpdir} from "node:os";
-import {join} from "node:path";
-import {createTrajectoryEvent} from "@ego-graph/core";
-import {describe, expect, it} from "vitest";
-import {SqliteEgoStore} from "../src/index.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createTrajectoryEvent } from "@ego-graph/core";
+import { describe, expect, it } from "vitest";
+import { SqliteEgoStore } from "../src/index.js";
 
 describe("SqliteEgoStore", () => {
   it("stores runs, events, evidence, and reports", async () => {
@@ -12,7 +12,7 @@ describe("SqliteEgoStore", () => {
       const store = new SqliteEgoStore(join(dir, "ego.sqlite"));
       const evidence = createTrajectoryEvent("run-sqlite-001", "evidence.created", "Finding", {
         source: "fixture.read",
-        raw: {ok: true},
+        raw: { ok: true },
       });
 
       await store.upsertRun({
@@ -40,7 +40,7 @@ describe("SqliteEgoStore", () => {
       expect((await store.getReport("run-sqlite-001"))?.markdown).toBe("# Report");
       store.close();
     } finally {
-      await rm(dir, {recursive: true, force: true});
+      await rm(dir, { recursive: true, force: true });
     }
   });
 });

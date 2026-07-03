@@ -1,7 +1,7 @@
-import {readFile} from "node:fs/promises";
-import {join} from "node:path";
-import {z} from "zod";
-import type {ToolDefinition} from "./tool-definition.js";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { z } from "zod";
+import type { ToolDefinition } from "./tool-definition.js";
 
 const fixtureReadInputSchema = z.object({
   fixture: z.literal("fixture://web-pentest/basic"),
@@ -28,12 +28,12 @@ export function createFixtureReadTool(): ToolDefinition<
     description: "Read the controlled web pentest fixture",
     inputSchema: fixtureReadInputSchema,
     outputSchema: fixtureReadOutputSchema,
-    permission: {scope: "fixture", risk: "low", requiresSandbox: false},
+    permission: { scope: "fixture", risk: "low", requiresSandbox: false },
     scenarios: ["web_pentest"],
     riskLevel: "low",
     sandboxProfile: "none",
     evidenceMapper(output) {
-      return output.findings.map((summary) => ({summary, raw: output}));
+      return output.findings.map((summary) => ({ summary, raw: output }));
     },
     async execute(input, context) {
       const path = join(context.workspaceRoot, "scenarios", "web_pentest", "basic", "target.html");
@@ -42,7 +42,7 @@ export function createFixtureReadTool(): ToolDefinition<
       const findings = body.includes("admin")
         ? ["Fixture contains an exposed admin hint"]
         : ["Fixture contains no admin hint"];
-      return fixtureReadOutputSchema.parse({...input, title, body, findings});
+      return fixtureReadOutputSchema.parse({ ...input, title, body, findings });
     },
   };
 }
@@ -56,12 +56,12 @@ export function createFixtureAttackSurfaceTool(): ToolDefinition<
     description: "Extract links and form entry points from the controlled web fixture",
     inputSchema: fixtureReadInputSchema,
     outputSchema: fixtureAttackSurfaceOutputSchema,
-    permission: {scope: "fixture", risk: "low", requiresSandbox: false},
+    permission: { scope: "fixture", risk: "low", requiresSandbox: false },
     scenarios: ["web_pentest"],
     riskLevel: "low",
     sandboxProfile: "none",
     evidenceMapper(output) {
-      return output.findings.map((summary) => ({summary, raw: output}));
+      return output.findings.map((summary) => ({ summary, raw: output }));
     },
     async execute(input, context) {
       const path = join(context.workspaceRoot, "scenarios", "web_pentest", "basic", "target.html");

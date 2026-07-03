@@ -1,6 +1,6 @@
-import {JsonlTrajectoryStore, trajectoryDir} from "@ego-graph/storage";
+import { JsonlTrajectoryStore, trajectoryDir } from "@ego-graph/storage";
 
-export async function handleReplayCommand(options: {trajectoryId: string}): Promise<void> {
+export async function handleReplayCommand(options: { trajectoryId: string }): Promise<void> {
   const store = new JsonlTrajectoryStore(trajectoryDir());
   const events = await store.readRun(options.trajectoryId);
 

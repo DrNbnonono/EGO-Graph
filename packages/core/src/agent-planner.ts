@@ -1,9 +1,9 @@
-import type {ZodTypeAny} from "zod";
-import {z} from "zod";
-import {generateJson, type ChatModelProvider} from "@ego-graph/llm";
-import type {ToolDefinition} from "@ego-graph/tools";
-import type {MissionGraph} from "./mission-graph.js";
-import type {TaskSpec} from "./task-spec.js";
+import type { ZodTypeAny } from "zod";
+import { z } from "zod";
+import { generateJson, type ChatModelProvider } from "@ego-graph/llm";
+import type { ToolDefinition } from "@ego-graph/tools";
+import type { MissionGraph } from "./mission-graph.js";
+import type { TaskSpec } from "./task-spec.js";
 
 export type AgentEvidence = {
   summary: string;
@@ -157,10 +157,10 @@ function buildDefaultToolInput(
 ): Record<string, unknown> {
   switch (tool.permission.scope) {
     case "fixture":
-      return {fixture: target};
+      return { fixture: target };
     case "file":
-      return {file: target};
+      return { file: target };
     case "network":
-      return {target};
+      return { target };
   }
 }

@@ -1,10 +1,10 @@
-import {Command} from "commander";
-import {handleDoctorCommand} from "./commands/doctor.js";
-import {handleEvalCommand} from "./commands/eval.js";
-import {handleReplayCommand} from "./commands/replay.js";
-import {handleRunCommand} from "./commands/run.js";
-import {handleServeCommand} from "./commands/serve.js";
-import {handleTuiCommand} from "./commands/tui.js";
+import { Command } from "commander";
+import { handleDoctorCommand } from "./commands/doctor.js";
+import { handleEvalCommand } from "./commands/eval.js";
+import { handleReplayCommand } from "./commands/replay.js";
+import { handleRunCommand } from "./commands/run.js";
+import { handleServeCommand } from "./commands/serve.js";
+import { handleTuiCommand } from "./commands/tui.js";
 
 export function createProgram(): Command {
   const program = new Command();
@@ -44,13 +44,19 @@ export function createProgram(): Command {
       await handleEvalCommand(options);
     });
 
-  program.command("doctor").description("Check local EGO-Graph readiness").action(async () => {
-    await handleDoctorCommand();
-  });
+  program
+    .command("doctor")
+    .description("Check local EGO-Graph readiness")
+    .action(async () => {
+      await handleDoctorCommand();
+    });
 
-  program.command("serve").description("Start the local EGO-Graph API").action(async () => {
-    await handleServeCommand();
-  });
+  program
+    .command("serve")
+    .description("Start the local EGO-Graph API")
+    .action(async () => {
+      await handleServeCommand();
+    });
 
   return program;
 }

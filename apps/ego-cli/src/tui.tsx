@@ -1,5 +1,5 @@
-import {Box, Text, render} from "ink";
-import type {ReactElement} from "react";
+import { Box, Text, render } from "ink";
+import type { ReactElement } from "react";
 
 export function EgoTui(): ReactElement {
   return (

@@ -1,10 +1,10 @@
-import {readdir, rm} from "node:fs/promises";
-import {join} from "node:path";
+import { readdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 
 async function removePackageDists(root) {
   let entries = [];
   try {
-    entries = await readdir(root, {withFileTypes: true});
+    entries = await readdir(root, { withFileTypes: true });
   } catch {
     return;
   }
@@ -13,12 +13,12 @@ async function removePackageDists(root) {
     if (!entry.isDirectory()) {
       continue;
     }
-    await rm(join(root, entry.name, "dist"), {recursive: true, force: true});
+    await rm(join(root, entry.name, "dist"), { recursive: true, force: true });
   }
 }
 
 await removePackageDists("apps");
 await removePackageDists("packages");
-await rm(".ego", {recursive: true, force: true});
+await rm(".ego", { recursive: true, force: true });
 
 console.log("Cleaned generated EGO-Graph artifacts");

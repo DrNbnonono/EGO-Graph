@@ -1,6 +1,6 @@
-import {readFile} from "node:fs/promises";
-import {mkdir, writeFile} from "node:fs/promises";
-import {join} from "node:path";
+import { readFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import {
   createModelBackedPlanner,
   createTrajectoryEvent,
@@ -8,15 +8,15 @@ import {
   type AgentPlanner,
   type TaskSpecInput,
 } from "@ego-graph/core";
-import {createChatModelProvider, loadModelConfig} from "@ego-graph/llm";
-import {loadOverlay} from "@ego-graph/overlays";
+import { createChatModelProvider, loadModelConfig } from "@ego-graph/llm";
+import { loadOverlay } from "@ego-graph/overlays";
 import {
   extractReportDecisions,
   extractReportObservations,
   extractReportPolicyDecisions,
   renderMarkdownReport,
 } from "@ego-graph/report";
-import {isScenarioName, type ScenarioName} from "@ego-graph/shared";
+import { isScenarioName, type ScenarioName } from "@ego-graph/shared";
 import {
   CompositeTrajectoryStore,
   defaultEgoHome,
@@ -57,7 +57,7 @@ export async function handleRunCommand(options: RunCommandOptions): Promise<void
     overlay,
     trajectoryStore: store,
     runId,
-    ...(planner ? {planner} : {}),
+    ...(planner ? { planner } : {}),
   });
 
   const report = renderMarkdownReport({
@@ -72,11 +72,11 @@ export async function handleRunCommand(options: RunCommandOptions): Promise<void
     policyDecisions: extractReportPolicyDecisions(result.events),
   });
   const reports = reportDir(egoHome);
-  await mkdir(reports, {recursive: true});
+  await mkdir(reports, { recursive: true });
   const reportPath = join(reports, `${result.runId}.md`);
   await writeFile(reportPath, report, "utf8");
   await store.append(
-    createTrajectoryEvent(result.runId, "report.created", "Report written", {reportPath}),
+    createTrajectoryEvent(result.runId, "report.created", "Report written", { reportPath }),
   );
   await sqliteStore.saveReport({
     runId: result.runId,

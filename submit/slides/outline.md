@@ -7,4 +7,3 @@
 5. Demo: controlled web pentest scenario.
 6. Evaluation and trajectory replay.
 7. Roadmap for incident response, vulnerability research, and reverse engineering.
-

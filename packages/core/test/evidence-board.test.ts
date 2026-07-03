@@ -1,5 +1,5 @@
-import {describe, expect, it} from "vitest";
-import {addEvidenceItem, createEvidenceBoard, evidenceItemFromFinding} from "../src/index.js";
+import { describe, expect, it } from "vitest";
+import { addEvidenceItem, createEvidenceBoard, evidenceItemFromFinding } from "../src/index.js";
 
 describe("EvidenceBoard", () => {
   it("deduplicates evidence by stable id", () => {

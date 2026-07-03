@@ -1,5 +1,5 @@
-import {describe, expect, it} from "vitest";
-import {parseTaskSpec} from "../src/task-spec.js";
+import { describe, expect, it } from "vitest";
+import { parseTaskSpec } from "../src/task-spec.js";
 
 describe("TaskSpec", () => {
   it("normalizes a controlled web pentest task", () => {

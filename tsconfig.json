@@ -1,14 +1,14 @@
 {
   "files": [],
   "references": [
-    {"path": "./packages/shared"},
-    {"path": "./packages/tools"},
-    {"path": "./packages/llm"},
-    {"path": "./packages/core"},
-    {"path": "./packages/overlays"},
-    {"path": "./packages/report"},
-    {"path": "./packages/storage"},
-    {"path": "./apps/ego-api"},
-    {"path": "./apps/ego-cli"}
+    { "path": "./packages/shared" },
+    { "path": "./packages/tools" },
+    { "path": "./packages/llm" },
+    { "path": "./packages/core" },
+    { "path": "./packages/overlays" },
+    { "path": "./packages/report" },
+    { "path": "./packages/storage" },
+    { "path": "./apps/ego-api" },
+    { "path": "./apps/ego-cli" }
   ]
 }

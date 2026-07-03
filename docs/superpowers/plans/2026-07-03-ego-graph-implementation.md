@@ -58,6 +58,7 @@ Create or modify these files:
 ## Task 1: Bootstrap TypeScript Workspace and CLI Help
 
 **Files:**
+
 - Create: `package.json`
 - Create: `pnpm-workspace.yaml`
 - Create: `tsconfig.base.json`
@@ -74,8 +75,8 @@ Create or modify these files:
 Create `apps/ego-cli/test/cli-help.test.ts`:
 
 ```ts
-import {execa} from "execa";
-import {describe, expect, it} from "vitest";
+import { execa } from "execa";
+import { describe, expect, it } from "vitest";
 
 describe("ego cli help", () => {
   it("prints the public command surface", async () => {
@@ -220,7 +221,7 @@ Create `.prettierrc.json`:
 Create `vitest.config.ts`:
 
 ```ts
-import {defineConfig} from "vitest/config";
+import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
@@ -273,7 +274,7 @@ Create `apps/ego-cli/src/index.ts`:
 
 ```ts
 #!/usr/bin/env node
-import {runCli} from "./cli.js";
+import { runCli } from "./cli.js";
 
 await runCli(process.argv);
 ```
@@ -281,15 +282,12 @@ await runCli(process.argv);
 Create `apps/ego-cli/src/cli.ts`:
 
 ```ts
-import {Command} from "commander";
+import { Command } from "commander";
 
 export function createProgram(): Command {
   const program = new Command();
 
-  program
-    .name("ego")
-    .description("EGO-Graph cybersecurity agent")
-    .version("0.1.0");
+  program.name("ego").description("EGO-Graph cybersecurity agent").version("0.1.0");
 
   program
     .command("run")
@@ -317,13 +315,19 @@ export function createProgram(): Command {
       console.log("ego eval is not wired yet");
     });
 
-  program.command("doctor").description("Check local EGO-Graph readiness").action(() => {
-    console.log("ego doctor is not wired yet");
-  });
+  program
+    .command("doctor")
+    .description("Check local EGO-Graph readiness")
+    .action(() => {
+      console.log("ego doctor is not wired yet");
+    });
 
-  program.command("serve").description("Start the local EGO-Graph API").action(() => {
-    console.log("ego serve is not wired yet");
-  });
+  program
+    .command("serve")
+    .description("Start the local EGO-Graph API")
+    .action(() => {
+      console.log("ego serve is not wired yet");
+    });
 
   return program;
 }
@@ -358,6 +362,7 @@ git commit -m "feat: bootstrap TypeScript CLI workspace"
 ## Task 2: Add Shared Types, Result Helpers, and Domain Schemas
 
 **Files:**
+
 - Create: `packages/shared/package.json`
 - Create: `packages/shared/tsconfig.json`
 - Create: `packages/shared/src/index.ts`
@@ -377,8 +382,8 @@ git commit -m "feat: bootstrap TypeScript CLI workspace"
 Create `packages/core/test/task-spec.test.ts`:
 
 ```ts
-import {describe, expect, it} from "vitest";
-import {parseTaskSpec} from "../src/task-spec.js";
+import { describe, expect, it } from "vitest";
+import { parseTaskSpec } from "../src/task-spec.js";
 
 describe("TaskSpec", () => {
   it("normalizes a controlled web pentest task", () => {
@@ -410,9 +415,9 @@ describe("TaskSpec", () => {
 Create `packages/core/test/mission-graph.test.ts`:
 
 ```ts
-import {describe, expect, it} from "vitest";
-import {createInitialMissionGraph} from "../src/mission-graph.js";
-import {parseTaskSpec} from "../src/task-spec.js";
+import { describe, expect, it } from "vitest";
+import { createInitialMissionGraph } from "../src/mission-graph.js";
+import { parseTaskSpec } from "../src/task-spec.js";
 
 describe("MissionGraph", () => {
   it("creates parse, plan, execute, evaluate, and report nodes", () => {
@@ -484,16 +489,14 @@ Create `packages/shared/tsconfig.json`:
 Create `packages/shared/src/result.ts`:
 
 ```ts
-export type Result<T, E extends Error = Error> =
-  | {ok: true; value: T}
-  | {ok: false; error: E};
+export type Result<T, E extends Error = Error> = { ok: true; value: T } | { ok: false; error: E };
 
 export function ok<T>(value: T): Result<T> {
-  return {ok: true, value};
+  return { ok: true, value };
 }
 
 export function err<E extends Error>(error: E): Result<never, E> {
-  return {ok: false, error};
+  return { ok: false, error };
 }
 ```
 
@@ -555,7 +558,7 @@ Create `packages/core/tsconfig.json`:
     "rootDir": "src",
     "outDir": "dist"
   },
-  "references": [{"path": "../shared"}],
+  "references": [{ "path": "../shared" }],
   "include": ["src/**/*.ts"]
 }
 ```
@@ -563,7 +566,7 @@ Create `packages/core/tsconfig.json`:
 Create `packages/core/src/task-spec.ts`:
 
 ```ts
-import {z} from "zod";
+import { z } from "zod";
 
 export const taskSpecSchema = z.object({
   scenario: z.enum([
@@ -580,7 +583,7 @@ export const taskSpecSchema = z.object({
 export type TaskSpecInput = z.input<typeof taskSpecSchema>;
 export type TaskSpec = z.output<typeof taskSpecSchema> & {
   id: string;
-  allowedScope: {kind: "fixture" | "network" | "file"; values: string[]};
+  allowedScope: { kind: "fixture" | "network" | "file"; values: string[] };
 };
 
 export function parseTaskSpec(input: TaskSpecInput): TaskSpec {
@@ -599,7 +602,7 @@ export function parseTaskSpec(input: TaskSpecInput): TaskSpec {
   return {
     ...parsed.data,
     id: `task-${Buffer.from(`${parsed.data.scenario}:${parsed.data.goal}`).toString("hex").slice(0, 12)}`,
-    allowedScope: {kind: scopeKind, values: parsed.data.targets},
+    allowedScope: { kind: scopeKind, values: parsed.data.targets },
   };
 }
 ```
@@ -607,15 +610,10 @@ export function parseTaskSpec(input: TaskSpecInput): TaskSpec {
 Create `packages/core/src/mission-graph.ts`:
 
 ```ts
-import type {TaskSpec} from "./task-spec.js";
+import type { TaskSpec } from "./task-spec.js";
 
 export type MissionNodeKind =
-  | "parse_task"
-  | "plan"
-  | "safety_gate"
-  | "execute_tools"
-  | "evaluate"
-  | "report";
+  "parse_task" | "plan" | "safety_gate" | "execute_tools" | "evaluate" | "report";
 
 export type MissionNodeStatus = "pending" | "ready" | "running" | "complete" | "blocked";
 
@@ -667,7 +665,7 @@ export function createInitialMissionGraph(task: TaskSpec): MissionGraph {
 Create `packages/core/src/trajectory.ts`:
 
 ```ts
-import {z} from "zod";
+import { z } from "zod";
 
 export const trajectoryEventSchema = z.object({
   id: z.string().min(1),
@@ -739,6 +737,7 @@ git commit -m "feat: add mission graph domain schemas"
 ## Task 3: Implement Trajectory Storage and Replay Reader
 
 **Files:**
+
 - Create: `packages/storage/package.json`
 - Create: `packages/storage/tsconfig.json`
 - Create: `packages/storage/src/index.ts`
@@ -751,12 +750,12 @@ git commit -m "feat: add mission graph domain schemas"
 Create `packages/storage/test/jsonl-trajectory-store.test.ts`:
 
 ```ts
-import {mkdtemp, readFile, rm} from "node:fs/promises";
-import {tmpdir} from "node:os";
-import {join} from "node:path";
-import {describe, expect, it} from "vitest";
-import {createTrajectoryEvent} from "@ego-graph/core";
-import {JsonlTrajectoryStore} from "../src/jsonl-trajectory-store.js";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { createTrajectoryEvent } from "@ego-graph/core";
+import { JsonlTrajectoryStore } from "../src/jsonl-trajectory-store.js";
 
 describe("JsonlTrajectoryStore", () => {
   it("appends and replays trajectory events", async () => {
@@ -775,7 +774,7 @@ describe("JsonlTrajectoryStore", () => {
       expect(events[0]?.type).toBe("task.parsed");
       expect(raw.trim()).toContain("Task parsed");
     } finally {
-      await rm(dir, {recursive: true, force: true});
+      await rm(dir, { recursive: true, force: true });
     }
   });
 });
@@ -824,7 +823,7 @@ Create `packages/storage/tsconfig.json`:
     "rootDir": "src",
     "outDir": "dist"
   },
-  "references": [{"path": "../core"}],
+  "references": [{ "path": "../core" }],
   "include": ["src/**/*.ts"]
 }
 ```
@@ -832,7 +831,7 @@ Create `packages/storage/tsconfig.json`:
 Create `packages/storage/src/paths.ts`:
 
 ```ts
-import {join} from "node:path";
+import { join } from "node:path";
 
 export function defaultEgoHome(env: NodeJS.ProcessEnv = process.env): string {
   const base = env.EGO_HOME ?? join(process.cwd(), ".ego");
@@ -847,17 +846,17 @@ export function trajectoryDir(egoHome = defaultEgoHome()): string {
 Create `packages/storage/src/jsonl-trajectory-store.ts`:
 
 ```ts
-import {mkdir, readFile, writeFile} from "node:fs/promises";
-import {join} from "node:path";
-import {trajectoryEventSchema, type TrajectoryEvent} from "@ego-graph/core";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { trajectoryEventSchema, type TrajectoryEvent } from "@ego-graph/core";
 
 export class JsonlTrajectoryStore {
   constructor(private readonly directory: string) {}
 
   async append(event: TrajectoryEvent): Promise<void> {
-    await mkdir(this.directory, {recursive: true});
+    await mkdir(this.directory, { recursive: true });
     const path = join(this.directory, `${event.runId}.jsonl`);
-    await writeFile(path, `${JSON.stringify(event)}\n`, {encoding: "utf8", flag: "a"});
+    await writeFile(path, `${JSON.stringify(event)}\n`, { encoding: "utf8", flag: "a" });
   }
 
   async readRun(runId: string): Promise<TrajectoryEvent[]> {
@@ -902,6 +901,7 @@ git commit -m "feat: add JSONL trajectory storage"
 ## Task 4: Implement Tool Registry and Deny-by-Default Permission Policy
 
 **Files:**
+
 - Create: `packages/tools/package.json`
 - Create: `packages/tools/tsconfig.json`
 - Create: `packages/tools/src/index.ts`
@@ -917,8 +917,8 @@ git commit -m "feat: add JSONL trajectory storage"
 Create `packages/tools/test/tool-registry.test.ts`:
 
 ```ts
-import {describe, expect, it} from "vitest";
-import {createFixtureReadTool, ToolRegistry} from "../src/index.js";
+import { describe, expect, it } from "vitest";
+import { createFixtureReadTool, ToolRegistry } from "../src/index.js";
 
 describe("ToolRegistry", () => {
   it("registers and retrieves a fixture tool", () => {
@@ -936,8 +936,8 @@ describe("ToolRegistry", () => {
 Create `packages/tools/test/permission-policy.test.ts`:
 
 ```ts
-import {describe, expect, it} from "vitest";
-import {checkToolPermission, createFixtureReadTool} from "../src/index.js";
+import { describe, expect, it } from "vitest";
+import { checkToolPermission, createFixtureReadTool } from "../src/index.js";
 
 describe("permission policy", () => {
   it("allows fixture tools for fixture scope", () => {
@@ -1011,7 +1011,7 @@ Create `packages/tools/tsconfig.json`:
 Create `packages/tools/src/tool-definition.ts`:
 
 ```ts
-import type {ZodTypeAny, z} from "zod";
+import type { ZodTypeAny, z } from "zod";
 
 export type ToolScopeKind = "fixture" | "network" | "file";
 
@@ -1041,8 +1041,8 @@ export type ToolDefinition<InputSchema extends ZodTypeAny, OutputSchema extends 
 Create `packages/tools/src/tool-registry.ts`:
 
 ```ts
-import type {ZodTypeAny} from "zod";
-import type {ToolDefinition} from "./tool-definition.js";
+import type { ZodTypeAny } from "zod";
+import type { ToolDefinition } from "./tool-definition.js";
 
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDefinition<ZodTypeAny, ZodTypeAny>>();
@@ -1071,14 +1071,13 @@ export class ToolRegistry {
 Create `packages/tools/src/permission-policy.ts`:
 
 ```ts
-import type {ZodTypeAny} from "zod";
-import type {ToolDefinition, ToolScopeKind} from "./tool-definition.js";
+import type { ZodTypeAny } from "zod";
+import type { ToolDefinition, ToolScopeKind } from "./tool-definition.js";
 
-export type AllowedScope = {kind: ToolScopeKind; values: string[]};
+export type AllowedScope = { kind: ToolScopeKind; values: string[] };
 
 export type PermissionDecision =
-  | {allowed: true; reason: string}
-  | {allowed: false; reason: string};
+  { allowed: true; reason: string } | { allowed: false; reason: string };
 
 export function checkToolPermission(
   tool: ToolDefinition<ZodTypeAny, ZodTypeAny>,
@@ -1092,20 +1091,20 @@ export function checkToolPermission(
   }
 
   if (allowedScope.values.length === 0) {
-    return {allowed: false, reason: "Task scope is empty"};
+    return { allowed: false, reason: "Task scope is empty" };
   }
 
-  return {allowed: true, reason: `Tool ${tool.name} is allowed for ${allowedScope.kind} scope`};
+  return { allowed: true, reason: `Tool ${tool.name} is allowed for ${allowedScope.kind} scope` };
 }
 ```
 
 Create `packages/tools/src/fixture-tools.ts`:
 
 ```ts
-import {readFile} from "node:fs/promises";
-import {join} from "node:path";
-import {z} from "zod";
-import type {ToolDefinition} from "./tool-definition.js";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { z } from "zod";
+import type { ToolDefinition } from "./tool-definition.js";
 
 const fixtureReadInputSchema = z.object({
   fixture: z.literal("fixture://web-pentest/basic"),
@@ -1126,7 +1125,7 @@ export function createFixtureReadTool(): ToolDefinition<
     description: "Read the controlled web pentest fixture",
     inputSchema: fixtureReadInputSchema,
     outputSchema: fixtureReadOutputSchema,
-    permission: {scope: "fixture", risk: "low", requiresSandbox: false},
+    permission: { scope: "fixture", risk: "low", requiresSandbox: false },
     async execute(input, context) {
       const path = join(context.workspaceRoot, "scenarios", "web_pentest", "basic", "target.html");
       const body = await readFile(path, "utf8");
@@ -1134,7 +1133,7 @@ export function createFixtureReadTool(): ToolDefinition<
       const findings = body.includes("admin")
         ? ["Fixture contains an exposed admin hint"]
         : ["Fixture contains no admin hint"];
-      return fixtureReadOutputSchema.parse({title, body, findings});
+      return fixtureReadOutputSchema.parse({ title, body, findings });
     },
   };
 }
@@ -1173,6 +1172,7 @@ git commit -m "feat: add tool registry and permission policy"
 ## Task 5: Add Web Pentest Overlay and Controlled Fixture
 
 **Files:**
+
 - Create: `packages/overlays/package.json`
 - Create: `packages/overlays/tsconfig.json`
 - Create: `packages/overlays/src/index.ts`
@@ -1188,8 +1188,8 @@ git commit -m "feat: add tool registry and permission policy"
 Create `packages/overlays/test/web-pentest-overlay.test.ts`:
 
 ```ts
-import {describe, expect, it} from "vitest";
-import {loadOverlay} from "../src/index.js";
+import { describe, expect, it } from "vitest";
+import { loadOverlay } from "../src/index.js";
 
 describe("web pentest overlay", () => {
   it("loads fixture tools and report sections", () => {
@@ -1246,7 +1246,7 @@ Create `packages/overlays/tsconfig.json`:
     "rootDir": "src",
     "outDir": "dist"
   },
-  "references": [{"path": "../shared"}, {"path": "../tools"}],
+  "references": [{ "path": "../shared" }, { "path": "../tools" }],
   "include": ["src/**/*.ts"]
 }
 ```
@@ -1254,9 +1254,9 @@ Create `packages/overlays/tsconfig.json`:
 Create `packages/overlays/src/overlay.ts`:
 
 ```ts
-import type {ScenarioName} from "@ego-graph/shared";
-import type {ToolDefinition} from "@ego-graph/tools";
-import type {ZodTypeAny} from "zod";
+import type { ScenarioName } from "@ego-graph/shared";
+import type { ToolDefinition } from "@ego-graph/tools";
+import type { ZodTypeAny } from "zod";
 
 export type ScenarioOverlay = {
   name: ScenarioName;
@@ -1270,8 +1270,8 @@ export type ScenarioOverlay = {
 Create `packages/overlays/src/web-pentest.ts`:
 
 ```ts
-import {createFixtureReadTool} from "@ego-graph/tools";
-import type {ScenarioOverlay} from "./overlay.js";
+import { createFixtureReadTool } from "@ego-graph/tools";
+import type { ScenarioOverlay } from "./overlay.js";
 
 export function createWebPentestOverlay(): ScenarioOverlay {
   return {
@@ -1287,9 +1287,9 @@ export function createWebPentestOverlay(): ScenarioOverlay {
 Create `packages/overlays/src/index.ts`:
 
 ```ts
-import type {ScenarioName} from "@ego-graph/shared";
-import type {ScenarioOverlay} from "./overlay.js";
-import {createWebPentestOverlay} from "./web-pentest.js";
+import type { ScenarioName } from "@ego-graph/shared";
+import type { ScenarioOverlay } from "./overlay.js";
+import { createWebPentestOverlay } from "./web-pentest.js";
 
 export * from "./overlay.js";
 export * from "./web-pentest.js";
@@ -1335,7 +1335,12 @@ Create `scenarios/web_pentest/basic/target.html`:
 Create `datasets/evals/web_pentest.jsonl`:
 
 ```jsonl
-{"id":"web-pentest-smoke-001","scenario":"web_pentest","taskFile":"scenarios/web_pentest/basic/task.json","expectedFinding":"Fixture contains an exposed admin hint"}
+{
+  "id": "web-pentest-smoke-001",
+  "scenario": "web_pentest",
+  "taskFile": "scenarios/web_pentest/basic/task.json",
+  "expectedFinding": "Fixture contains an exposed admin hint"
+}
 ```
 
 - [ ] **Step 5: Test overlay**
@@ -1362,6 +1367,7 @@ git commit -m "feat: add web pentest overlay fixture"
 ## Task 6: Implement Agent Runner, Report Generator, and `ego run`
 
 **Files:**
+
 - Create: `packages/core/src/agent-runner.ts`
 - Create: `packages/report/package.json`
 - Create: `packages/report/tsconfig.json`
@@ -1380,13 +1386,13 @@ git commit -m "feat: add web pentest overlay fixture"
 Create `packages/core/test/agent-runner.test.ts`:
 
 ```ts
-import {mkdtemp, rm} from "node:fs/promises";
-import {tmpdir} from "node:os";
-import {join} from "node:path";
-import {describe, expect, it} from "vitest";
-import {createWebPentestOverlay} from "@ego-graph/overlays";
-import {JsonlTrajectoryStore} from "@ego-graph/storage";
-import {runMission} from "../src/agent-runner.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { createWebPentestOverlay } from "@ego-graph/overlays";
+import { JsonlTrajectoryStore } from "@ego-graph/storage";
+import { runMission } from "../src/agent-runner.js";
 
 describe("runMission", () => {
   it("runs the controlled web pentest fixture and records evidence", async () => {
@@ -1409,7 +1415,7 @@ describe("runMission", () => {
       expect(result.evidence[0]?.summary).toContain("admin hint");
       expect(result.events.map((event) => event.type)).toContain("run.completed");
     } finally {
-      await rm(dir, {recursive: true, force: true});
+      await rm(dir, { recursive: true, force: true });
     }
   });
 });
@@ -1420,8 +1426,8 @@ describe("runMission", () => {
 Create `packages/report/test/markdown-report.test.ts`:
 
 ```ts
-import {describe, expect, it} from "vitest";
-import {renderMarkdownReport} from "../src/markdown-report.js";
+import { describe, expect, it } from "vitest";
+import { renderMarkdownReport } from "../src/markdown-report.js";
 
 describe("renderMarkdownReport", () => {
   it("renders a trajectory-backed report", () => {
@@ -1430,7 +1436,7 @@ describe("renderMarkdownReport", () => {
       scenario: "web_pentest",
       goal: "Assess fixture",
       status: "complete",
-      evidence: [{summary: "Fixture contains an exposed admin hint", source: "fixture.read"}],
+      evidence: [{ summary: "Fixture contains an exposed admin hint", source: "fixture.read" }],
     });
 
     expect(markdown).toContain("# EGO-Graph Report");
@@ -1445,11 +1451,11 @@ describe("renderMarkdownReport", () => {
 Create `apps/ego-cli/test/run-command.test.ts`:
 
 ```ts
-import {mkdtemp, rm} from "node:fs/promises";
-import {tmpdir} from "node:os";
-import {join} from "node:path";
-import {execa} from "execa";
-import {describe, expect, it} from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execa } from "execa";
+import { describe, expect, it } from "vitest";
 
 describe("ego run", () => {
   it("runs the controlled web pentest fixture", async () => {
@@ -1467,7 +1473,7 @@ describe("ego run", () => {
           "--run-id",
           "run-cli-001",
         ],
-        {env: {EGO_HOME: egoHome}},
+        { env: { EGO_HOME: egoHome } },
       );
 
       expect(result.exitCode).toBe(0);
@@ -1475,7 +1481,7 @@ describe("ego run", () => {
       expect(result.stdout).toContain("complete");
       expect(result.stdout).toContain("Fixture contains an exposed admin hint");
     } finally {
-      await rm(egoHome, {recursive: true, force: true});
+      await rm(egoHome, { recursive: true, force: true });
     }
   });
 });
@@ -1496,12 +1502,12 @@ Expected: tests fail because runner, report, and command handler are not impleme
 Create `packages/core/src/agent-runner.ts`:
 
 ```ts
-import type {ScenarioOverlay} from "@ego-graph/overlays";
-import type {JsonlTrajectoryStore} from "@ego-graph/storage";
-import {checkToolPermission} from "@ego-graph/tools";
-import {createInitialMissionGraph} from "./mission-graph.js";
-import {parseTaskSpec, type TaskSpecInput} from "./task-spec.js";
-import {createTrajectoryEvent, type TrajectoryEvent} from "./trajectory.js";
+import type { ScenarioOverlay } from "@ego-graph/overlays";
+import type { JsonlTrajectoryStore } from "@ego-graph/storage";
+import { checkToolPermission } from "@ego-graph/tools";
+import { createInitialMissionGraph } from "./mission-graph.js";
+import { parseTaskSpec, type TaskSpecInput } from "./task-spec.js";
+import { createTrajectoryEvent, type TrajectoryEvent } from "./trajectory.js";
 
 export type Evidence = {
   summary: string;
@@ -1537,10 +1543,10 @@ export async function runMission(input: MissionRunInput): Promise<MissionRunResu
   };
 
   const task = parseTaskSpec(input.task);
-  await append("task.parsed", "Task parsed", {task});
+  await append("task.parsed", "Task parsed", { task });
 
   const graph = createInitialMissionGraph(task);
-  await append("graph.created", "Mission graph created", {graph});
+  await append("graph.created", "Mission graph created", { graph });
 
   const evidence: Evidence[] = [];
 
@@ -1552,25 +1558,25 @@ export async function runMission(input: MissionRunInput): Promise<MissionRunResu
     });
 
     if (!decision.allowed) {
-      await append("run.blocked", decision.reason, {tool: tool.name});
-      return {runId: input.runId, status: "blocked", evidence, events};
+      await append("run.blocked", decision.reason, { tool: tool.name });
+      return { runId: input.runId, status: "blocked", evidence, events };
     }
 
-    await append("tool.started", `Started ${tool.name}`, {tool: tool.name});
-    const parsedInput = tool.inputSchema.parse({fixture: task.targets[0]});
-    const output = await tool.execute(parsedInput, {workspaceRoot: input.workspaceRoot});
-    await append("tool.completed", `Completed ${tool.name}`, {tool: tool.name, output});
+    await append("tool.started", `Started ${tool.name}`, { tool: tool.name });
+    const parsedInput = tool.inputSchema.parse({ fixture: task.targets[0] });
+    const output = await tool.execute(parsedInput, { workspaceRoot: input.workspaceRoot });
+    await append("tool.completed", `Completed ${tool.name}`, { tool: tool.name, output });
 
     const findings = Array.isArray(output.findings) ? output.findings : [];
     for (const finding of findings) {
-      const item = {summary: String(finding), source: tool.name, raw: output};
+      const item = { summary: String(finding), source: tool.name, raw: output };
       evidence.push(item);
       await append("evidence.created", item.summary, item);
     }
   }
 
-  await append("run.completed", "Mission completed", {evidenceCount: evidence.length});
-  return {runId: input.runId, status: "complete", evidence, events};
+  await append("run.completed", "Mission completed", { evidenceCount: evidence.length });
+  return { runId: input.runId, status: "complete", evidence, events };
 }
 ```
 
@@ -1697,12 +1703,12 @@ Modify `apps/ego-cli/package.json` dependencies:
 Create `apps/ego-cli/src/commands/run.ts`:
 
 ```ts
-import {readFile} from "node:fs/promises";
-import {runMission, type TaskSpecInput} from "@ego-graph/core";
-import {loadOverlay} from "@ego-graph/overlays";
-import {renderMarkdownReport} from "@ego-graph/report";
-import {JsonlTrajectoryStore, trajectoryDir} from "@ego-graph/storage";
-import type {ScenarioName} from "@ego-graph/shared";
+import { readFile } from "node:fs/promises";
+import { runMission, type TaskSpecInput } from "@ego-graph/core";
+import { loadOverlay } from "@ego-graph/overlays";
+import { renderMarkdownReport } from "@ego-graph/report";
+import { JsonlTrajectoryStore, trajectoryDir } from "@ego-graph/storage";
+import type { ScenarioName } from "@ego-graph/shared";
 
 export type RunCommandOptions = {
   scenario: ScenarioName;
@@ -1754,16 +1760,13 @@ async function loadTask(options: RunCommandOptions, defaultTarget: string): Prom
 Modify `apps/ego-cli/src/cli.ts`:
 
 ```ts
-import {Command} from "commander";
-import {handleRunCommand} from "./commands/run.js";
+import { Command } from "commander";
+import { handleRunCommand } from "./commands/run.js";
 
 export function createProgram(): Command {
   const program = new Command();
 
-  program
-    .name("ego")
-    .description("EGO-Graph cybersecurity agent")
-    .version("0.1.0");
+  program.name("ego").description("EGO-Graph cybersecurity agent").version("0.1.0");
 
   program
     .command("run")
@@ -1792,13 +1795,19 @@ export function createProgram(): Command {
       console.log("ego eval is not wired yet");
     });
 
-  program.command("doctor").description("Check local EGO-Graph readiness").action(() => {
-    console.log("ego doctor is not wired yet");
-  });
+  program
+    .command("doctor")
+    .description("Check local EGO-Graph readiness")
+    .action(() => {
+      console.log("ego doctor is not wired yet");
+    });
 
-  program.command("serve").description("Start the local EGO-Graph API").action(() => {
-    console.log("ego serve is not wired yet");
-  });
+  program
+    .command("serve")
+    .description("Start the local EGO-Graph API")
+    .action(() => {
+      console.log("ego serve is not wired yet");
+    });
 
   return program;
 }
@@ -1833,6 +1842,7 @@ git commit -m "feat: run controlled web pentest mission"
 ## Task 7: Implement Replay, Eval, Doctor, and Serve Commands
 
 **Files:**
+
 - Create: `apps/ego-cli/src/commands/replay.ts`
 - Create: `apps/ego-cli/src/commands/eval.ts`
 - Create: `apps/ego-cli/src/commands/doctor.ts`
@@ -1851,8 +1861,8 @@ git commit -m "feat: run controlled web pentest mission"
 Create `apps/ego-cli/test/doctor-command.test.ts`:
 
 ```ts
-import {execa} from "execa";
-import {describe, expect, it} from "vitest";
+import { execa } from "execa";
+import { describe, expect, it } from "vitest";
 
 describe("ego doctor", () => {
   it("prints readiness checks", async () => {
@@ -1869,11 +1879,11 @@ describe("ego doctor", () => {
 Create `apps/ego-cli/test/replay-command.test.ts`:
 
 ```ts
-import {mkdtemp, rm} from "node:fs/promises";
-import {tmpdir} from "node:os";
-import {join} from "node:path";
-import {execa} from "execa";
-import {describe, expect, it} from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execa } from "execa";
+import { describe, expect, it } from "vitest";
 
 describe("ego replay", () => {
   it("prints recorded trajectory events", async () => {
@@ -1891,19 +1901,19 @@ describe("ego replay", () => {
           "--run-id",
           "run-replay-001",
         ],
-        {env: {EGO_HOME: egoHome}},
+        { env: { EGO_HOME: egoHome } },
       );
 
       const result = await execa(
         "node",
         ["apps/ego-cli/dist/index.js", "replay", "--trajectory-id", "run-replay-001"],
-        {env: {EGO_HOME: egoHome}},
+        { env: { EGO_HOME: egoHome } },
       );
 
       expect(result.stdout).toContain("task.parsed");
       expect(result.stdout).toContain("run.completed");
     } finally {
-      await rm(egoHome, {recursive: true, force: true});
+      await rm(egoHome, { recursive: true, force: true });
     }
   });
 });
@@ -1912,11 +1922,11 @@ describe("ego replay", () => {
 Create `apps/ego-cli/test/eval-command.test.ts`:
 
 ```ts
-import {mkdtemp, rm} from "node:fs/promises";
-import {tmpdir} from "node:os";
-import {join} from "node:path";
-import {execa} from "execa";
-import {describe, expect, it} from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execa } from "execa";
+import { describe, expect, it } from "vitest";
 
 describe("ego eval", () => {
   it("runs the web pentest dataset", async () => {
@@ -1925,14 +1935,14 @@ describe("ego eval", () => {
       const result = await execa(
         "node",
         ["apps/ego-cli/dist/index.js", "eval", "--dataset", "datasets/evals/web_pentest.jsonl"],
-        {env: {EGO_HOME: egoHome}},
+        { env: { EGO_HOME: egoHome } },
       );
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("web-pentest-smoke-001");
       expect(result.stdout).toContain("PASS");
     } finally {
-      await rm(egoHome, {recursive: true, force: true});
+      await rm(egoHome, { recursive: true, force: true });
     }
   });
 });
@@ -1941,8 +1951,8 @@ describe("ego eval", () => {
 Create `apps/ego-api/test/server.test.ts`:
 
 ```ts
-import {describe, expect, it} from "vitest";
-import {createServer} from "../src/server.js";
+import { describe, expect, it } from "vitest";
+import { createServer } from "../src/server.js";
 
 describe("ego api server", () => {
   it("responds to health checks", async () => {
@@ -1951,7 +1961,7 @@ describe("ego api server", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({ok: true, service: "ego-api"});
+    expect(body).toEqual({ ok: true, service: "ego-api" });
   });
 });
 ```
@@ -1971,13 +1981,13 @@ Expected: tests fail because command handlers and API package are not implemente
 Create `apps/ego-cli/src/commands/doctor.ts`:
 
 ```ts
-import {access, mkdir} from "node:fs/promises";
-import {defaultEgoHome, trajectoryDir} from "@ego-graph/storage";
+import { access, mkdir } from "node:fs/promises";
+import { defaultEgoHome, trajectoryDir } from "@ego-graph/storage";
 
 export async function handleDoctorCommand(): Promise<void> {
   const egoHome = defaultEgoHome();
   const trajectories = trajectoryDir(egoHome);
-  await mkdir(trajectories, {recursive: true});
+  await mkdir(trajectories, { recursive: true });
   await access(trajectories);
 
   console.log(`Node.js ${process.version}`);
@@ -1990,9 +2000,9 @@ export async function handleDoctorCommand(): Promise<void> {
 Create `apps/ego-cli/src/commands/replay.ts`:
 
 ```ts
-import {JsonlTrajectoryStore, trajectoryDir} from "@ego-graph/storage";
+import { JsonlTrajectoryStore, trajectoryDir } from "@ego-graph/storage";
 
-export async function handleReplayCommand(options: {trajectoryId: string}): Promise<void> {
+export async function handleReplayCommand(options: { trajectoryId: string }): Promise<void> {
   const store = new JsonlTrajectoryStore(trajectoryDir());
   const events = await store.readRun(options.trajectoryId);
 
@@ -2005,8 +2015,8 @@ export async function handleReplayCommand(options: {trajectoryId: string}): Prom
 Create `apps/ego-cli/src/commands/eval.ts`:
 
 ```ts
-import {readFile} from "node:fs/promises";
-import {handleRunCommand} from "./run.js";
+import { readFile } from "node:fs/promises";
+import { handleRunCommand } from "./run.js";
 
 type EvalCase = {
   id: string;
@@ -2015,7 +2025,7 @@ type EvalCase = {
   expectedFinding: string;
 };
 
-export async function handleEvalCommand(options: {dataset: string}): Promise<void> {
+export async function handleEvalCommand(options: { dataset: string }): Promise<void> {
   const raw = await readFile(options.dataset, "utf8");
   const cases = raw
     .split(/\r?\n/)
@@ -2049,11 +2059,11 @@ Create `apps/ego-cli/src/commands/serve.ts`:
 
 ```ts
 export async function handleServeCommand(): Promise<void> {
-  const {serve} = await import("@hono/node-server");
-  const {createServer} = await import("@ego-graph/ego-api");
+  const { serve } = await import("@hono/node-server");
+  const { createServer } = await import("@ego-graph/ego-api");
   const port = Number(process.env.EGO_PORT ?? 4317);
 
-  serve({fetch: createServer().fetch, port});
+  serve({ fetch: createServer().fetch, port });
   console.log(`EGO-Graph API listening on http://127.0.0.1:${port}`);
 }
 ```
@@ -2061,20 +2071,17 @@ export async function handleServeCommand(): Promise<void> {
 Modify `apps/ego-cli/src/cli.ts` to import and use all handlers:
 
 ```ts
-import {Command} from "commander";
-import {handleDoctorCommand} from "./commands/doctor.js";
-import {handleEvalCommand} from "./commands/eval.js";
-import {handleReplayCommand} from "./commands/replay.js";
-import {handleRunCommand} from "./commands/run.js";
-import {handleServeCommand} from "./commands/serve.js";
+import { Command } from "commander";
+import { handleDoctorCommand } from "./commands/doctor.js";
+import { handleEvalCommand } from "./commands/eval.js";
+import { handleReplayCommand } from "./commands/replay.js";
+import { handleRunCommand } from "./commands/run.js";
+import { handleServeCommand } from "./commands/serve.js";
 
 export function createProgram(): Command {
   const program = new Command();
 
-  program
-    .name("ego")
-    .description("EGO-Graph cybersecurity agent")
-    .version("0.1.0");
+  program.name("ego").description("EGO-Graph cybersecurity agent").version("0.1.0");
 
   program
     .command("run")
@@ -2103,13 +2110,19 @@ export function createProgram(): Command {
       await handleEvalCommand(options);
     });
 
-  program.command("doctor").description("Check local EGO-Graph readiness").action(async () => {
-    await handleDoctorCommand();
-  });
+  program
+    .command("doctor")
+    .description("Check local EGO-Graph readiness")
+    .action(async () => {
+      await handleDoctorCommand();
+    });
 
-  program.command("serve").description("Start the local EGO-Graph API").action(async () => {
-    await handleServeCommand();
-  });
+  program
+    .command("serve")
+    .description("Start the local EGO-Graph API")
+    .action(async () => {
+      await handleServeCommand();
+    });
 
   return program;
 }
@@ -2160,13 +2173,13 @@ Create `apps/ego-api/tsconfig.json`:
 Create `apps/ego-api/src/server.ts`:
 
 ```ts
-import {Hono} from "hono";
+import { Hono } from "hono";
 
 export function createServer(): Hono {
   const app = new Hono();
 
   app.get("/health", (context) => {
-    return context.json({ok: true, service: "ego-api"});
+    return context.json({ ok: true, service: "ego-api" });
   });
 
   return app;
@@ -2214,6 +2227,7 @@ git commit -m "feat: add replay eval doctor and serve commands"
 ## Task 8: Add Ink TUI and Purple Lotus Identity
 
 **Files:**
+
 - Modify: `apps/ego-cli/package.json`
 - Create: `apps/ego-cli/src/tui.tsx`
 - Create: `apps/ego-cli/src/commands/tui.ts`
@@ -2225,13 +2239,13 @@ git commit -m "feat: add replay eval doctor and serve commands"
 Create `apps/ego-cli/test/tui-command.test.ts`:
 
 ```ts
-import {execa} from "execa";
-import {describe, expect, it} from "vitest";
+import { execa } from "execa";
+import { describe, expect, it } from "vitest";
 
 describe("ego default TUI", () => {
   it("prints the non-interactive welcome when CI is true", async () => {
     const result = await execa("node", ["apps/ego-cli/dist/index.js"], {
-      env: {CI: "true"},
+      env: { CI: "true" },
     });
 
     expect(result.exitCode).toBe(0);
@@ -2279,7 +2293,7 @@ Create `apps/ego-cli/src/tui.tsx`:
 
 ```tsx
 import React from "react";
-import {Box, Text, render} from "ink";
+import { Box, Text, render } from "ink";
 
 export function EgoTui(): JSX.Element {
   return (
@@ -2287,7 +2301,9 @@ export function EgoTui(): JSX.Element {
       <Text color="magentaBright">紫莲花 EGO-Graph</Text>
       <Text>Evidence-Guided Orchestration Graph</Text>
       <Text>Run a controlled mission with:</Text>
-      <Text color="cyan">ego run --scenario web_pentest --input scenarios/web_pentest/basic/task.json</Text>
+      <Text color="cyan">
+        ego run --scenario web_pentest --input scenarios/web_pentest/basic/task.json
+      </Text>
     </Box>
   );
 }
@@ -2300,7 +2316,7 @@ export function renderTui(): void {
 Create `apps/ego-cli/src/commands/tui.ts`:
 
 ```ts
-import {renderTui} from "../tui.js";
+import { renderTui } from "../tui.js";
 
 export async function handleTuiCommand(): Promise<void> {
   if (process.env.CI === "true") {
@@ -2317,13 +2333,13 @@ export async function handleTuiCommand(): Promise<void> {
 Modify `apps/ego-cli/src/cli.ts` so the default action runs the TUI:
 
 ```ts
-import {Command} from "commander";
-import {handleDoctorCommand} from "./commands/doctor.js";
-import {handleEvalCommand} from "./commands/eval.js";
-import {handleReplayCommand} from "./commands/replay.js";
-import {handleRunCommand} from "./commands/run.js";
-import {handleServeCommand} from "./commands/serve.js";
-import {handleTuiCommand} from "./commands/tui.js";
+import { Command } from "commander";
+import { handleDoctorCommand } from "./commands/doctor.js";
+import { handleEvalCommand } from "./commands/eval.js";
+import { handleReplayCommand } from "./commands/replay.js";
+import { handleRunCommand } from "./commands/run.js";
+import { handleServeCommand } from "./commands/serve.js";
+import { handleTuiCommand } from "./commands/tui.js";
 
 export function createProgram(): Command {
   const program = new Command();
@@ -2363,13 +2379,19 @@ export function createProgram(): Command {
       await handleEvalCommand(options);
     });
 
-  program.command("doctor").description("Check local EGO-Graph readiness").action(async () => {
-    await handleDoctorCommand();
-  });
+  program
+    .command("doctor")
+    .description("Check local EGO-Graph readiness")
+    .action(async () => {
+      await handleDoctorCommand();
+    });
 
-  program.command("serve").description("Start the local EGO-Graph API").action(async () => {
-    await handleServeCommand();
-  });
+  program
+    .command("serve")
+    .description("Start the local EGO-Graph API")
+    .action(async () => {
+      await handleServeCommand();
+    });
 
   return program;
 }
@@ -2418,6 +2440,7 @@ git commit -m "feat: add terminal lotus welcome"
 ## Task 9: Add Packaging, Cleanup Script, and Docker Smoke Path
 
 **Files:**
+
 - Create: `scripts/clean.mjs`
 - Create: `scripts/smoke.mjs`
 - Create: `docker/Dockerfile`
@@ -2430,15 +2453,15 @@ git commit -m "feat: add terminal lotus welcome"
 Create `scripts/smoke.mjs`:
 
 ```js
-import {execa} from "execa";
-import {mkdtemp, rm} from "node:fs/promises";
-import {tmpdir} from "node:os";
-import {join} from "node:path";
+import { execa } from "execa";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const egoHome = await mkdtemp(join(tmpdir(), "ego-smoke-"));
 
 try {
-  await execa("pnpm", ["build"], {stdio: "inherit"});
+  await execa("pnpm", ["build"], { stdio: "inherit" });
 
   const help = await execa("node", ["apps/ego-cli/dist/index.js", "--help"]);
   if (!help.stdout.includes("EGO-Graph")) {
@@ -2446,7 +2469,7 @@ try {
   }
 
   const doctor = await execa("node", ["apps/ego-cli/dist/index.js", "doctor"], {
-    env: {EGO_HOME: egoHome},
+    env: { EGO_HOME: egoHome },
   });
   if (!doctor.stdout.includes("Trajectory storage")) {
     throw new Error("ego doctor did not verify trajectory storage");
@@ -2464,7 +2487,7 @@ try {
       "--run-id",
       "smoke-run-001",
     ],
-    {env: {EGO_HOME: egoHome}},
+    { env: { EGO_HOME: egoHome } },
   );
   if (!run.stdout.includes("Fixture contains an exposed admin hint")) {
     throw new Error("ego run did not emit expected finding");
@@ -2472,14 +2495,14 @@ try {
 
   console.log("EGO-Graph smoke PASS");
 } finally {
-  await rm(egoHome, {recursive: true, force: true});
+  await rm(egoHome, { recursive: true, force: true });
 }
 ```
 
 Create `scripts/clean.mjs`:
 
 ```js
-import {rm} from "node:fs/promises";
+import { rm } from "node:fs/promises";
 
 const paths = ["apps/ego-cli/dist", "apps/ego-api/dist", "packages", ".ego"];
 
@@ -2487,7 +2510,7 @@ for (const path of paths) {
   if (path === "packages") {
     continue;
   }
-  await rm(path, {recursive: true, force: true});
+  await rm(path, { recursive: true, force: true });
 }
 
 console.log("Cleaned generated EGO-Graph artifacts");
@@ -2570,6 +2593,7 @@ git commit -m "feat: add packaging smoke path"
 ## Task 10: Add Competition Delivery Documentation
 
 **Files:**
+
 - Create: `docs/architecture.md`
 - Create: `docs/development.md`
 - Create: `docs/user-guide.md`
@@ -2606,7 +2630,7 @@ Primary packages:
 
 Create `docs/development.md`:
 
-```md
+````md
 # EGO-Graph Development
 
 Requirements:
@@ -2625,6 +2649,7 @@ pnpm lint
 pnpm smoke
 pnpm ego -- --help
 ```
+````
 
 Local run:
 
@@ -2633,7 +2658,8 @@ pnpm build
 node apps/ego-cli/dist/index.js run --scenario web_pentest --input scenarios/web_pentest/basic/task.json --run-id local-run-001
 node apps/ego-cli/dist/index.js replay --trajectory-id local-run-001
 ```
-```
+
+````
 
 - [ ] **Step 3: Write user guide**
 
@@ -2646,7 +2672,7 @@ Start the terminal experience:
 
 ```bash
 ego
-```
+````
 
 Run the controlled web pentest scenario:
 
@@ -2671,7 +2697,8 @@ Run the evaluation dataset:
 ```bash
 ego eval --dataset datasets/evals/web_pentest.jsonl
 ```
-```
+
+````
 
 - [ ] **Step 4: Write testing documentation**
 
@@ -2687,7 +2714,7 @@ Automated checks:
 - `pnpm smoke`: package-level smoke path for help, doctor, run, and report output.
 
 The first scenario test uses only a controlled local fixture. External security tools must be added with parser fixtures and permission-policy tests before use in live runs.
-```
+````
 
 - [ ] **Step 5: Write security policy**
 
@@ -2793,6 +2820,7 @@ git commit -m "docs: add competition delivery guides"
 ## Task 11: Remove Empty Python Scaffold After TypeScript Replacement
 
 **Files:**
+
 - Delete: `backend/app/**/*.py`
 - Delete: `backend/tests/__init__.py`
 - Delete: empty `backend/` directories after tracked files are removed
@@ -2827,7 +2855,7 @@ Expected: Git removes only empty scaffold files that were replaced by the TypeSc
 
 Replace `docs/README.md` with:
 
-```md
+````md
 # EGO-Graph Repository Guide
 
 EGO-Graph is a TypeScript-first cybersecurity agent project for the XH-202609 competition. It packages a terminal command named `ego`.
@@ -2854,7 +2882,9 @@ pnpm build
 pnpm smoke
 node apps/ego-cli/dist/index.js run --scenario web_pentest --input scenarios/web_pentest/basic/task.json
 ```
-```
+````
+
+````
 
 - [ ] **Step 4: Re-run verification**
 
@@ -2864,7 +2894,7 @@ Run:
 pnpm build
 pnpm test
 pnpm smoke
-```
+````
 
 Expected: all commands still pass after scaffold cleanup.
 
@@ -2880,6 +2910,7 @@ git commit -m "chore: replace empty Python scaffold with TypeScript guide"
 ## Task 12: Final Acceptance Audit
 
 **Files:**
+
 - Inspect: `package.json`
 - Inspect: `apps/ego-cli/package.json`
 - Inspect: `apps/ego-cli/dist/index.js`
@@ -2956,4 +2987,3 @@ git commit -m "docs: update development memory for implementation slice"
 ```
 
 If `.claude/CLAUDE.MD` remains intentionally ignored, record the local update in the final implementation summary instead of committing it.
-

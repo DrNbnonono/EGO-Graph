@@ -1,4 +1,4 @@
-import {runMission, type MissionRunInput, type MissionRunResult} from "./agent-runner.js";
+import { runMission, type MissionRunInput, type MissionRunResult } from "./agent-runner.js";
 
 export type AgentRuntimeStage =
   | "ingest"

@@ -1,12 +1,12 @@
-import {access, mkdir} from "node:fs/promises";
-import {isModelConfigured, loadModelConfig} from "@ego-graph/llm";
-import {defaultEgoHome, sqlitePath, trajectoryDir} from "@ego-graph/storage";
+import { access, mkdir } from "node:fs/promises";
+import { isModelConfigured, loadModelConfig } from "@ego-graph/llm";
+import { defaultEgoHome, sqlitePath, trajectoryDir } from "@ego-graph/storage";
 
 export async function handleDoctorCommand(): Promise<void> {
   const egoHome = defaultEgoHome();
   const trajectories = trajectoryDir(egoHome);
   const modelConfig = loadModelConfig();
-  await mkdir(trajectories, {recursive: true});
+  await mkdir(trajectories, { recursive: true });
   await access(trajectories);
 
   console.log(`Node.js ${process.version}`);

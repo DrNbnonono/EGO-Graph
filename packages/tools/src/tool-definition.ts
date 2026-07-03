@@ -1,4 +1,4 @@
-import type {z, ZodTypeAny} from "zod";
+import type { z, ZodTypeAny } from "zod";
 
 export type ToolScopeKind = "fixture" | "network" | "file";
 export type ToolRiskLevel = "low" | "medium" | "high";

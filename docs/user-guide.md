@@ -42,16 +42,27 @@ Runtime API endpoints:
 Optional model planner configuration:
 
 ```bash
-export EGO_MODEL_PROVIDER=openai-compatible
-export EGO_MODEL_BASE_URL=https://your-openai-compatible-gateway.example
-export EGO_MODEL_CHAT_PATH=/v1/chat/completions
-export EGO_MODEL_API_KEY=...
-export EGO_MODEL_NAME=...
+export EGO_MODEL_PROVIDER=minimax
+export MINIMAX_API_KEY=sk-cp-...
+```
+
+The `minimax` profile defaults to the domestic Anthropic-compatible endpoint
+`https://api.minimaxi.com/anthropic`, Messages path `/v1/messages`, and model `MiniMax-M3`.
+You can also set `EGO_MODEL_API_KEY` instead of `MINIMAX_API_KEY`.
+
+Advanced overrides:
+
+```bash
+export EGO_MODEL_BASE_URL=https://api.minimaxi.com/anthropic
+export EGO_MODEL_CHAT_PATH=/v1/messages
+export EGO_MODEL_NAME=MiniMax-M3
+export EGO_MODEL_MAX_TOKENS=4096
 export EGO_MODEL_HEADERS='{"x-extra-header":"value"}'
 ```
 
-`EGO_MODEL_PROVIDER` accepts `openai-compatible`, `deepseek`, `minimax`, or `disabled`.
-If model configuration is missing or a model call fails, EGO-Graph falls back to deterministic planning.
+`EGO_MODEL_PROVIDER` accepts `minimax`, `openai-compatible`, `deepseek`, or `disabled`.
+If model configuration is missing or a model call fails, EGO-Graph falls back to deterministic planning
+and records the fallback in the trajectory.
 
 Check readiness:
 
