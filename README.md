@@ -27,6 +27,7 @@ Implemented:
 - Shared `@ego-graph/workbench` model for CLI/TUI/Web runtime state.
 - Policy-gated agent edit preview, approval, apply, check, and trajectory events.
 - MCP config loading and policy-gated placeholder tool registration.
+- Persistent LLM settings through Web, CLI, `.ego/config.json`, `ego.config.json`, or environment variables.
 
 In progress:
 
@@ -81,9 +82,54 @@ Check local readiness:
 ego doctor
 ```
 
-## MiniMax M3
+## LLM Settings
 
 EGO-Graph defaults to deterministic planning unless a model is configured.
+
+Use the Web Workbench:
+
+```bash
+ego serve
+```
+
+Open `http://127.0.0.1:4317`, then use the right-side model settings panel. Saved keys are written to local `.ego/config.json`.
+
+Use the CLI:
+
+```bash
+ego config model \
+  --provider openai-compatible \
+  --base-url https://api.example.com \
+  --api-key sk-your-key \
+  --model your-model
+```
+
+Local JSON configuration:
+
+```json
+{
+  "model": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://api.example.com",
+    "apiKey": "sk-your-key",
+    "model": "your-model",
+    "chatPath": "/v1/chat/completions",
+    "wireApi": "openai-chat-completions",
+    "maxTokens": 4096,
+    "timeoutMs": 30000,
+    "headers": {}
+  }
+}
+```
+
+Config lookup order is:
+
+1. Environment variables.
+2. `.ego/config.json`.
+3. `ego.config.json`.
+4. Deterministic fallback.
+
+MiniMax M3 still works through environment variables:
 
 ```bash
 export EGO_MODEL_PROVIDER=minimax
@@ -97,6 +143,7 @@ The `minimax` profile defaults to:
 - `MiniMax-M3`
 
 Never commit API keys. Use shell environment variables, `.env.local`, or a secret manager.
+`.ego/` is ignored by git and is the recommended place for local persisted keys.
 
 ## Architecture
 
@@ -112,7 +159,7 @@ packages/
   workbench   Shared TUI/Web state model
   mcp         MCP config, manifest, and adapter boundary
   core        Mission graph, task specs, trajectories, runner
-  llm         MiniMax M3 and compatible model providers
+  llm         Persistent LLM config plus MiniMax M3 and compatible model providers
   tools       Local tool registry and permission policy
   overlays    Security scenario overlays
   storage     JSONL and SQLite stores

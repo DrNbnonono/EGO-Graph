@@ -1,11 +1,12 @@
 import { access, mkdir } from "node:fs/promises";
-import { isModelConfigured, loadModelConfig } from "@ego-graph/llm";
+import { isModelConfigured, loadModelConfigWithSource } from "@ego-graph/llm";
 import { defaultEgoHome, sqlitePath, trajectoryDir } from "@ego-graph/storage";
 
 export async function handleDoctorCommand(): Promise<void> {
   const egoHome = defaultEgoHome();
   const trajectories = trajectoryDir(egoHome);
-  const modelConfig = loadModelConfig();
+  const loadedModelConfig = loadModelConfigWithSource({ workspaceRoot: process.cwd() });
+  const modelConfig = loadedModelConfig.config;
   await mkdir(trajectories, { recursive: true });
   await access(trajectories);
 
@@ -16,6 +17,11 @@ export async function handleDoctorCommand(): Promise<void> {
   console.log(
     `Model provider ${modelConfig.provider} ${
       isModelConfigured(modelConfig) ? "configured" : "using deterministic fallback"
+    }`,
+  );
+  console.log(
+    `Model config source ${loadedModelConfig.source}${
+      loadedModelConfig.path ? ` (${loadedModelConfig.path})` : ""
     }`,
   );
   console.log("EGO-Graph doctor complete");

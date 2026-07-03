@@ -41,6 +41,7 @@ describe("ego api server", () => {
     expect(dashboardResponse.headers.get("content-type")).toContain("text/html");
     expect(html).toContain("EGO-Graph 可视化驾驶舱");
     expect(html).toContain("对话控制台");
+    expect(html).toContain("模型设置");
     expect(html).toContain("项目进展");
     expect(html).toContain('id="mission-chat"');
     expect(html).toContain("/assets/brand/ego-lotus.png");
@@ -50,6 +51,7 @@ describe("ego api server", () => {
     expect(js).toContain("submitMission");
     expect(js).toContain("/agent/runs");
     expect(js).toContain("/approve");
+    expect(js).toContain("/api/config/model");
     expect(js).toContain("renderDiffPreview");
     expect(logoResponse.status).toBe(200);
     expect(logoResponse.headers.get("content-type")).toContain("image/png");
@@ -68,6 +70,41 @@ describe("ego api server", () => {
       },
     });
     expect(workbench.workbench.quickCommands).toContain("/scan");
+  });
+
+  it("persists model settings through the config API", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "ego-api-model-config-workspace-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-api-model-config-home-"));
+    await writeFile(join(workspaceRoot, "package.json"), '{"name":"model-config-fixture"}', "utf8");
+    const app = createServer({ workspaceRoot, egoHome });
+
+    const beforeResponse = await app.request("/api/config/model");
+    const before = await beforeResponse.json();
+    const saveResponse = await app.request("/api/config/model", {
+      method: "POST",
+      body: JSON.stringify({
+        provider: "openai-compatible",
+        baseUrl: "https://gateway.example.test",
+        apiKey: "local-secret-key",
+        model: "lotus-test-model",
+      }),
+      headers: { "content-type": "application/json" },
+    });
+    const saved = await saveResponse.json();
+    const workbench = await app.request("/api/workbench").then((result) => result.json());
+    const configFile = JSON.parse(
+      await readFile(join(workspaceRoot, ".ego", "config.json"), "utf8"),
+    ) as { model: { apiKey: string; model: string } };
+
+    expect(before.model.source).toBe("none");
+    expect(saveResponse.status).toBe(200);
+    expect(saved.model.source).toBe("workspace-local");
+    expect(saved.model.apiKeyConfigured).toBe(true);
+    expect(saved.model.apiKey).toBeUndefined();
+    expect(configFile.model.apiKey).toBe("local-secret-key");
+    expect(configFile.model.model).toBe("lotus-test-model");
+    expect(workbench.workbench.model.configured).toBe(true);
+    expect(workbench.workbench.model.source).toBe("workspace-local");
   });
 
   it("handles natural-language coding agent turns through the chat API", async () => {

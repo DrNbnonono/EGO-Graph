@@ -155,6 +155,29 @@ export function renderDashboardHtml(): string {
               <div><dt>优先级</dt><dd id="context-priority">-</dd></div>
             </dl>
           </section>
+          <section class="panel model-settings-panel">
+            <div class="panel-heading compact"><h2>模型设置</h2><span id="model-source">-</span></div>
+            <form class="model-settings-form" id="model-settings-form">
+              <select id="model-provider" name="provider" aria-label="模型服务商">
+                <option value="disabled">disabled</option>
+                <option value="openai-compatible">openai-compatible</option>
+                <option value="deepseek">deepseek</option>
+                <option value="minimax">minimax</option>
+              </select>
+              <input id="model-base-url" name="baseUrl" placeholder="Base URL" />
+              <input id="model-name" name="model" placeholder="Model name" />
+              <input id="model-api-key" name="apiKey" placeholder="API Key，保存到本地 .ego/config.json" type="password" />
+              <div class="model-settings-grid">
+                <input id="model-chat-path" name="chatPath" placeholder="/v1/chat/completions" />
+                <select id="model-wire-api" name="wireApi" aria-label="模型协议">
+                  <option value="openai-chat-completions">OpenAI Chat</option>
+                  <option value="anthropic-messages">Anthropic Messages</option>
+                </select>
+              </div>
+              <button class="model-save-button" type="submit">保存模型配置</button>
+              <p id="model-settings-note">API Key 仅写入本地 .ego/config.json。</p>
+            </form>
+          </section>
           <section class="panel">
             <div class="panel-heading compact"><h2>文件</h2><button class="ghost">‹</button></div>
             <div class="file-list" id="file-list"></div>

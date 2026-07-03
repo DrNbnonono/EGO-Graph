@@ -49,7 +49,7 @@ export async function handleRunCommand(options: RunCommandOptions): Promise<void
     new JsonlTrajectoryStore(trajectoryDir(egoHome)),
     sqliteStore,
   ]);
-  const planner = loadPlannerFromEnv();
+  const planner = loadPlannerFromWorkspace(process.cwd());
 
   const result = await runMission({
     workspaceRoot: process.cwd(),
@@ -98,8 +98,8 @@ export async function handleRunCommand(options: RunCommandOptions): Promise<void
   console.log(report);
 }
 
-function loadPlannerFromEnv(): AgentPlanner | undefined {
-  const provider = createChatModelProvider(loadModelConfig());
+function loadPlannerFromWorkspace(workspaceRoot: string): AgentPlanner | undefined {
+  const provider = createChatModelProvider(loadModelConfig({ workspaceRoot }));
   return provider ? createModelBackedPlanner(provider) : undefined;
 }
 

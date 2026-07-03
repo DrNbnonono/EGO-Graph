@@ -1,0 +1,41 @@
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execa } from "execa";
+import { describe, expect, it } from "vitest";
+
+describe("ego config model", () => {
+  it("persists local model settings in .ego/config.json", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-cli-config-"));
+    const cli = join(process.cwd(), "apps", "ego-cli", "dist", "index.js");
+    await writeFile(join(root, "package.json"), '{"name":"ego-cli-config-fixture"}', "utf8");
+
+    const result = await execa(
+      "node",
+      [
+        cli,
+        "config",
+        "model",
+        "--provider",
+        "openai-compatible",
+        "--base-url",
+        "https://gateway.example.test",
+        "--api-key",
+        "cli-secret-key",
+        "--model",
+        "cli-model",
+      ],
+      { cwd: root },
+    );
+    const config = JSON.parse(await readFile(join(root, ".ego", "config.json"), "utf8")) as {
+      model: { provider: string; apiKey: string; model: string };
+    };
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Model provider openai-compatible");
+    expect(result.stdout).toContain("workspace-local");
+    expect(config.model.provider).toBe("openai-compatible");
+    expect(config.model.apiKey).toBe("cli-secret-key");
+    expect(config.model.model).toBe("cli-model");
+  });
+});

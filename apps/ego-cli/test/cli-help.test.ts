@@ -10,6 +10,7 @@ describe("ego cli help", () => {
     expect(result.stdout).toContain("run");
     expect(result.stdout).toContain("replay");
     expect(result.stdout).toContain("eval");
+    expect(result.stdout).toContain("config");
     expect(result.stdout).toContain("doctor");
     expect(result.stdout).toContain("serve");
   });

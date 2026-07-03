@@ -1,6 +1,6 @@
 import { freemem, loadavg, totalmem } from "node:os";
 import { basename } from "node:path";
-import { isModelConfigured, loadModelConfig } from "@ego-graph/llm";
+import { isModelConfigured, loadModelConfigWithSource } from "@ego-graph/llm";
 import { loadMcpConfig } from "@ego-graph/mcp";
 import {
   defaultEgoHome,
@@ -51,6 +51,7 @@ export type WorkbenchPendingEdit = {
 export type WorkbenchCheck = {
   runId: string;
   name: string;
+  command: string;
   status: "passed" | "failed";
   exitCode: number;
 };
@@ -68,8 +69,14 @@ export type WorkbenchState = {
   model: {
     provider: string;
     name: string;
+    baseUrl?: string;
+    chatPath: string;
+    wireApi: string;
     configured: boolean;
+    apiKeyConfigured: boolean;
     label: string;
+    source: string;
+    sourcePath?: string;
   };
   storage: {
     egoHome: string;
@@ -119,7 +126,8 @@ export async function readWorkbenchState(input: ReadWorkbenchStateInput): Promis
     workspace.summarizeProject(),
     workspace.listFiles({ limit: 80, maxDepth: 3 }),
   ]);
-  const modelConfig = loadModelConfig();
+  const loadedModelConfig = loadModelConfigWithSource({ workspaceRoot });
+  const modelConfig = loadedModelConfig.config;
   const configured = isModelConfigured(modelConfig);
   const mcpConfig = await loadMcpConfig(workspaceRoot);
   const mcp = mcpConfig.manifest;
@@ -130,6 +138,7 @@ export async function readWorkbenchState(input: ReadWorkbenchStateInput): Promis
     const recentRuns = (await store.listRuns()).slice(0, 8);
     const pendingEdits = (await store.listPendingAgentEdits()).slice(0, 8);
     const pendingApprovals = await store.listApprovals("pending");
+    const recentChecks = await store.listRecentAgentChecks(8);
     const newestRun = recentRuns[0];
     const clock = new Date();
 
@@ -146,8 +155,14 @@ export async function readWorkbenchState(input: ReadWorkbenchStateInput): Promis
       model: {
         provider: modelConfig.provider,
         name: modelConfig.model ?? "deterministic",
+        ...(modelConfig.baseUrl ? { baseUrl: modelConfig.baseUrl } : {}),
+        chatPath: modelConfig.chatPath,
+        wireApi: modelConfig.wireApi,
         configured,
+        apiKeyConfigured: Boolean(modelConfig.apiKey),
         label: configured ? (modelConfig.model ?? modelConfig.provider) : "deterministic fallback",
+        source: loadedModelConfig.source,
+        ...(loadedModelConfig.path ? { sourcePath: loadedModelConfig.path } : {}),
       },
       storage: {
         egoHome,
@@ -173,7 +188,13 @@ export async function readWorkbenchState(input: ReadWorkbenchStateInput): Promis
         createdAt: edit.createdAt,
       })),
       changedFiles: [...new Set(pendingEdits.flatMap((edit) => edit.files))],
-      lastChecks: [],
+      lastChecks: recentChecks.map((check) => ({
+        runId: check.runId,
+        name: check.name,
+        command: check.command,
+        status: check.status,
+        exitCode: check.exitCode,
+      })),
       quickCommands: ["/help", "/scan", "/analyze", "/report", "/threat", "/config", "/clear"],
       commands: [
         "ego",
@@ -181,6 +202,7 @@ export async function readWorkbenchState(input: ReadWorkbenchStateInput): Promis
         "ego run --scenario web_pentest --input scenarios/web_pentest/basic/task.json",
         "ego replay --trajectory-id <run-id>",
         "ego eval --dataset datasets/evals/web_pentest.jsonl",
+        "ego config model --provider openai-compatible --base-url <url> --api-key <key> --model <name>",
         "ego doctor",
       ],
       recentRuns,

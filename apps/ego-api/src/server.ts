@@ -10,7 +10,15 @@ import {
   type TaskSpecInput,
   type TrajectoryEvent,
 } from "@ego-graph/core";
-import { createChatModelProvider, loadModelConfig, type ChatModelProvider } from "@ego-graph/llm";
+import {
+  createChatModelProvider,
+  loadModelConfig,
+  loadModelConfigWithSource,
+  saveModelConfig,
+  toPublicModelConfig,
+  type ChatModelProvider,
+  type PersistedModelConfig,
+} from "@ego-graph/llm";
 import {
   readDashboardStatus,
   renderDashboardCss,
@@ -101,6 +109,23 @@ export function createServer(options: CreateServerOptions = {}): Hono {
     return context.json({
       ok: true,
       workbench: await readWorkbenchState({ workspaceRoot, egoHome }),
+    });
+  });
+
+  app.get("/api/config/model", (context) => {
+    return context.json({
+      ok: true,
+      model: toPublicModelConfig(loadModelConfigWithSource({ workspaceRoot })),
+    });
+  });
+
+  app.post("/api/config/model", async (context) => {
+    const body = (await context.req.json()) as PersistedModelConfig;
+    const loaded = await saveModelConfig({ workspaceRoot, ...body });
+
+    return context.json({
+      ok: true,
+      model: toPublicModelConfig(loaded),
     });
   });
 
@@ -303,7 +328,7 @@ export function createServer(options: CreateServerOptions = {}): Hono {
       constraints: ["authorized-fixture-only"],
     };
     const runId = body.runId ?? `api-run-${Date.now()}`;
-    const planner = loadPlannerFromEnv();
+    const planner = loadPlannerFromWorkspace(workspaceRoot);
     const sqliteStore = new SqliteEgoStore(sqlitePath(egoHome));
     const store = new CompositeTrajectoryStore([
       new JsonlTrajectoryStore(trajectoryDir(egoHome)),
@@ -475,8 +500,8 @@ function findWorkspaceRoot(start: string): string {
   }
 }
 
-function loadPlannerFromEnv(): AgentPlanner | undefined {
-  const provider = createChatModelProvider(loadModelConfig());
+function loadPlannerFromWorkspace(workspaceRoot: string): AgentPlanner | undefined {
+  const provider = createChatModelProvider(loadModelConfig({ workspaceRoot }));
   return provider ? createModelBackedPlanner(provider) : undefined;
 }
 

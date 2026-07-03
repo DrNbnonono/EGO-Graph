@@ -34,7 +34,8 @@ body {
 
 button,
 input,
-textarea {
+textarea,
+select {
   font: inherit;
 }
 
@@ -270,6 +271,61 @@ h2 {
   color: var(--muted);
 }
 
+.model-settings-panel .panel-heading span {
+  overflow: hidden;
+  max-width: 140px;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-settings-form {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.model-settings-form select,
+.model-settings-form input {
+  min-height: 34px;
+}
+
+.model-settings-form select {
+  width: 100%;
+  border: 1px solid rgba(178, 94, 255, 0.36);
+  border-radius: 6px;
+  background: rgba(5, 7, 15, 0.9);
+  color: var(--text);
+}
+
+.model-settings-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(112px, 0.76fr);
+  gap: 8px;
+}
+
+.model-save-button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 6px;
+  background: linear-gradient(135deg, rgba(195, 92, 255, 0.95), rgba(109, 232, 255, 0.82));
+  color: #070912;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.model-save-button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+#model-settings-note {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .intro-panel {
   padding: 14px 18px;
   line-height: 1.7;
@@ -382,7 +438,8 @@ h2 {
 }
 
 textarea,
-input {
+input,
+select {
   width: 100%;
   border: 1px solid rgba(178, 94, 255, 0.36);
   border-radius: 6px;
@@ -403,7 +460,8 @@ input {
 }
 
 textarea:focus,
-input:focus {
+input:focus,
+select:focus {
   border-color: var(--lotus);
   box-shadow: 0 0 0 3px rgba(195, 92, 255, 0.16);
 }

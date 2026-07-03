@@ -50,6 +50,28 @@ export function createProgram(): Command {
       await handleDoctorCommand();
     });
 
+  const config = program.command("config").description("Manage local EGO-Graph settings");
+
+  config
+    .command("model")
+    .description("Show or persist local LLM settings in .ego/config.json")
+    .option(
+      "--provider <provider>",
+      "model provider: openai-compatible, deepseek, minimax, disabled",
+    )
+    .option("--base-url <url>", "model API base URL")
+    .option("--api-key <key>", "model API key stored in local .ego/config.json")
+    .option("--model <name>", "model name")
+    .option("--chat-path <path>", "chat endpoint path")
+    .option("--wire-api <api>", "wire API: openai-chat-completions or anthropic-messages")
+    .option("--max-tokens <n>", "default max tokens")
+    .option("--timeout-ms <n>", "request timeout in milliseconds")
+    .option("--headers <json>", "extra HTTP headers as JSON")
+    .action(async (options) => {
+      const { handleConfigModelCommand } = await import("./commands/config.js");
+      await handleConfigModelCommand(options);
+    });
+
   program
     .command("serve")
     .description("Start the local EGO-Graph API")

@@ -274,6 +274,9 @@ function RightSidebar({ workbench }: { workbench: WorkbenchState }): ReactElemen
             Patch {edit.runId}: {edit.files.length} files
           </Text>
         ))}
+        {workbench.pendingEdits.length > 0 ? (
+          <Text color="yellow">打开 ego serve 完成 Patch diff 审批</Text>
+        ) : null}
       </Box>
     </Box>
   );
@@ -307,9 +310,11 @@ function replyForCommand(input: string, workbench?: WorkbenchState): string | un
   if (normalized === "/config" || normalized === "doctor") {
     return [
       `模型: ${workbench?.model.label ?? "deterministic fallback"}`,
+      `模型配置: ${workbench?.model.source ?? "none"}`,
       `SQLite: ${workbench?.storage.sqlite ?? ".ego/ego.sqlite"}`,
       `待审批 Patch: ${workbench?.pendingEdits.length ?? 0}`,
       `MCP: ${workbench?.mcp.status ?? "not_configured"}`,
+      "Patch 审批: TUI 仅显示状态，请打开 ego serve 查看 diff 并 Approve",
       "写入策略: workspace 内、需审批、拒绝 .env/.git/node_modules/dist",
       "完整检查: ego doctor",
     ].join("\n");

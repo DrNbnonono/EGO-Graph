@@ -179,6 +179,37 @@ function renderMcp(mcp) {
   list.replaceChildren(status);
 }
 
+function renderModelSettings(model) {
+  const provider = byId("model-provider");
+  const baseUrl = byId("model-base-url");
+  const modelName = byId("model-name");
+  const apiKey = byId("model-api-key");
+  const chatPath = byId("model-chat-path");
+  const wireApi = byId("model-wire-api");
+  const source = byId("model-source");
+  const note = byId("model-settings-note");
+  if (!provider || !baseUrl || !modelName || !apiKey || !chatPath || !wireApi) return;
+
+  provider.value = model.provider || "disabled";
+  baseUrl.value = model.baseUrl || "";
+  modelName.value = model.name === "deterministic" ? "" : model.name || "";
+  chatPath.value = model.chatPath || "";
+  wireApi.value = model.wireApi || "openai-chat-completions";
+  apiKey.value = "";
+  apiKey.placeholder = model.apiKeyConfigured
+    ? "API Key 已保存，留空则保持不变"
+    : "API Key，保存到本地 .ego/config.json";
+  if (source) {
+    source.textContent = model.source || "none";
+    source.title = model.sourcePath || model.source || "none";
+  }
+  if (note) {
+    note.textContent = model.apiKeyConfigured
+      ? "已检测到本地密钥；保存时留空 API Key 会保持原值。"
+      : "API Key 仅写入本地 .ego/config.json。";
+  }
+}
+
 function renderDiffPreview(result) {
   const preview = byId("diff-preview");
   const approve = byId("approve-button");
@@ -298,6 +329,7 @@ function renderWorkbench(workbench) {
   renderRuns(workbench.recentRuns);
   renderCommands(workbench.commands);
   renderMcp(workbench.mcp);
+  renderModelSettings(workbench.model);
   renderChecks(workbench.lastChecks || []);
 
   if (!state.activePatch && workbench.pendingEdits && workbench.pendingEdits.length > 0) {
@@ -317,6 +349,48 @@ async function refreshStatus() {
     throw new Error(body.error || "workbench status failed");
   }
   renderWorkbench(body.workbench);
+}
+
+async function submitModelSettings(event) {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button[type=submit]");
+  const note = byId("model-settings-note");
+  const payload = compactObject({
+    provider: byId("model-provider").value,
+    baseUrl: byId("model-base-url").value.trim(),
+    model: byId("model-name").value.trim(),
+    apiKey: byId("model-api-key").value.trim(),
+    chatPath: byId("model-chat-path").value.trim(),
+    wireApi: byId("model-wire-api").value,
+  });
+
+  if (button) {
+    button.disabled = true;
+    button.textContent = "保存中";
+  }
+
+  try {
+    const response = await fetch("/api/config/model", {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify(payload),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) {
+      throw new Error(result.error || "model config save failed");
+    }
+    if (note) note.textContent = "模型配置已保存到本地 .ego/config.json。";
+    appendMessage("assistant", "模型配置已保存，后续自然语言 Patch 会优先使用新配置。");
+    await refreshStatus();
+  } catch (error) {
+    if (note) note.textContent = "模型配置保存失败：" + formatError(error);
+    appendMessage("assistant", "模型配置保存失败：" + formatError(error));
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "保存模型配置";
+    }
+  }
 }
 
 function commandReply(goal) {
@@ -339,6 +413,7 @@ function commandReply(goal) {
     const workbench = state.workbench;
     const pending = workbench?.pendingEdits?.length || 0;
     return "模型：" + (workbench?.model.label || "deterministic fallback") +
+      "\n模型配置：" + (workbench?.model.source || "none") +
       "\nSQLite：" + (workbench?.storage.sqlite || ".ego/ego.sqlite") +
       "\n待审批 Patch：" + pending + "，打开 ego serve 完成审批。";
   }
@@ -421,7 +496,14 @@ function formatError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function compactObject(input) {
+  return Object.fromEntries(
+    Object.entries(input).filter(([, value]) => value !== undefined && value !== ""),
+  );
+}
+
 byId("mission-form").addEventListener("submit", submitMission);
+byId("model-settings-form")?.addEventListener("submit", submitModelSettings);
 byId("approve-button")?.addEventListener("click", () => {
   approvePendingPatch().catch((error) => {
     appendMessage("assistant", "审批失败：" + formatError(error));

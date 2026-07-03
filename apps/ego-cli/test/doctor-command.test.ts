@@ -9,5 +9,6 @@ describe("ego doctor", () => {
     expect(result.stdout).toContain("Node.js");
     expect(result.stdout).toContain("EGO_HOME");
     expect(result.stdout).toContain("Trajectory storage");
+    expect(result.stdout).toContain("Model config source");
   });
 });

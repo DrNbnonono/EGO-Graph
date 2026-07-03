@@ -218,7 +218,7 @@ function resolveModelProvider(input: CodingAgentTurnInput): ChatModelProvider | 
   }
 
   try {
-    return createChatModelProvider(loadModelConfig());
+    return createChatModelProvider(loadModelConfig({ workspaceRoot: input.workspaceRoot }));
   } catch {
     return undefined;
   }
