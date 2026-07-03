@@ -1,5 +1,9 @@
 import {Command} from "commander";
+import {handleDoctorCommand} from "./commands/doctor.js";
+import {handleEvalCommand} from "./commands/eval.js";
+import {handleReplayCommand} from "./commands/replay.js";
 import {handleRunCommand} from "./commands/run.js";
+import {handleServeCommand} from "./commands/serve.js";
 
 export function createProgram(): Command {
   const program = new Command();
@@ -20,25 +24,25 @@ export function createProgram(): Command {
   program
     .command("replay")
     .description("Replay a recorded trajectory")
-    .requiredOption("--trajectory-id <id>", "trajectory id")
-    .action(() => {
-      console.log("ego replay is not wired yet");
+    .requiredOption("--trajectory-id <trajectoryId>", "trajectory id")
+    .action(async (options) => {
+      await handleReplayCommand(options);
     });
 
   program
     .command("eval")
     .description("Run an evaluation dataset")
     .requiredOption("--dataset <path>", "JSONL evaluation dataset")
-    .action(() => {
-      console.log("ego eval is not wired yet");
+    .action(async (options) => {
+      await handleEvalCommand(options);
     });
 
-  program.command("doctor").description("Check local EGO-Graph readiness").action(() => {
-    console.log("ego doctor is not wired yet");
+  program.command("doctor").description("Check local EGO-Graph readiness").action(async () => {
+    await handleDoctorCommand();
   });
 
-  program.command("serve").description("Start the local EGO-Graph API").action(() => {
-    console.log("ego serve is not wired yet");
+  program.command("serve").description("Start the local EGO-Graph API").action(async () => {
+    await handleServeCommand();
   });
 
   return program;
