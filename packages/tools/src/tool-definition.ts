@@ -18,8 +18,8 @@ export type ToolDefinition<InputSchema extends ZodTypeAny, OutputSchema extends 
   inputSchema: InputSchema;
   outputSchema: OutputSchema;
   permission: ToolPermission;
-  execute: (
+  execute(
     input: z.output<InputSchema>,
     context: ToolExecutionContext,
-  ) => Promise<z.output<OutputSchema>>;
+  ): Promise<z.output<OutputSchema>>;
 };
