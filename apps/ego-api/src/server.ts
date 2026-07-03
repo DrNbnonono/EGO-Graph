@@ -27,12 +27,38 @@ import {
   trajectoryDir,
 } from "@ego-graph/storage";
 import { Hono } from "hono";
+import {
+  readDashboardStatus,
+  renderDashboardCss,
+  renderDashboardHtml,
+  renderDashboardJs,
+} from "./dashboard.js";
 
 export function createServer(): Hono {
   const app = new Hono();
 
   app.get("/health", (context) => {
     return context.json({ ok: true, service: "ego-api" });
+  });
+
+  app.get("/", (context) => {
+    return context.html(renderDashboardHtml());
+  });
+
+  app.get("/assets/dashboard.css", (context) => {
+    return context.text(renderDashboardCss(), 200, {
+      "content-type": "text/css; charset=utf-8",
+    });
+  });
+
+  app.get("/assets/dashboard.js", (context) => {
+    return context.text(renderDashboardJs(), 200, {
+      "content-type": "application/javascript; charset=utf-8",
+    });
+  });
+
+  app.get("/api/status", async (context) => {
+    return context.json(await readDashboardStatus());
   });
 
   app.post("/runs", async (context) => {

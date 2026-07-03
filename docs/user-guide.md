@@ -1,10 +1,26 @@
 # EGO-Graph User Guide
 
-Start the terminal experience:
+Start the terminal TUI. It opens a Chinese project cockpit with a small command dialog, project
+progress, and the Web dashboard entry:
 
 ```bash
 ego
 ```
+
+Start the browser visualization:
+
+```bash
+ego serve
+```
+
+Then open:
+
+```text
+http://127.0.0.1:4317
+```
+
+The Web dashboard shows project progress, model status, storage paths, recent runs, terminal
+commands, and a dialog-style mission form for controlled `web_pentest` runs.
 
 Run the controlled web pentest scenario:
 
@@ -23,15 +39,17 @@ Replay the decision trail:
 ego replay --trajectory-id demo-run-001
 ```
 
-Start the local API and create a run:
+Start the local dashboard/API and create a run:
 
 ```bash
 ego serve
-curl -X POST http://localhost:3000/runs -H "content-type: application/json" -d '{"runId":"api-demo-001"}'
+curl -X POST http://127.0.0.1:4317/runs -H "content-type: application/json" -d '{"runId":"api-demo-001"}'
 ```
 
 Runtime API endpoints:
 
+- `GET /`
+- `GET /api/status`
 - `POST /runs`
 - `GET /runs/:id`
 - `GET /runs/:id/events`

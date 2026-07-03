@@ -21,9 +21,14 @@ Local run:
 
 ```bash
 pnpm build
+node apps/ego-cli/dist/index.js
+node apps/ego-cli/dist/index.js serve
 node apps/ego-cli/dist/index.js run --scenario web_pentest --input scenarios/web_pentest/basic/task.json --run-id local-run-001
 node apps/ego-cli/dist/index.js replay --trajectory-id local-run-001
 ```
+
+After `serve`, open `http://127.0.0.1:4317` to inspect the Web dashboard. The page is served by
+`apps/ego-api/src/dashboard.ts` and intentionally avoids a separate frontend build step.
 
 Enable the MiniMax M3 planner locally:
 
