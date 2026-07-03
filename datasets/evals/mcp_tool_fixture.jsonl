@@ -1,0 +1,2 @@
+{"id":"mcp-fixture-discovery-001","kind":"mcp_tool_fixture","configFile":"ego.config.json","expectedServers":["local-fixture"],"expectedToolPrefix":"mcp.","notes":"MCP v1 covers config loading, validation, and tool registry mapping; real transport is intentionally deferred."}
+{"id":"mcp-fixture-approval-001","kind":"mcp_tool_fixture","configFile":".ego/config.json","expectedRiskLevel":"medium","expectedRequiresApproval":true,"notes":"Mapped MCP tools must enter the policy/approval boundary before execution."}

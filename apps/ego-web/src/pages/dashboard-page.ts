@@ -127,6 +127,15 @@ export function renderDashboardHtml(): string {
             </div>
           </section>
 
+          <section class="panel patch-panel">
+            <div class="panel-heading compact">
+              <h2>Patch Preview</h2>
+              <button class="ghost approve-action" id="approve-button" type="button" disabled>Approve</button>
+            </div>
+            <pre class="diff-preview" id="diff-preview">暂无待审批 Patch</pre>
+            <div class="check-list" id="check-list"></div>
+          </section>
+
           <form class="composer" id="mission-form">
             <textarea id="goal-input" name="goal" rows="3" placeholder="在此输入你的安全分析需求或命令...">阅读项目状态并说明下一步应该做什么</textarea>
             <div class="composer-actions">

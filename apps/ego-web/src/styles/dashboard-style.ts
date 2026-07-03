@@ -315,6 +315,62 @@ h2 {
   border-color: rgba(109, 232, 255, 0.45);
 }
 
+.patch-panel {
+  min-height: 210px;
+}
+
+.approve-action {
+  min-width: 88px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.approve-action:not(:disabled) {
+  color: #070912;
+  background: var(--green);
+}
+
+.diff-preview {
+  min-height: 150px;
+  max-height: 260px;
+  margin: 0;
+  overflow: auto;
+  padding: 12px 14px;
+  border: 0;
+  border-bottom: 1px solid rgba(178, 94, 255, 0.2);
+  background: rgba(3, 5, 10, 0.78);
+  color: var(--text);
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+
+.check-list {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.check-item {
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid rgba(178, 94, 255, 0.24);
+  border-radius: 6px;
+}
+
+.check-item.passed {
+  border-color: rgba(100, 243, 154, 0.42);
+}
+
+.check-item.failed {
+  border-color: rgba(255, 107, 143, 0.52);
+}
+
+.check-item small {
+  color: var(--muted);
+}
+
 .composer {
   display: grid;
   gap: 10px;

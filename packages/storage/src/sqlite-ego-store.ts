@@ -21,7 +21,7 @@ export type SqliteReportRecord = {
   createdAt: string;
 };
 
-export type AgentRunStatus = "inspect" | "pending_approval" | "applied" | "blocked";
+export type AgentRunStatus = "inspect" | "pending_approval" | "needs_model" | "applied" | "blocked";
 
 export type AgentRunRecord = {
   runId: string;
@@ -303,7 +303,14 @@ export class SqliteEgoStore {
           "updated_at = excluded.updated_at",
         ].join(" "),
       )
-      .run(record.runId, record.message, record.mode, record.status, record.createdAt, record.updatedAt);
+      .run(
+        record.runId,
+        record.message,
+        record.mode,
+        record.status,
+        record.createdAt,
+        record.updatedAt,
+      );
   }
 
   async getAgentRun(runId: string): Promise<AgentRunRecord | undefined> {
@@ -354,7 +361,9 @@ export class SqliteEgoStore {
 
   async getLatestAgentEdit(runId: string): Promise<AgentEditRecord | undefined> {
     const row = this.db
-      .prepare("select * from agent_edits where run_id = ? order by created_at desc, id desc limit 1")
+      .prepare(
+        "select * from agent_edits where run_id = ? order by created_at desc, id desc limit 1",
+      )
       .get(runId) as AgentEditRow | undefined;
     return row ? agentEditRowToRecord(row) : undefined;
   }
@@ -372,7 +381,9 @@ export class SqliteEgoStore {
     appliedAt?: string,
   ): Promise<void> {
     this.db
-      .prepare("update agent_edits set status = ?, applied_at = ? where run_id = ? and status = 'pending'")
+      .prepare(
+        "update agent_edits set status = ?, applied_at = ? where run_id = ? and status = 'pending'",
+      )
       .run(status, appliedAt ?? null, runId);
   }
 
@@ -401,6 +412,13 @@ export class SqliteEgoStore {
     const rows = this.db
       .prepare("select * from agent_checks where run_id = ? order by created_at asc, id asc")
       .all(runId) as AgentCheckRow[];
+    return rows.map(agentCheckRowToRecord);
+  }
+
+  async listRecentAgentChecks(limit = 8): Promise<AgentCheckRecord[]> {
+    const rows = this.db
+      .prepare("select * from agent_checks order by created_at desc, id desc limit ?")
+      .all(limit) as AgentCheckRow[];
     return rows.map(agentCheckRowToRecord);
   }
 
@@ -490,7 +508,7 @@ export class SqliteEgoStore {
         run_id text primary key,
         message text not null,
         mode text not null,
-        status text not null check (status in ('inspect', 'pending_approval', 'applied', 'blocked')),
+        status text not null check (status in ('inspect', 'pending_approval', 'needs_model', 'applied', 'blocked')),
         created_at text not null,
         updated_at text not null
       );
@@ -543,6 +561,38 @@ export class SqliteEgoStore {
         output_json text,
         created_at text not null
       );
+    `);
+    this.ensureAgentRunsStatusConstraint();
+  }
+
+  private ensureAgentRunsStatusConstraint(): void {
+    const row = this.db
+      .prepare("select sql from sqlite_master where type = 'table' and name = 'agent_runs'")
+      .get() as { sql: string } | undefined;
+
+    if (!row?.sql || row.sql.includes("'needs_model'")) {
+      return;
+    }
+
+    // 中文注释：旧库的 CHECK 约束缺少 needs_model，只能通过重建表完成兼容迁移。
+    this.db.exec(`
+      drop table if exists agent_runs_needs_model_migration;
+      alter table agent_runs rename to agent_runs_needs_model_migration;
+
+      create table agent_runs (
+        run_id text primary key,
+        message text not null,
+        mode text not null,
+        status text not null check (status in ('inspect', 'pending_approval', 'needs_model', 'applied', 'blocked')),
+        created_at text not null,
+        updated_at text not null
+      );
+
+      insert into agent_runs (run_id, message, mode, status, created_at, updated_at)
+      select run_id, message, mode, status, created_at, updated_at
+      from agent_runs_needs_model_migration;
+
+      drop table agent_runs_needs_model_migration;
     `);
   }
 

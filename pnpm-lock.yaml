@@ -137,12 +137,18 @@ importers:
       '@ego-graph/core':
         specifier: workspace:*
         version: link:../core
+      '@ego-graph/llm':
+        specifier: workspace:*
+        version: link:../llm
       '@ego-graph/mcp':
         specifier: workspace:*
         version: link:../mcp
       '@ego-graph/workspace':
         specifier: workspace:*
         version: link:../workspace
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
 
   packages/core:
     dependencies:

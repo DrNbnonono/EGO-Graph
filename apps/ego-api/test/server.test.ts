@@ -4,6 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "../src/server.js";
 
+const fakeProvider = (content: string) => ({
+  name: "fake",
+  model: "fake-model",
+  async complete(): Promise<string> {
+    return content;
+  },
+});
+
 describe("ego api server", () => {
   it("responds to health checks", async () => {
     const app = createServer();
@@ -24,6 +32,8 @@ describe("ego api server", () => {
     const statusResponse = await app.request("/api/status");
     const workbenchResponse = await app.request("/api/workbench");
     const html = await dashboardResponse.text();
+    const css = await cssResponse.text();
+    const js = await jsResponse.text();
     const status = await statusResponse.json();
     const workbench = await workbenchResponse.json();
 
@@ -36,8 +46,11 @@ describe("ego api server", () => {
     expect(html).toContain("/assets/brand/ego-lotus.png");
     expect(html).toContain('rel="icon"');
     expect(cssResponse.headers.get("content-type")).toContain("text/css");
-    expect(await cssResponse.text()).toContain(".lotus-mark");
-    expect(await jsResponse.text()).toContain("submitMission");
+    expect(css).toContain(".lotus-mark");
+    expect(js).toContain("submitMission");
+    expect(js).toContain("/agent/runs");
+    expect(js).toContain("/approve");
+    expect(js).toContain("renderDiffPreview");
     expect(logoResponse.status).toBe(200);
     expect(logoResponse.headers.get("content-type")).toContain("image/png");
     expect(faviconResponse.status).toBe(200);
@@ -75,6 +88,101 @@ describe("ego api server", () => {
     expect(body.plan.length).toBeGreaterThan(0);
     expect(body.suggestedCommands).toContain("pnpm test");
     expect(body.mcp.status).toBe("not_configured");
+    expect(body.status).toBe("inspect");
+  });
+
+  it("auto-proposes natural-language agent edits through the HTTP API", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "ego-api-auto-propose-workspace-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-api-auto-propose-home-"));
+    await writeFile(
+      join(workspaceRoot, "package.json"),
+      '{"name":"agent-api-fixture","packageManager":"pnpm@11.7.0","scripts":{"typecheck":"node --version"}}',
+      "utf8",
+    );
+    await writeFile(join(workspaceRoot, "README.md"), "hello auto\n", "utf8");
+    const app = createServer({
+      workspaceRoot,
+      egoHome,
+      modelProvider: fakeProvider(
+        JSON.stringify({
+          rationale: "README contains the requested text.",
+          editPlan: {
+            goal: "update api fixture through model",
+            operations: [
+              {
+                type: "replace_text",
+                path: "README.md",
+                oldText: "hello auto",
+                newText: "lotus auto",
+              },
+            ],
+          },
+        }),
+      ),
+    });
+
+    const response = await app.request("/agent/runs", {
+      method: "POST",
+      body: JSON.stringify({
+        runId: "agent-api-auto-001",
+        message: "把 README 里的 hello auto 改成 lotus auto",
+        autoPropose: true,
+      }),
+      headers: { "content-type": "application/json" },
+    });
+    const body = await response.json();
+    const workbenchResponse = await app.request("/api/workbench");
+    const workbench = await workbenchResponse.json();
+
+    expect(response.status).toBe(200);
+    expect(body.status).toBe("pending_approval");
+    expect(body.approvalRequired).toBe(true);
+    expect(body.diff).toContain("+lotus auto");
+    expect(body.approvalId).toBeDefined();
+    expect(workbench.workbench.pendingEdits[0].runId).toBe("agent-api-auto-001");
+    expect(await readFile(join(workspaceRoot, "README.md"), "utf8")).toBe("hello auto\n");
+
+    const approveResponse = await app.request("/agent/runs/agent-api-auto-001/approve", {
+      method: "POST",
+      body: JSON.stringify({ approvalId: "approval-api-auto-test" }),
+      headers: { "content-type": "application/json" },
+    });
+    const approved = await approveResponse.json();
+    const refreshedWorkbench = await app.request("/api/workbench").then((result) => result.json());
+
+    expect(approveResponse.status).toBe(200);
+    expect(approved.status).toBe("applied");
+    expect(approved.checks[0].status).toBe("passed");
+    expect(approved.checks[0].command).toBe("pnpm typecheck");
+    expect(refreshedWorkbench.workbench.pendingEdits).toEqual([]);
+    expect(refreshedWorkbench.workbench.lastChecks[0].status).toBe("passed");
+    expect(await readFile(join(workspaceRoot, "README.md"), "utf8")).toBe("lotus auto\n");
+  });
+
+  it("returns needs_model for auto proposal when model access is disabled", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "ego-api-needs-model-workspace-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-api-needs-model-home-"));
+    await writeFile(join(workspaceRoot, "package.json"), '{"name":"agent-api-fixture"}', "utf8");
+    await writeFile(join(workspaceRoot, "README.md"), "hello\n", "utf8");
+    const app = createServer({ workspaceRoot, egoHome, modelProvider: null });
+
+    const response = await app.request("/agent/runs", {
+      method: "POST",
+      body: JSON.stringify({
+        runId: "agent-api-needs-model-001",
+        message: "修改 README",
+        autoPropose: true,
+      }),
+      headers: { "content-type": "application/json" },
+    });
+    const body = await response.json();
+    const workbench = await app.request("/api/workbench").then((result) => result.json());
+
+    expect(response.status).toBe(200);
+    expect(body.status).toBe("needs_model");
+    expect(body.approvalRequired).toBe(false);
+    expect(body.editPreview).toBeUndefined();
+    expect(workbench.workbench.pendingEdits).toEqual([]);
   });
 
   it("runs the controlled fixture through the HTTP API", async () => {

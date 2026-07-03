@@ -10,7 +10,7 @@ import {
   type TaskSpecInput,
   type TrajectoryEvent,
 } from "@ego-graph/core";
-import { createChatModelProvider, loadModelConfig } from "@ego-graph/llm";
+import { createChatModelProvider, loadModelConfig, type ChatModelProvider } from "@ego-graph/llm";
 import {
   readDashboardStatus,
   renderDashboardCss,
@@ -41,11 +41,14 @@ import { Hono } from "hono";
 export type CreateServerOptions = {
   workspaceRoot?: string;
   egoHome?: string;
+  modelProvider?: ChatModelProvider | null;
 };
 
 export function createServer(options: CreateServerOptions = {}): Hono {
   const app = new Hono();
-  const workspaceRoot = options.workspaceRoot ? resolve(options.workspaceRoot) : findWorkspaceRoot(process.cwd());
+  const workspaceRoot = options.workspaceRoot
+    ? resolve(options.workspaceRoot)
+    : findWorkspaceRoot(process.cwd());
   const egoHome = options.egoHome ?? defaultEgoHome();
 
   app.get("/health", (context) => {
@@ -122,9 +125,11 @@ export function createServer(options: CreateServerOptions = {}): Hono {
       message?: string;
       runId?: string;
       editPlan?: WorkspaceEditPlan;
+      autoPropose?: boolean;
     };
     const message = body.message?.trim() || body.editPlan?.goal || "Agent workspace task";
     const runId = body.runId ?? `agent-run-${Date.now()}`;
+    const modelProviderOption = options.modelProvider;
     const sqliteStore = new SqliteEgoStore(sqlitePath(egoHome));
     const trajectoryStore = new CompositeTrajectoryStore([
       new JsonlTrajectoryStore(trajectoryDir(egoHome)),
@@ -137,8 +142,10 @@ export function createServer(options: CreateServerOptions = {}): Hono {
         message,
         workspaceRoot,
         runId,
-        mode: body.editPlan ? "propose_edits" : "inspect",
+        mode: body.editPlan || body.autoPropose ? "propose_edits" : "inspect",
+        autoPropose: body.autoPropose ?? false,
         ...(body.editPlan ? { editPlan: body.editPlan } : {}),
+        ...(modelProviderOption !== undefined ? { modelProvider: modelProviderOption } : {}),
       });
       for (const event of turn.trajectoryEvents) {
         await trajectoryStore.append(event);
@@ -148,20 +155,20 @@ export function createServer(options: CreateServerOptions = {}): Hono {
         runId,
         message,
         mode: turn.executionMode,
-        status: turn.editPreview ? "pending_approval" : "inspect",
+        status: turn.status,
         createdAt: now,
         updatedAt: now,
       });
 
       let approvalId: string | undefined;
-      if (turn.editPreview) {
+      if (turn.status === "pending_approval" && turn.editPreview) {
         approvalId = `approval-${turn.editPreview.id}`;
         await sqliteStore.saveAgentEdit({
           runId,
           previewId: turn.editPreview.id,
           status: "pending",
           diff: turn.editPreview.diff,
-          plan: (turn.editPlan ?? body.editPlan) as unknown as Record<string, unknown>,
+          plan: turn.editPlan as unknown as Record<string, unknown>,
           files: turn.editPreview.files,
           createdAt: now,
         });

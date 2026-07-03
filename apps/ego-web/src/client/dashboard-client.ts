@@ -1,6 +1,7 @@
 export function renderDashboardJs(): string {
   return String.raw`const state = {
   workbench: null,
+  activePatch: null,
 };
 
 const byId = (id) => document.getElementById(id);
@@ -32,7 +33,7 @@ function renderSessions(sessions) {
   byId("session-list").replaceChildren(...sessions.map((session) => {
     const item = document.createElement("div");
     item.className = "session-item" + (session.active ? " active" : "");
-    item.innerHTML = "<span>" + (session.active ? "●" : "○") + "</span><strong></strong><small></small>";
+    item.innerHTML = "<span>" + (session.active ? "*" : "-") + "</span><strong></strong><small></small>";
     item.querySelector("strong").textContent = session.title;
     item.querySelector("small").textContent = session.timeLabel;
     return item;
@@ -97,8 +98,9 @@ function renderApprovals(approvals, pendingEdits) {
     return item;
   });
   const editItems = pendingEdits.map((edit) => {
-    const item = document.createElement("div");
-    item.className = "approval-item";
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "approval-item approval-button";
     const dot = document.createElement("span");
     dot.className = "status-dot planned";
     const label = document.createElement("strong");
@@ -107,6 +109,11 @@ function renderApprovals(approvals, pendingEdits) {
     count.textContent = edit.files.length + " files";
     item.title = edit.files.join(", ");
     item.append(dot, label, count);
+    item.addEventListener("click", () => {
+      loadDiffForPendingEdit(edit).catch((error) => {
+        appendMessage("assistant", "读取 Patch diff 失败：" + formatError(error));
+      });
+    });
     return item;
   });
   byId("approval-list").replaceChildren(...approvalItems, ...editItems);
@@ -138,9 +145,9 @@ function renderRuns(runs) {
     const card = document.createElement("article");
     card.className = "run-card";
     const title = document.createElement("strong");
-    title.textContent = run.runId + " · " + run.status;
+    title.textContent = run.runId + " | " + run.status;
     const meta = document.createElement("small");
-    meta.textContent = run.scenario + " · " + run.eventCount + " events · " + run.updatedAt;
+    meta.textContent = run.scenario + " | " + run.eventCount + " events | " + run.updatedAt;
     card.append(title, meta);
     return card;
   }));
@@ -172,6 +179,96 @@ function renderMcp(mcp) {
   list.replaceChildren(status);
 }
 
+function renderDiffPreview(result) {
+  const preview = byId("diff-preview");
+  const approve = byId("approve-button");
+  if (!preview) return;
+
+  if (!result || !result.diff) {
+    preview.textContent = "暂无待审批 Patch";
+    state.activePatch = null;
+    if (approve) approve.disabled = true;
+    return;
+  }
+
+  state.activePatch = {
+    runId: result.runId,
+    approvalId: result.approvalId,
+    status: result.status,
+  };
+  preview.textContent = result.diff;
+  if (approve) {
+    approve.disabled = result.status !== "pending_approval";
+  }
+}
+
+function renderChecks(checks) {
+  const list = byId("check-list");
+  if (!list) return;
+  if (!checks || checks.length === 0) {
+    list.innerHTML = '<p class="empty">暂无 checks 输出</p>';
+    return;
+  }
+
+  list.replaceChildren(...checks.map((check) => {
+    const item = document.createElement("div");
+    item.className = "check-item " + check.status;
+    const title = document.createElement("strong");
+    title.textContent = check.name + " | " + check.status;
+    const meta = document.createElement("small");
+    meta.textContent = check.command + " | exit " + check.exitCode;
+    item.append(title, meta);
+    return item;
+  }));
+}
+
+async function loadDiffForPendingEdit(edit) {
+  const response = await fetch("/agent/runs/" + encodeURIComponent(edit.runId) + "/diff");
+  const diff = await response.text();
+  if (!response.ok) {
+    throw new Error(diff || "diff request failed");
+  }
+  renderDiffPreview({
+    runId: edit.runId,
+    approvalId: "approval-" + edit.previewId,
+    status: "pending_approval",
+    diff,
+  });
+}
+
+async function approvePendingPatch() {
+  if (!state.activePatch) return;
+  const approve = byId("approve-button");
+  if (approve) {
+    approve.disabled = true;
+    approve.textContent = "Applying";
+  }
+
+  try {
+    const response = await fetch("/agent/runs/" + encodeURIComponent(state.activePatch.runId) + "/approve", {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({ approvalId: state.activePatch.approvalId }),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) {
+      throw new Error(result.error || "approve failed");
+    }
+
+    renderDiffPreview({ ...result, status: "applied" });
+    renderChecks(result.checks || []);
+    appendMessage("assistant", "Patch 已审批并应用，checks 已写入审计链。");
+    await refreshStatus();
+  } catch (error) {
+    appendMessage("assistant", "审批失败：" + formatError(error));
+    if (approve) approve.disabled = false;
+  } finally {
+    if (approve) {
+      approve.textContent = "Approve";
+    }
+  }
+}
+
 function renderWorkbench(workbench) {
   state.workbench = workbench;
   byId("cwd-label").textContent = workbench.cwd;
@@ -201,6 +298,16 @@ function renderWorkbench(workbench) {
   renderRuns(workbench.recentRuns);
   renderCommands(workbench.commands);
   renderMcp(workbench.mcp);
+  renderChecks(workbench.lastChecks || []);
+
+  if (!state.activePatch && workbench.pendingEdits && workbench.pendingEdits.length > 0) {
+    loadDiffForPendingEdit(workbench.pendingEdits[0]).catch(() => {
+      const preview = byId("diff-preview");
+      if (preview) preview.textContent = "存在待审批 Patch，点击审批列表读取 diff。";
+    });
+  } else if (!state.activePatch && (!workbench.pendingEdits || workbench.pendingEdits.length === 0)) {
+    renderDiffPreview(null);
+  }
 }
 
 async function refreshStatus() {
@@ -214,7 +321,7 @@ async function refreshStatus() {
 
 function commandReply(goal) {
   if (goal === "/help") {
-    return "可用命令：/scan、/analyze、/report、/threat、/config、/clear。";
+    return "可用命令：/scan、/analyze、/report、/threat、/config、/clear。自然语言任务会生成可审批 Patch。";
   }
   if (goal === "/scan") {
     return "运行受控示例：ego run --scenario web_pentest --input scenarios/web_pentest/basic/task.json";
@@ -230,7 +337,10 @@ function commandReply(goal) {
   }
   if (goal === "/config") {
     const workbench = state.workbench;
-    return "模型：" + (workbench?.model.label || "deterministic fallback") + "\\nSQLite：" + (workbench?.storage.sqlite || ".ego/ego.sqlite");
+    const pending = workbench?.pendingEdits?.length || 0;
+    return "模型：" + (workbench?.model.label || "deterministic fallback") +
+      "\nSQLite：" + (workbench?.storage.sqlite || ".ego/ego.sqlite") +
+      "\n待审批 Patch：" + pending + "，打开 ego serve 完成审批。";
   }
   return null;
 }
@@ -240,6 +350,7 @@ export async function submitMission(event) {
   const form = event.currentTarget;
   const button = form.querySelector("button[type=submit]");
   const goal = byId("goal-input").value.trim();
+  const runId = byId("run-id-input").value.trim();
   if (!goal) {
     appendMessage("assistant", "任务目标不能为空。");
     return;
@@ -248,6 +359,8 @@ export async function submitMission(event) {
   if (goal === "/clear") {
     byId("conversation").replaceChildren();
     byId("goal-input").value = "";
+    renderDiffPreview(null);
+    renderChecks([]);
     return;
   }
 
@@ -263,33 +376,58 @@ export async function submitMission(event) {
   button.textContent = "思考中";
 
   try {
-    const response = await fetch("/chat", {
+    const response = await fetch("/agent/runs", {
       method: "POST",
       headers: {"content-type": "application/json"},
-      body: JSON.stringify({ message: goal }),
+      body: JSON.stringify({
+        message: goal,
+        autoPropose: true,
+        ...(runId ? { runId } : {}),
+      }),
     });
     const result = await response.json();
     if (!response.ok || !result.ok) {
       throw new Error(result.error || "请求失败");
     }
 
-    const plan = result.plan?.length ? "\\n\\n计划：\\n- " + result.plan.join("\\n- ") : "";
+    const plan = result.plan?.length ? "\n\n计划：\n- " + result.plan.join("\n- ") : "";
     const commands = result.suggestedCommands?.length
-      ? "\\n\\n建议命令：\\n- " + result.suggestedCommands.join("\\n- ")
+      ? "\n\n建议命令：\n- " + result.suggestedCommands.join("\n- ")
       : "";
-    appendMessage("assistant", result.assistantMessage + plan + commands);
+    let statusLine = "";
+    if (result.status === "pending_approval") {
+      statusLine = "\n\n已生成候选 Patch，请确认 diff 后点击 Approve。";
+      renderDiffPreview(result);
+    } else if (result.status === "needs_model") {
+      statusLine = "\n\n模型未配置，已保持只读，不创建待审批 Patch。";
+      renderDiffPreview(null);
+    } else if (result.status === "blocked") {
+      statusLine = "\n\n任务被策略或模型输出阻断，未创建待审批 Patch。";
+      renderDiffPreview(null);
+    }
+    renderChecks(result.checks || []);
+    appendMessage("assistant", (result.assistantMessage || "已处理。") + statusLine + plan + commands);
     byId("goal-input").value = "";
     await refreshStatus();
   } catch (error) {
-    appendMessage("assistant", "任务处理失败：" + (error instanceof Error ? error.message : String(error)));
+    appendMessage("assistant", "任务处理失败：" + formatError(error));
   } finally {
     button.disabled = false;
     button.textContent = "发送 (Enter)";
   }
 }
 
+function formatError(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 byId("mission-form").addEventListener("submit", submitMission);
+byId("approve-button")?.addEventListener("click", () => {
+  approvePendingPatch().catch((error) => {
+    appendMessage("assistant", "审批失败：" + formatError(error));
+  });
+});
 refreshStatus().catch((error) => {
-  appendMessage("assistant", "状态读取失败：" + (error instanceof Error ? error.message : String(error)));
+  appendMessage("assistant", "状态读取失败：" + formatError(error));
 });`;
 }
