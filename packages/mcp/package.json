@@ -10,5 +10,9 @@
     "build": "tsc -p tsconfig.json",
     "test": "vitest run test",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@ego-graph/tools": "workspace:*",
+    "zod": "^3.24.1"
   }
 }

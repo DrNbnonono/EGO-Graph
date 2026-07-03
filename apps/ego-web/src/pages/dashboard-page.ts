@@ -30,8 +30,14 @@ export type DashboardStatus = {
   recentRuns: WorkbenchState["recentRuns"];
 };
 
-export async function readDashboardStatus(workspaceRoot = process.cwd()): Promise<DashboardStatus> {
-  const workbench = await readWorkbenchState({ workspaceRoot });
+export async function readDashboardStatus(
+  workspaceRoot = process.cwd(),
+  egoHome?: string,
+): Promise<DashboardStatus> {
+  const workbench = await readWorkbenchState({
+    workspaceRoot,
+    ...(egoHome ? { egoHome } : {}),
+  });
 
   return {
     ok: true,

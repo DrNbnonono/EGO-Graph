@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { runCodingAgentTurn } from "@ego-graph/agent";
+import { runCodingAgentTurn, type AgentCheckCommand } from "@ego-graph/agent";
 import {
   createModelBackedPlanner,
   createTrajectoryEvent,
@@ -35,11 +35,18 @@ import {
   SqliteEgoStore,
   trajectoryDir,
 } from "@ego-graph/storage";
+import type { WorkspaceEditPlan } from "@ego-graph/workspace";
 import { Hono } from "hono";
 
-export function createServer(): Hono {
+export type CreateServerOptions = {
+  workspaceRoot?: string;
+  egoHome?: string;
+};
+
+export function createServer(options: CreateServerOptions = {}): Hono {
   const app = new Hono();
-  const workspaceRoot = findWorkspaceRoot(process.cwd());
+  const workspaceRoot = options.workspaceRoot ? resolve(options.workspaceRoot) : findWorkspaceRoot(process.cwd());
+  const egoHome = options.egoHome ?? defaultEgoHome();
 
   app.get("/health", (context) => {
     return context.json({ ok: true, service: "ego-api" });
@@ -84,13 +91,13 @@ export function createServer(): Hono {
   });
 
   app.get("/api/status", async (context) => {
-    return context.json(await readDashboardStatus(workspaceRoot));
+    return context.json(await readDashboardStatus(workspaceRoot, egoHome));
   });
 
   app.get("/api/workbench", async (context) => {
     return context.json({
       ok: true,
-      workbench: await readWorkbenchState({ workspaceRoot }),
+      workbench: await readWorkbenchState({ workspaceRoot, egoHome }),
     });
   });
 
@@ -108,6 +115,165 @@ export function createServer(): Hono {
     });
 
     return context.json({ ok: true, ...turn });
+  });
+
+  app.post("/agent/runs", async (context) => {
+    const body = (await context.req.json()) as {
+      message?: string;
+      runId?: string;
+      editPlan?: WorkspaceEditPlan;
+    };
+    const message = body.message?.trim() || body.editPlan?.goal || "Agent workspace task";
+    const runId = body.runId ?? `agent-run-${Date.now()}`;
+    const sqliteStore = new SqliteEgoStore(sqlitePath(egoHome));
+    const trajectoryStore = new CompositeTrajectoryStore([
+      new JsonlTrajectoryStore(trajectoryDir(egoHome)),
+      sqliteStore,
+    ]);
+    const now = new Date().toISOString();
+
+    try {
+      const turn = await runCodingAgentTurn({
+        message,
+        workspaceRoot,
+        runId,
+        mode: body.editPlan ? "propose_edits" : "inspect",
+        ...(body.editPlan ? { editPlan: body.editPlan } : {}),
+      });
+      for (const event of turn.trajectoryEvents) {
+        await trajectoryStore.append(event);
+      }
+
+      await sqliteStore.saveAgentRun({
+        runId,
+        message,
+        mode: turn.executionMode,
+        status: turn.editPreview ? "pending_approval" : "inspect",
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      let approvalId: string | undefined;
+      if (turn.editPreview) {
+        approvalId = `approval-${turn.editPreview.id}`;
+        await sqliteStore.saveAgentEdit({
+          runId,
+          previewId: turn.editPreview.id,
+          status: "pending",
+          diff: turn.editPreview.diff,
+          plan: (turn.editPlan ?? body.editPlan) as unknown as Record<string, unknown>,
+          files: turn.editPreview.files,
+          createdAt: now,
+        });
+        await sqliteStore.saveApproval({
+          id: approvalId,
+          runId,
+          kind: "agent_edit",
+          status: "pending",
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+
+      return context.json({
+        ok: true,
+        runId,
+        approvalId,
+        ...turn,
+      });
+    } finally {
+      sqliteStore.close();
+    }
+  });
+
+  app.post("/agent/runs/:id/approve", async (context) => {
+    const runId = context.req.param("id");
+    const body = (await context.req.json().catch(() => ({}))) as {
+      approvalId?: string;
+      checkCommands?: AgentCheckCommand[];
+    };
+    const sqliteStore = new SqliteEgoStore(sqlitePath(egoHome));
+    const trajectoryStore = new CompositeTrajectoryStore([
+      new JsonlTrajectoryStore(trajectoryDir(egoHome)),
+      sqliteStore,
+    ]);
+    const now = new Date().toISOString();
+
+    try {
+      const pending = await sqliteStore.getPendingAgentEdit(runId);
+      const agentRun = await sqliteStore.getAgentRun(runId);
+      if (!pending || !agentRun) {
+        return context.json({ ok: false, error: `No pending agent edit for ${runId}` }, 404);
+      }
+
+      const approvalId = body.approvalId ?? `approval-${pending.previewId}`;
+      await sqliteStore.saveApproval({
+        id: approvalId,
+        runId,
+        kind: "agent_edit",
+        status: "approved",
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const turn = await runCodingAgentTurn({
+        message: agentRun.message,
+        workspaceRoot,
+        runId,
+        mode: "apply_approved_edits",
+        approvalId,
+        editPlan: pending.plan as unknown as WorkspaceEditPlan,
+        ...(body.checkCommands ? { checkCommands: body.checkCommands } : {}),
+      });
+      for (const event of turn.trajectoryEvents) {
+        await trajectoryStore.append(event);
+      }
+      await sqliteStore.updateAgentEditStatus(runId, "applied", now);
+      await sqliteStore.saveAgentRun({
+        ...agentRun,
+        status: "applied",
+        updatedAt: now,
+      });
+      for (const check of turn.checks) {
+        await sqliteStore.saveAgentCheck({
+          runId,
+          name: check.name,
+          command: check.command,
+          status: check.status,
+          exitCode: check.exitCode,
+          stdout: check.stdout,
+          stderr: check.stderr,
+          createdAt: now,
+        });
+      }
+
+      return context.json({ ok: true, runId, approvalId, ...turn });
+    } finally {
+      sqliteStore.close();
+    }
+  });
+
+  app.get("/agent/runs/:id/diff", async (context) => {
+    const runId = context.req.param("id");
+    const sqliteStore = new SqliteEgoStore(sqlitePath(egoHome));
+    try {
+      const edit = await sqliteStore.getLatestAgentEdit(runId);
+      return context.text(edit?.diff ?? "", 200, {
+        "content-type": "text/plain; charset=utf-8",
+      });
+    } finally {
+      sqliteStore.close();
+    }
+  });
+
+  app.get("/agent/runs/:id/checks", async (context) => {
+    const runId = context.req.param("id");
+    const sqliteStore = new SqliteEgoStore(sqlitePath(egoHome));
+    try {
+      return context.json({ ok: true, runId, checks: await sqliteStore.listAgentChecks(runId) });
+    } finally {
+      sqliteStore.close();
+    }
   });
 
   app.post("/runs", async (context) => {
@@ -131,7 +297,6 @@ export function createServer(): Hono {
     };
     const runId = body.runId ?? `api-run-${Date.now()}`;
     const planner = loadPlannerFromEnv();
-    const egoHome = defaultEgoHome();
     const sqliteStore = new SqliteEgoStore(sqlitePath(egoHome));
     const store = new CompositeTrajectoryStore([
       new JsonlTrajectoryStore(trajectoryDir(egoHome)),
@@ -191,7 +356,7 @@ export function createServer(): Hono {
   });
 
   app.get("/runs", async (context) => {
-    const sqliteStore = new SqliteEgoStore(sqlitePath(defaultEgoHome()));
+    const sqliteStore = new SqliteEgoStore(sqlitePath(egoHome));
     const runs = await sqliteStore.listRuns();
 
     return context.json({ ok: true, runs });
@@ -199,7 +364,6 @@ export function createServer(): Hono {
 
   app.get("/runs/:id", async (context) => {
     const runId = context.req.param("id");
-    const egoHome = defaultEgoHome();
     const sqliteStore = new SqliteEgoStore(sqlitePath(egoHome));
     const indexed = await sqliteStore.getRun(runId);
     if (indexed) {
@@ -222,14 +386,14 @@ export function createServer(): Hono {
 
   app.get("/runs/:id/events", async (context) => {
     const runId = context.req.param("id");
-    const events = await readEvents(runId);
+    const events = await readEvents(runId, egoHome);
 
     return context.json({ ok: true, runId, events });
   });
 
   app.get("/runs/:id/evidence", async (context) => {
     const runId = context.req.param("id");
-    const sqliteStore = new SqliteEgoStore(sqlitePath(defaultEgoHome()));
+    const sqliteStore = new SqliteEgoStore(sqlitePath(egoHome));
     const evidence = await sqliteStore.listEvidence(runId);
 
     return context.json({ ok: true, runId, evidence });
@@ -237,7 +401,6 @@ export function createServer(): Hono {
 
   app.get("/runs/:id/report", async (context) => {
     const runId = context.req.param("id");
-    const egoHome = defaultEgoHome();
     const sqliteStore = new SqliteEgoStore(sqlitePath(egoHome));
     const storedReport = await sqliteStore.getReport(runId);
     if (storedReport) {
@@ -273,7 +436,7 @@ export function createServer(): Hono {
 
   app.get("/runs/:id/stream", async (context) => {
     const runId = context.req.param("id");
-    const events = await readEvents(runId);
+    const events = await readEvents(runId, egoHome);
     const body = events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("");
 
     return new Response(body, {
@@ -310,8 +473,7 @@ function loadPlannerFromEnv(): AgentPlanner | undefined {
   return provider ? createModelBackedPlanner(provider) : undefined;
 }
 
-async function readEvents(runId: string): Promise<TrajectoryEvent[]> {
-  const egoHome = defaultEgoHome();
+async function readEvents(runId: string, egoHome: string): Promise<TrajectoryEvent[]> {
   const sqliteStore = new SqliteEgoStore(sqlitePath(egoHome));
   const sqliteEvents = await sqliteStore.readRun(runId);
   if (sqliteEvents.length > 0) {

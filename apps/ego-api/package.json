@@ -21,6 +21,7 @@
     "@ego-graph/shared": "workspace:*",
     "@ego-graph/storage": "workspace:*",
     "@ego-graph/workbench": "workspace:*",
+    "@ego-graph/workspace": "workspace:*",
     "hono": "^4.6.16"
   }
 }

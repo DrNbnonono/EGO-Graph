@@ -269,6 +269,11 @@ function RightSidebar({ workbench }: { workbench: WorkbenchState }): ReactElemen
             {item.label} <Text color="magentaBright">{item.count}</Text>
           </Text>
         ))}
+        {workbench.pendingEdits.slice(0, 2).map((edit) => (
+          <Text key={edit.previewId} color="yellow">
+            Patch {edit.runId}: {edit.files.length} files
+          </Text>
+        ))}
       </Box>
     </Box>
   );
@@ -303,6 +308,9 @@ function replyForCommand(input: string, workbench?: WorkbenchState): string | un
     return [
       `模型: ${workbench?.model.label ?? "deterministic fallback"}`,
       `SQLite: ${workbench?.storage.sqlite ?? ".ego/ego.sqlite"}`,
+      `待审批 Patch: ${workbench?.pendingEdits.length ?? 0}`,
+      `MCP: ${workbench?.mcp.status ?? "not_configured"}`,
+      "写入策略: workspace 内、需审批、拒绝 .env/.git/node_modules/dist",
       "完整检查: ego doctor",
     ].join("\n");
   }

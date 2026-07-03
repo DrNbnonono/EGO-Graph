@@ -12,6 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@ego-graph/core": "workspace:*",
     "@ego-graph/mcp": "workspace:*",
     "@ego-graph/workspace": "workspace:*"
   }

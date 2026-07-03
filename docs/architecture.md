@@ -7,7 +7,7 @@ The first delivery slice uses the `web_pentest` overlay and the controlled fixtu
 The current agent loop is `plan -> tool_select -> policy_check -> execute -> observe -> update_evidence -> evaluate -> replan/done`. Every step writes append-only trajectory events. The default planner is deterministic for repeatable demos; an optional model-backed planner can be enabled through the MiniMax M3 profile or other compatible model environment variables and automatically falls back when unavailable.
 
 Storage uses JSONL as the append-only audit trail and SQLite as the query/index layer for runs,
-events, evidence, artifacts, and reports.
+events, evidence, artifacts, reports, agent edits, approvals, checks, and tool calls.
 
 User-facing surfaces:
 
@@ -16,6 +16,9 @@ User-facing surfaces:
 - `GET /api/workbench`: unified state API for TUI/Web data such as model status, SQLite paths, runs, logs, files, approvals, and quick commands.
 - `GET /api/status`: compatibility status API derived from the same workbench state.
 - `POST /chat`: natural-language coding-agent turn endpoint for project inspection, planning, and command suggestions.
+- `POST /agent/runs`: creates an inspect/propose-edit run. Structured edit plans produce diff previews and pending approvals.
+- `POST /agent/runs/:id/approve`: applies a pending edit only after approval and records verification checks.
+- `GET /agent/runs/:id/diff` and `/agent/runs/:id/checks`: expose patch preview and validation output.
 - `/runs` and `/runs/:id/*`: runtime execution, event, evidence, report, and SSE replay endpoints.
 
 Primary packages:
@@ -23,10 +26,10 @@ Primary packages:
 - `apps/ego-cli`: terminal CLI and Ink TUI.
 - `apps/ego-api`: local Hono API and static Web dashboard for `ego serve`.
 - `apps/ego-web`: static HTML/CSS/JS Web Workbench assets, designed to build with TypeScript only.
-- `packages/workbench`: shared read-only Workbench state model consumed by the TUI, Web app, and API.
-- `packages/agent`: natural-language coding-agent turn runner.
-- `packages/workspace`: safe repository inspection and command suggestions.
-- `packages/mcp`: MCP manifest and future adapter boundary.
+- `packages/workbench`: shared Workbench state model consumed by the TUI, Web app, and API, including pending edits and approvals.
+- `packages/agent`: natural-language coding-agent turn runner with inspect, propose-edit, and apply-approved-edit modes.
+- `packages/workspace`: safe repository inspection, diff preview, and policy-gated write application.
+- `packages/mcp`: MCP config loader, manifest, and policy-gated placeholder tool registry for future transport execution.
 - `packages/core`: task specs, mission graph, trajectory events, and runner.
 - `packages/llm`: MiniMax M3 Anthropic Messages provider plus OpenAI-compatible model abstraction.
 - `packages/tools`: tool registry and permission policy.

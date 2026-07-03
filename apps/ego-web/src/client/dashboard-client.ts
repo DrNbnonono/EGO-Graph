@@ -83,8 +83,8 @@ function renderLogs(logs) {
   }));
 }
 
-function renderApprovals(approvals) {
-  byId("approval-list").replaceChildren(...approvals.map((approval) => {
+function renderApprovals(approvals, pendingEdits) {
+  const approvalItems = approvals.map((approval) => {
     const item = document.createElement("div");
     item.className = "approval-item";
     const dot = document.createElement("span");
@@ -95,7 +95,21 @@ function renderApprovals(approvals) {
     count.textContent = String(approval.count);
     item.append(dot, label, count);
     return item;
-  }));
+  });
+  const editItems = pendingEdits.map((edit) => {
+    const item = document.createElement("div");
+    item.className = "approval-item";
+    const dot = document.createElement("span");
+    dot.className = "status-dot planned";
+    const label = document.createElement("strong");
+    label.textContent = "Patch " + edit.runId;
+    const count = document.createElement("small");
+    count.textContent = edit.files.length + " files";
+    item.title = edit.files.join(", ");
+    item.append(dot, label, count);
+    return item;
+  });
+  byId("approval-list").replaceChildren(...approvalItems, ...editItems);
 }
 
 function renderQuickCommands(commands) {
@@ -179,7 +193,7 @@ function renderWorkbench(workbench) {
   renderTools(workbench.tools);
   renderFiles(workbench.files);
   renderLogs(workbench.logs);
-  renderApprovals(workbench.approvals);
+  renderApprovals(workbench.approvals, workbench.pendingEdits || []);
   renderQuickCommands(workbench.quickCommands);
   fillList("completed-list", workbench.progress.completed);
   fillList("active-list", workbench.progress.active);

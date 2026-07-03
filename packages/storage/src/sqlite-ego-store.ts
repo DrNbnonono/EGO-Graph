@@ -21,6 +21,50 @@ export type SqliteReportRecord = {
   createdAt: string;
 };
 
+export type AgentRunStatus = "inspect" | "pending_approval" | "applied" | "blocked";
+
+export type AgentRunRecord = {
+  runId: string;
+  message: string;
+  mode: string;
+  status: AgentRunStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AgentEditRecord = {
+  id?: number;
+  runId: string;
+  previewId: string;
+  status: "pending" | "applied" | "blocked";
+  diff: string;
+  plan: Record<string, unknown>;
+  files: string[];
+  createdAt: string;
+  appliedAt?: string;
+};
+
+export type AgentCheckRecord = {
+  id?: number;
+  runId: string;
+  name: string;
+  command: string;
+  status: "passed" | "failed";
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  createdAt: string;
+};
+
+export type ApprovalRecord = {
+  id: string;
+  runId: string;
+  kind: "agent_edit" | "tool_call";
+  status: "pending" | "approved" | "rejected";
+  createdAt: string;
+  updatedAt: string;
+};
+
 type EventRow = {
   id: string;
   run_id: string;
@@ -53,6 +97,48 @@ type ReportRow = {
   markdown: string;
   report_path: string | null;
   created_at: string;
+};
+
+type AgentRunRow = {
+  run_id: string;
+  message: string;
+  mode: string;
+  status: AgentRunStatus;
+  created_at: string;
+  updated_at: string;
+};
+
+type AgentEditRow = {
+  id: number;
+  run_id: string;
+  preview_id: string;
+  status: "pending" | "applied" | "blocked";
+  diff: string;
+  plan_json: string;
+  files_json: string;
+  created_at: string;
+  applied_at: string | null;
+};
+
+type AgentCheckRow = {
+  id: number;
+  run_id: string;
+  name: string;
+  command: string;
+  status: "passed" | "failed";
+  exit_code: number;
+  stdout: string;
+  stderr: string;
+  created_at: string;
+};
+
+type ApprovalRow = {
+  id: string;
+  run_id: string;
+  kind: "agent_edit" | "tool_call";
+  status: "pending" | "approved" | "rejected";
+  created_at: string;
+  updated_at: string;
 };
 
 type DatabaseSyncConstructor = new (path: string) => DatabaseSyncType;
@@ -204,6 +290,145 @@ export class SqliteEgoStore {
     };
   }
 
+  async saveAgentRun(record: AgentRunRecord): Promise<void> {
+    this.db
+      .prepare(
+        [
+          "insert into agent_runs (run_id, message, mode, status, created_at, updated_at)",
+          "values (?, ?, ?, ?, ?, ?)",
+          "on conflict(run_id) do update set",
+          "message = excluded.message,",
+          "mode = excluded.mode,",
+          "status = excluded.status,",
+          "updated_at = excluded.updated_at",
+        ].join(" "),
+      )
+      .run(record.runId, record.message, record.mode, record.status, record.createdAt, record.updatedAt);
+  }
+
+  async getAgentRun(runId: string): Promise<AgentRunRecord | undefined> {
+    const row = this.db.prepare("select * from agent_runs where run_id = ?").get(runId) as
+      AgentRunRow | undefined;
+    return row ? agentRunRowToRecord(row) : undefined;
+  }
+
+  async saveAgentEdit(record: AgentEditRecord): Promise<void> {
+    this.db
+      .prepare(
+        [
+          "insert into agent_edits",
+          "(run_id, preview_id, status, diff, plan_json, files_json, created_at, applied_at)",
+          "values (?, ?, ?, ?, ?, ?, ?, ?)",
+          "on conflict(preview_id) do update set",
+          "status = excluded.status,",
+          "diff = excluded.diff,",
+          "plan_json = excluded.plan_json,",
+          "files_json = excluded.files_json,",
+          "applied_at = excluded.applied_at",
+        ].join(" "),
+      )
+      .run(
+        record.runId,
+        record.previewId,
+        record.status,
+        record.diff,
+        JSON.stringify(record.plan),
+        JSON.stringify(record.files),
+        record.createdAt,
+        record.appliedAt ?? null,
+      );
+  }
+
+  async getPendingAgentEdit(runId: string): Promise<AgentEditRecord | undefined> {
+    const row = this.db
+      .prepare(
+        [
+          "select * from agent_edits",
+          "where run_id = ? and status = 'pending'",
+          "order by created_at desc, id desc limit 1",
+        ].join(" "),
+      )
+      .get(runId) as AgentEditRow | undefined;
+    return row ? agentEditRowToRecord(row) : undefined;
+  }
+
+  async getLatestAgentEdit(runId: string): Promise<AgentEditRecord | undefined> {
+    const row = this.db
+      .prepare("select * from agent_edits where run_id = ? order by created_at desc, id desc limit 1")
+      .get(runId) as AgentEditRow | undefined;
+    return row ? agentEditRowToRecord(row) : undefined;
+  }
+
+  async listPendingAgentEdits(): Promise<AgentEditRecord[]> {
+    const rows = this.db
+      .prepare("select * from agent_edits where status = 'pending' order by created_at desc")
+      .all() as AgentEditRow[];
+    return rows.map(agentEditRowToRecord);
+  }
+
+  async updateAgentEditStatus(
+    runId: string,
+    status: AgentEditRecord["status"],
+    appliedAt?: string,
+  ): Promise<void> {
+    this.db
+      .prepare("update agent_edits set status = ?, applied_at = ? where run_id = ? and status = 'pending'")
+      .run(status, appliedAt ?? null, runId);
+  }
+
+  async saveAgentCheck(record: AgentCheckRecord): Promise<void> {
+    this.db
+      .prepare(
+        [
+          "insert into agent_checks",
+          "(run_id, name, command, status, exit_code, stdout, stderr, created_at)",
+          "values (?, ?, ?, ?, ?, ?, ?, ?)",
+        ].join(" "),
+      )
+      .run(
+        record.runId,
+        record.name,
+        record.command,
+        record.status,
+        record.exitCode,
+        record.stdout,
+        record.stderr,
+        record.createdAt,
+      );
+  }
+
+  async listAgentChecks(runId: string): Promise<AgentCheckRecord[]> {
+    const rows = this.db
+      .prepare("select * from agent_checks where run_id = ? order by created_at asc, id asc")
+      .all(runId) as AgentCheckRow[];
+    return rows.map(agentCheckRowToRecord);
+  }
+
+  async saveApproval(record: ApprovalRecord): Promise<void> {
+    this.db
+      .prepare(
+        [
+          "insert into approvals (id, run_id, kind, status, created_at, updated_at)",
+          "values (?, ?, ?, ?, ?, ?)",
+          "on conflict(id) do update set",
+          "status = excluded.status,",
+          "updated_at = excluded.updated_at",
+        ].join(" "),
+      )
+      .run(record.id, record.runId, record.kind, record.status, record.createdAt, record.updatedAt);
+  }
+
+  async listApprovals(status?: ApprovalRecord["status"]): Promise<ApprovalRecord[]> {
+    const rows = (
+      status
+        ? this.db
+            .prepare("select * from approvals where status = ? order by created_at desc")
+            .all(status)
+        : this.db.prepare("select * from approvals order by created_at desc").all()
+    ) as ApprovalRow[];
+    return rows.map(approvalRowToRecord);
+  }
+
   close(): void {
     this.db.close();
   }
@@ -260,6 +485,64 @@ export class SqliteEgoStore {
         report_path text,
         created_at text not null
       );
+
+      create table if not exists agent_runs (
+        run_id text primary key,
+        message text not null,
+        mode text not null,
+        status text not null check (status in ('inspect', 'pending_approval', 'applied', 'blocked')),
+        created_at text not null,
+        updated_at text not null
+      );
+
+      create table if not exists agent_edits (
+        id integer primary key autoincrement,
+        run_id text not null,
+        preview_id text not null unique,
+        status text not null check (status in ('pending', 'applied', 'blocked')),
+        diff text not null,
+        plan_json text not null,
+        files_json text not null,
+        created_at text not null,
+        applied_at text
+      );
+
+      create index if not exists idx_agent_edits_run_status on agent_edits(run_id, status);
+
+      create table if not exists agent_checks (
+        id integer primary key autoincrement,
+        run_id text not null,
+        name text not null,
+        command text not null,
+        status text not null check (status in ('passed', 'failed')),
+        exit_code integer not null,
+        stdout text not null,
+        stderr text not null,
+        created_at text not null
+      );
+
+      create index if not exists idx_agent_checks_run on agent_checks(run_id);
+
+      create table if not exists approvals (
+        id text primary key,
+        run_id text not null,
+        kind text not null check (kind in ('agent_edit', 'tool_call')),
+        status text not null check (status in ('pending', 'approved', 'rejected')),
+        created_at text not null,
+        updated_at text not null
+      );
+
+      create index if not exists idx_approvals_status on approvals(status);
+
+      create table if not exists tool_calls (
+        id integer primary key autoincrement,
+        run_id text not null,
+        tool_name text not null,
+        status text not null,
+        input_json text not null,
+        output_json text,
+        created_at text not null
+      );
     `);
   }
 
@@ -285,6 +568,56 @@ function runRowToRecord(row: RunRow): RunIndexRecord {
     status: row.status,
     eventCount: row.event_count,
     ...(row.report_path ? { reportPath: row.report_path } : {}),
+    updatedAt: row.updated_at,
+  };
+}
+
+function agentRunRowToRecord(row: AgentRunRow): AgentRunRecord {
+  return {
+    runId: row.run_id,
+    message: row.message,
+    mode: row.mode,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function agentEditRowToRecord(row: AgentEditRow): AgentEditRecord {
+  return {
+    id: row.id,
+    runId: row.run_id,
+    previewId: row.preview_id,
+    status: row.status,
+    diff: row.diff,
+    plan: JSON.parse(row.plan_json) as Record<string, unknown>,
+    files: JSON.parse(row.files_json) as string[],
+    createdAt: row.created_at,
+    ...(row.applied_at ? { appliedAt: row.applied_at } : {}),
+  };
+}
+
+function agentCheckRowToRecord(row: AgentCheckRow): AgentCheckRecord {
+  return {
+    id: row.id,
+    runId: row.run_id,
+    name: row.name,
+    command: row.command,
+    status: row.status,
+    exitCode: row.exit_code,
+    stdout: row.stdout,
+    stderr: row.stderr,
+    createdAt: row.created_at,
+  };
+}
+
+function approvalRowToRecord(row: ApprovalRow): ApprovalRecord {
+  return {
+    id: row.id,
+    runId: row.run_id,
+    kind: row.kind,
+    status: row.status,
+    createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }

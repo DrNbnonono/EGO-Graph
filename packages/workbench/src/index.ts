@@ -1,7 +1,7 @@
 import { freemem, loadavg, totalmem } from "node:os";
 import { basename } from "node:path";
 import { isModelConfigured, loadModelConfig } from "@ego-graph/llm";
-import { createMcpManifest } from "@ego-graph/mcp";
+import { loadMcpConfig } from "@ego-graph/mcp";
 import {
   defaultEgoHome,
   sqlitePath,
@@ -41,6 +41,20 @@ export type WorkbenchApprovalItem = {
   count: number;
 };
 
+export type WorkbenchPendingEdit = {
+  runId: string;
+  previewId: string;
+  files: string[];
+  createdAt: string;
+};
+
+export type WorkbenchCheck = {
+  runId: string;
+  name: string;
+  status: "passed" | "failed";
+  exitCode: number;
+};
+
 export type WorkbenchState = {
   product: "EGO-Graph";
   title: string;
@@ -74,6 +88,9 @@ export type WorkbenchState = {
   files: WorkbenchFile[];
   logs: WorkbenchLog[];
   approvals: WorkbenchApprovalItem[];
+  pendingEdits: WorkbenchPendingEdit[];
+  changedFiles: string[];
+  lastChecks: WorkbenchCheck[];
   quickCommands: string[];
   commands: string[];
   recentRuns: RunIndexRecord[];
@@ -104,12 +121,15 @@ export async function readWorkbenchState(input: ReadWorkbenchStateInput): Promis
   ]);
   const modelConfig = loadModelConfig();
   const configured = isModelConfigured(modelConfig);
-  const mcp = createMcpManifest();
+  const mcpConfig = await loadMcpConfig(workspaceRoot);
+  const mcp = mcpConfig.manifest;
   const sqlite = sqlitePath(egoHome);
   const store = new SqliteEgoStore(sqlite);
 
   try {
     const recentRuns = (await store.listRuns()).slice(0, 8);
+    const pendingEdits = (await store.listPendingAgentEdits()).slice(0, 8);
+    const pendingApprovals = await store.listApprovals("pending");
     const newestRun = recentRuns[0];
     const clock = new Date();
 
@@ -145,7 +165,15 @@ export async function readWorkbenchState(input: ReadWorkbenchStateInput): Promis
       tools: buildTools(configured),
       files: buildFiles(files),
       logs: buildLogs(recentRuns),
-      approvals: buildApprovals(recentRuns),
+      approvals: buildApprovals(recentRuns, pendingApprovals.length, pendingEdits.length),
+      pendingEdits: pendingEdits.map((edit) => ({
+        runId: edit.runId,
+        previewId: edit.previewId,
+        files: edit.files,
+        createdAt: edit.createdAt,
+      })),
+      changedFiles: [...new Set(pendingEdits.flatMap((edit) => edit.files))],
+      lastChecks: [],
       quickCommands: ["/help", "/scan", "/analyze", "/report", "/threat", "/config", "/clear"],
       commands: [
         "ego",
@@ -174,7 +202,11 @@ export async function readWorkbenchState(input: ReadWorkbenchStateInput): Promis
           "紫莲花 Workbench 交互层",
           "Evidence Board / Mission Graph 可视化",
         ],
-        next: ["真实编辑工具链", "MCP 传输层", "更多安全场景 Overlay"],
+        next: [
+          pendingEdits.length > 0 ? "审批待处理的 Agent patch" : "真实编辑工具链",
+          mcpConfig.source === "none" ? "MCP 传输层" : "MCP server transport",
+          "更多安全场景 Overlay",
+        ],
       },
     };
   } finally {
@@ -236,11 +268,16 @@ function buildLogs(runs: RunIndexRecord[]): WorkbenchLog[] {
   }));
 }
 
-function buildApprovals(runs: RunIndexRecord[]): WorkbenchApprovalItem[] {
+function buildApprovals(
+  runs: RunIndexRecord[],
+  pendingApprovals: number,
+  pendingEdits: number,
+): WorkbenchApprovalItem[] {
   const blocked = runs.filter((run) => run.status === "blocked").length;
 
   return [
-    { label: "高风险操作需审批", count: blocked },
+    { label: "高风险操作需审批", count: blocked + pendingApprovals },
+    { label: "待审批 Patch", count: pendingEdits },
     { label: "待执行命令", count: 0 },
     { label: "已执行操作", count: runs.reduce((sum, run) => sum + run.eventCount, 0) },
   ];

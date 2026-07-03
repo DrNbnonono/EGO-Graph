@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createServer } from "../src/server.js";
 
 describe("ego api server", () => {
@@ -117,5 +120,64 @@ describe("ego api server", () => {
     expect(evidenceBody.evidence[0].summary).toContain("admin hint");
     expect(await reportResponse.text()).toContain("## Policy Decisions");
     expect(streamResponse.headers.get("content-type")).toContain("text/event-stream");
+  });
+
+  it("creates, approves, applies, and indexes policy-gated agent edits", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "ego-api-agent-workspace-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-api-agent-home-"));
+    await writeFile(
+      join(workspaceRoot, "package.json"),
+      '{"name":"agent-api-fixture","packageManager":"pnpm@11.7.0"}',
+      "utf8",
+    );
+    await writeFile(join(workspaceRoot, "README.md"), "hello api\n", "utf8");
+    const app = createServer({ workspaceRoot, egoHome });
+
+    const createResponse = await app.request("/agent/runs", {
+      method: "POST",
+      body: JSON.stringify({
+        runId: "agent-api-run-001",
+        message: "修改 README",
+        editPlan: {
+          goal: "update api fixture",
+          operations: [
+            {
+              type: "replace_text",
+              path: "README.md",
+              oldText: "hello api",
+              newText: "lotus api",
+            },
+          ],
+        },
+      }),
+      headers: { "content-type": "application/json" },
+    });
+    const created = await createResponse.json();
+    const diffResponse = await app.request("/agent/runs/agent-api-run-001/diff");
+    const workbenchResponse = await app.request("/api/workbench");
+    const workbench = await workbenchResponse.json();
+
+    expect(createResponse.status).toBe(200);
+    expect(created.approvalRequired).toBe(true);
+    expect(await diffResponse.text()).toContain("+lotus api");
+    expect(workbench.workbench.pendingEdits[0].runId).toBe("agent-api-run-001");
+    expect(await readFile(join(workspaceRoot, "README.md"), "utf8")).toBe("hello api\n");
+
+    const approveResponse = await app.request("/agent/runs/agent-api-run-001/approve", {
+      method: "POST",
+      body: JSON.stringify({
+        approvalId: "approval-api-test",
+        checkCommands: [{ name: "node-version", command: "node", args: ["--version"] }],
+      }),
+      headers: { "content-type": "application/json" },
+    });
+    const approved = await approveResponse.json();
+    const checksResponse = await app.request("/agent/runs/agent-api-run-001/checks");
+    const checks = await checksResponse.json();
+
+    expect(approveResponse.status).toBe(200);
+    expect(approved.editResult.applied).toBe(true);
+    expect(checks.checks[0].status).toBe("passed");
+    expect(await readFile(join(workspaceRoot, "README.md"), "utf8")).toBe("lotus api\n");
   });
 });

@@ -25,17 +25,17 @@ Implemented:
 - Controlled `web_pentest` fixture scenario.
 - Markdown report generation and replay.
 - Shared `@ego-graph/workbench` model for CLI/TUI/Web runtime state.
+- Policy-gated agent edit preview, approval, apply, check, and trajectory events.
+- MCP config loading and policy-gated placeholder tool registration.
 
 In progress:
 
-- Coding-agent foundation for natural-language tasks.
-- Workspace inspection and safe command suggestions.
-- MCP boundary for future tool/server integration.
+- Model-backed edit-plan generation beyond explicit structured plans.
+- Real MCP stdio/http transport execution behind the current config/tool boundary.
 - CTF/security overlays on top of the coding-agent foundation.
 
 Not complete yet:
 
-- Full autonomous patch editing.
 - Full MCP transport client/server runtime.
 - Real CTF exploit automation.
 - Live multi-agent collaboration.
@@ -108,9 +108,9 @@ apps/
 
 packages/
   agent       Coding-agent turn runner
-  workspace   Safe repository inspection and command suggestions
+  workspace   Safe repository inspection, edit preview, and policy-gated writes
   workbench   Shared TUI/Web state model
-  mcp         MCP manifest and adapter boundary
+  mcp         MCP config, manifest, and adapter boundary
   core        Mission graph, task specs, trajectories, runner
   llm         MiniMax M3 and compatible model providers
   tools       Local tool registry and permission policy
@@ -121,10 +121,10 @@ packages/
 
 ## Competition Scoring Mapping
 
-- **Task understanding and execution design:** natural-language `/chat` and mission planning.
+- **Task understanding and execution design:** natural-language `/chat`, mission planning, and policy-gated edit runs.
 - **System architecture and engineering:** separated CLI/API/Web/agent/workspace/MCP packages.
 - **Decision explainability and robustness:** mission graph, trajectories, evidence, reports.
-- **Tool calling and collaboration:** tool registry, workspace tools, MCP boundary, security overlays.
+- **Tool calling and collaboration:** tool registry, workspace tools, MCP config boundary, security overlays.
 - **Human-in-the-loop product form:** terminal-first purple-lotus workbench, mirrored Web view, approvals, replay, and reports.
 - **Innovation and added value:** coding-agent core extended with CTF/security overlays.
 

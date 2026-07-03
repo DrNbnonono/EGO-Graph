@@ -3,6 +3,7 @@ export type McpCapability = "workspace.read" | "workspace.search" | "shell.run" 
 export type McpServerDescriptor = {
   name: string;
   command: string;
+  args?: string[];
   enabled: boolean;
 };
 
