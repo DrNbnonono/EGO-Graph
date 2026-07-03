@@ -4,7 +4,9 @@ import { defaultEgoHome, sqlitePath } from "@ego-graph/storage";
 export async function handleTuiCommand(): Promise<void> {
   if (process.env.CI === "true") {
     const model = loadModelConfig();
-    const modelLabel = isModelConfigured(model) ? (model.model ?? model.provider) : "deterministic fallback";
+    const modelLabel = isModelConfigured(model)
+      ? (model.model ?? model.provider)
+      : "deterministic fallback";
     console.log("紫莲花 Agent Workbench v0.1.0");
     console.log("项目进展：TypeScript monorepo / Agent Runtime / JSONL + SQLite / Web + TUI");
     console.log(`交互对话：直接运行 ego 进入终端驾驶舱，模型 ${modelLabel}`);

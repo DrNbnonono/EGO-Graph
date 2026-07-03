@@ -125,15 +125,15 @@ export function EgoTui(): ReactElement {
     <Box flexDirection="column" paddingX={1} paddingY={0} gap={1}>
       <Box borderStyle="round" borderColor="magenta" paddingX={1} justifyContent="space-between">
         <Text color="magentaBright">
-          {workbench.title} {workbench.version}  {workbench.cwd}
+          {workbench.title} {workbench.version} {workbench.cwd}
         </Text>
         <Text>
-          模式: <Text color="magentaBright">{workbench.mode}</Text>  网络:{" "}
+          模式: <Text color="magentaBright">{workbench.mode}</Text> 网络:{" "}
           <Text color={workbench.network === "connected" ? "green" : "yellow"}>
             {workbench.network === "connected" ? "连接" : "本地"}
           </Text>{" "}
-          模型: <Text color="cyan">{workbench.model.label}</Text>  {workbench.cpuLabel}  {" "}
-          {workbench.memoryLabel}  {workbench.clock}
+          模型: <Text color="cyan">{workbench.model.label}</Text> {workbench.cpuLabel}{" "}
+          {workbench.memoryLabel} {workbench.clock}
         </Text>
       </Box>
 
@@ -162,10 +162,6 @@ export function renderTui(): void {
   render(<EgoTui />);
 }
 
-function replyForInput(input: string): string {
-  return replyForCommand(input) ?? `已收到任务目标：${input}`;
-}
-
 function LeftSidebar({ workbench }: { workbench: WorkbenchState }): ReactElement {
   return (
     <Box flexDirection="column" width={28} gap={1}>
@@ -181,7 +177,11 @@ function LeftSidebar({ workbench }: { workbench: WorkbenchState }): ReactElement
         <Text color="magentaBright">工具集</Text>
         {workbench.tools.map((tool) => (
           <Text key={tool.name}>
-            <Text color={tool.status === "ready" ? "green" : tool.status === "planned" ? "yellow" : "gray"}>
+            <Text
+              color={
+                tool.status === "ready" ? "green" : tool.status === "planned" ? "yellow" : "gray"
+              }
+            >
               ●
             </Text>{" "}
             {tool.name} <Text color="gray">{tool.command}</Text>
@@ -207,11 +207,11 @@ function MainConsole({
   return (
     <Box flexDirection="column" flexGrow={1} gap={1}>
       <Box flexDirection="column" alignItems="center">
-        <Text color="magentaBright">          /\          </Text>
-        <Text color="magentaBright">     /\  /  \  /\     </Text>
-        <Text color="magentaBright">    /  \/ 紫 \/  \    </Text>
-        <Text color="magentaBright">    \  /\ 莲 /\  /    </Text>
-        <Text color="magentaBright">     \/  \__/  \/     </Text>
+        <Text color="magentaBright">{"          /\\          "}</Text>
+        <Text color="magentaBright">{"     /\\  /  \\  /\\     "}</Text>
+        <Text color="magentaBright">{"    /  \\/ 紫 \\/  \\    "}</Text>
+        <Text color="magentaBright">{"    \\  /\\ 莲 /\\  /    "}</Text>
+        <Text color="magentaBright">{"     \\/  \\__/  \\/     "}</Text>
         <Text color="magentaBright">挑战杯Agent开发</Text>
         <Text color="gray">= 智能网络安全AI代理 · 发现 · 分析 · 响应 · 加固 =</Text>
       </Box>

@@ -37,7 +37,8 @@ export async function readDashboardStatus(workspaceRoot = process.cwd()): Promis
     ok: true,
     product: "EGO-Graph",
     logo: "紫莲花",
-    milestone: "Lotus Agent Workbench：CLI/TUI、Web、Runtime Server、SQLite、模型回退、MCP 能力边界",
+    milestone:
+      "Lotus Agent Workbench：CLI/TUI、Web、Runtime Server、SQLite、模型回退、MCP 能力边界",
     model: workbench.model,
     storage: workbench.storage,
     mcp: workbench.mcp,

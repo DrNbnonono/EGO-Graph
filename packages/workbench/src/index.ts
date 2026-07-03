@@ -223,13 +223,10 @@ function buildFiles(files: string[]): WorkbenchFile[] {
 
 function buildLogs(runs: RunIndexRecord[]): WorkbenchLog[] {
   const now = new Date();
-  const base = [
-    "会话已创建",
-    "目标已加载",
-    "Policy Gate 已就绪",
-    "Evidence Board 已同步",
-  ];
-  const runLogs = runs.slice(0, 2).map((run) => `${run.runId} · ${run.status} · ${run.eventCount} events`);
+  const base = ["会话已创建", "目标已加载", "Policy Gate 已就绪", "Evidence Board 已同步"];
+  const runLogs = runs
+    .slice(0, 2)
+    .map((run) => `${run.runId} · ${run.status} · ${run.eventCount} events`);
 
   return [...base, ...runLogs].slice(0, 6).map((message, index) => ({
     time: new Date(now.getTime() - (5 - index) * 7000).toLocaleTimeString("zh-CN", {
