@@ -14,6 +14,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "smoke": "node scripts/smoke.mjs",
     "test": "vitest run",
     "typecheck": "tsc -b",
     "ego": "node apps/ego-cli/dist/index.js"
