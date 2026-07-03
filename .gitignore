@@ -34,6 +34,6 @@ storage/*.sqlite
 # 沙箱/构建
 docker/*.tar
 
-docs/XH-202609_具备自主决策能力的通用网络安全智能体.md
-.gitignore
 *.tsbuildinfo
+output/playwright
+.playwright-cli/

@@ -1,10 +1,4 @@
 import { Command } from "commander";
-import { handleDoctorCommand } from "./commands/doctor.js";
-import { handleEvalCommand } from "./commands/eval.js";
-import { handleReplayCommand } from "./commands/replay.js";
-import { handleRunCommand } from "./commands/run.js";
-import { handleServeCommand } from "./commands/serve.js";
-import { handleTuiCommand } from "./commands/tui.js";
 
 export function createProgram(): Command {
   const program = new Command();
@@ -14,6 +8,7 @@ export function createProgram(): Command {
     .description("EGO-Graph cybersecurity agent")
     .version("0.1.0")
     .action(async () => {
+      const { handleTuiCommand } = await import("./commands/tui.js");
       await handleTuiCommand();
     });
 
@@ -25,6 +20,7 @@ export function createProgram(): Command {
     .option("--input <path>", "path to a task input file")
     .option("--run-id <id>", "stable run id for tests and replay")
     .action(async (options) => {
+      const { handleRunCommand } = await import("./commands/run.js");
       await handleRunCommand(options);
     });
 
@@ -33,6 +29,7 @@ export function createProgram(): Command {
     .description("Replay a recorded trajectory")
     .requiredOption("--trajectory-id <trajectoryId>", "trajectory id")
     .action(async (options) => {
+      const { handleReplayCommand } = await import("./commands/replay.js");
       await handleReplayCommand(options);
     });
 
@@ -41,6 +38,7 @@ export function createProgram(): Command {
     .description("Run an evaluation dataset")
     .requiredOption("--dataset <path>", "JSONL evaluation dataset")
     .action(async (options) => {
+      const { handleEvalCommand } = await import("./commands/eval.js");
       await handleEvalCommand(options);
     });
 
@@ -48,6 +46,7 @@ export function createProgram(): Command {
     .command("doctor")
     .description("Check local EGO-Graph readiness")
     .action(async () => {
+      const { handleDoctorCommand } = await import("./commands/doctor.js");
       await handleDoctorCommand();
     });
 
@@ -55,6 +54,7 @@ export function createProgram(): Command {
     .command("serve")
     .description("Start the local EGO-Graph API")
     .action(async () => {
+      const { handleServeCommand } = await import("./commands/serve.js");
       await handleServeCommand();
     });
 

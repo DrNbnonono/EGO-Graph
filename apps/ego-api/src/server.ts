@@ -1,5 +1,7 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { runCodingAgentTurn } from "@ego-graph/agent";
 import {
   createModelBackedPlanner,
   createTrajectoryEvent,
@@ -9,6 +11,13 @@ import {
   type TrajectoryEvent,
 } from "@ego-graph/core";
 import { createChatModelProvider, loadModelConfig } from "@ego-graph/llm";
+import {
+  readDashboardStatus,
+  renderDashboardCss,
+  renderDashboardHtml,
+  renderDashboardJs,
+} from "@ego-graph/ego-web";
+import { readWorkbenchState } from "@ego-graph/workbench";
 import { loadOverlay } from "@ego-graph/overlays";
 import {
   extractReportDecisions,
@@ -27,15 +36,10 @@ import {
   trajectoryDir,
 } from "@ego-graph/storage";
 import { Hono } from "hono";
-import {
-  readDashboardStatus,
-  renderDashboardCss,
-  renderDashboardHtml,
-  renderDashboardJs,
-} from "./dashboard.js";
 
 export function createServer(): Hono {
   const app = new Hono();
+  const workspaceRoot = findWorkspaceRoot(process.cwd());
 
   app.get("/health", (context) => {
     return context.json({ ok: true, service: "ego-api" });
@@ -57,8 +61,53 @@ export function createServer(): Hono {
     });
   });
 
+  app.get("/assets/brand/ego-lotus.png", async () => {
+    const logo = await readFile(join(workspaceRoot, "assets", "brand", "ego-lotus.png"));
+
+    return new Response(logo, {
+      headers: {
+        "cache-control": "public, max-age=3600",
+        "content-type": "image/png",
+      },
+    });
+  });
+
+  app.get("/favicon.ico", async () => {
+    const logo = await readFile(join(workspaceRoot, "assets", "brand", "ego-lotus.png"));
+
+    return new Response(logo, {
+      headers: {
+        "cache-control": "public, max-age=3600",
+        "content-type": "image/png",
+      },
+    });
+  });
+
   app.get("/api/status", async (context) => {
-    return context.json(await readDashboardStatus());
+    return context.json(await readDashboardStatus(workspaceRoot));
+  });
+
+  app.get("/api/workbench", async (context) => {
+    return context.json({
+      ok: true,
+      workbench: await readWorkbenchState({ workspaceRoot }),
+    });
+  });
+
+  app.post("/chat", async (context) => {
+    const body = (await context.req.json()) as { message?: string };
+    const message = body.message?.trim();
+
+    if (!message) {
+      return context.json({ ok: false, error: "message is required" }, 400);
+    }
+
+    const turn = await runCodingAgentTurn({
+      message,
+      workspaceRoot,
+    });
+
+    return context.json({ ok: true, ...turn });
   });
 
   app.post("/runs", async (context) => {
@@ -89,7 +138,7 @@ export function createServer(): Hono {
       sqliteStore,
     ]);
     const result = await runMission({
-      workspaceRoot: process.cwd(),
+      workspaceRoot,
       task,
       overlay,
       trajectoryStore: store,
@@ -236,6 +285,24 @@ export function createServer(): Hono {
   });
 
   return app;
+}
+
+function findWorkspaceRoot(start: string): string {
+  let current = resolve(start);
+  while (true) {
+    if (
+      existsSync(join(current, "pnpm-workspace.yaml")) &&
+      existsSync(join(current, "package.json"))
+    ) {
+      return current;
+    }
+
+    const parent = dirname(current);
+    if (parent === current) {
+      return resolve(start);
+    }
+    current = parent;
+  }
 }
 
 function loadPlannerFromEnv(): AgentPlanner | undefined {

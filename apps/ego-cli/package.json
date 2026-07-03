@@ -8,17 +8,19 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run test",
+    "test": "cd ../.. && vitest run apps/ego-cli/test",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@ego-graph/core": "workspace:*",
+    "@ego-graph/agent": "workspace:*",
     "@ego-graph/ego-api": "workspace:*",
     "@ego-graph/llm": "workspace:*",
     "@ego-graph/overlays": "workspace:*",
     "@ego-graph/report": "workspace:*",
     "@ego-graph/shared": "workspace:*",
     "@ego-graph/storage": "workspace:*",
+    "@ego-graph/workbench": "workspace:*",
     "@hono/node-server": "^1.13.7",
     "commander": "^12.1.0",
     "ink": "^5.1.0",

@@ -6,7 +6,21 @@ import { join } from "node:path";
 const egoHome = await mkdtemp(join(tmpdir(), "ego-smoke-"));
 
 try {
-  await execa("pnpm", ["build"], { stdio: "inherit" });
+  await execa(
+    "corepack",
+    [
+      "pnpm",
+      "--config.confirmModulesPurge=false",
+      "--config.verifyDepsBeforeRun=false",
+      "-r",
+      "--sort",
+      "build",
+    ],
+    {
+      stdio: "inherit",
+      env: { ...process.env, CI: "true" },
+    },
+  );
 
   const help = await execa("node", ["apps/ego-cli/dist/index.js", "--help"]);
   if (!help.stdout.includes("EGO-Graph")) {

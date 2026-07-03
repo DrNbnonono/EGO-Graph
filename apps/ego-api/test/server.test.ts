@@ -16,9 +16,13 @@ describe("ego api server", () => {
     const dashboardResponse = await app.request("/");
     const cssResponse = await app.request("/assets/dashboard.css");
     const jsResponse = await app.request("/assets/dashboard.js");
+    const logoResponse = await app.request("/assets/brand/ego-lotus.png");
+    const faviconResponse = await app.request("/favicon.ico");
     const statusResponse = await app.request("/api/status");
+    const workbenchResponse = await app.request("/api/workbench");
     const html = await dashboardResponse.text();
     const status = await statusResponse.json();
+    const workbench = await workbenchResponse.json();
 
     expect(dashboardResponse.status).toBe(200);
     expect(dashboardResponse.headers.get("content-type")).toContain("text/html");
@@ -26,14 +30,48 @@ describe("ego api server", () => {
     expect(html).toContain("对话控制台");
     expect(html).toContain("项目进展");
     expect(html).toContain('id="mission-chat"');
+    expect(html).toContain("/assets/brand/ego-lotus.png");
+    expect(html).toContain('rel="icon"');
     expect(cssResponse.headers.get("content-type")).toContain("text/css");
     expect(await cssResponse.text()).toContain(".lotus-mark");
     expect(await jsResponse.text()).toContain("submitMission");
+    expect(logoResponse.status).toBe(200);
+    expect(logoResponse.headers.get("content-type")).toContain("image/png");
+    expect(faviconResponse.status).toBe(200);
     expect(status).toMatchObject({
       ok: true,
       product: "EGO-Graph",
     });
     expect(status.model.provider).toBeDefined();
+    expect(status.mcp.status).toBe("not_configured");
+    expect(workbench).toMatchObject({
+      ok: true,
+      workbench: {
+        product: "EGO-Graph",
+        title: "紫莲花 Agent Workbench",
+      },
+    });
+    expect(workbench.workbench.quickCommands).toContain("/scan");
+  });
+
+  it("handles natural-language coding agent turns through the chat API", async () => {
+    const app = createServer();
+    const response = await app.request("/chat", {
+      method: "POST",
+      body: JSON.stringify({ message: "阅读项目状态并说明下一步应该做什么" }),
+      headers: { "content-type": "application/json" },
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      ok: true,
+      mode: "coding-agent",
+    });
+    expect(body.assistantMessage).toContain("coding agent");
+    expect(body.plan.length).toBeGreaterThan(0);
+    expect(body.suggestedCommands).toContain("pnpm test");
+    expect(body.mcp.status).toBe("not_configured");
   });
 
   it("runs the controlled fixture through the HTTP API", async () => {

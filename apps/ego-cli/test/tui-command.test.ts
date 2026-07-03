@@ -13,6 +13,7 @@ describe("ego default TUI", () => {
     expect(result.stdout).toContain("项目进展");
     expect(result.stdout).toContain("交互对话");
     expect(result.stdout).toContain("Web 可视化");
+    expect(result.stdout).toContain("SQLite");
     expect(result.stdout).toContain("ego serve");
     expect(result.stdout).toContain("ego run --scenario web_pentest");
   });

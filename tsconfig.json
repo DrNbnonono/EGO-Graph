@@ -4,10 +4,15 @@
     { "path": "./packages/shared" },
     { "path": "./packages/tools" },
     { "path": "./packages/llm" },
+    { "path": "./packages/mcp" },
+    { "path": "./packages/workspace" },
+    { "path": "./packages/workbench" },
     { "path": "./packages/core" },
     { "path": "./packages/overlays" },
     { "path": "./packages/report" },
     { "path": "./packages/storage" },
+    { "path": "./packages/agent" },
+    { "path": "./apps/ego-web" },
     { "path": "./apps/ego-api" },
     { "path": "./apps/ego-cli" }
   ]
