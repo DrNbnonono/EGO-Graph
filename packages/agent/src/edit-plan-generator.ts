@@ -2,6 +2,7 @@ import { basename } from "node:path";
 import { generateJson, type ChatModelProvider } from "@ego-graph/llm";
 import { createWorkspaceService, type WorkspaceEditPlan } from "@ego-graph/workspace";
 import { z } from "zod";
+import { loadAgentSystemPrompt } from "./system-prompt.js";
 
 const workspaceEditOperationSchema = z.discriminatedUnion("type", [
   z.object({
@@ -73,7 +74,12 @@ export async function generateWorkspaceEditPlan(
   }
 
   try {
-    // 中文注释：提示词只要求模型产出结构化 JSON，实际写入仍由 workspace policy 审批链负责。
+    const systemPrompt = await loadAgentSystemPrompt({
+      workspaceRoot: input.workspaceRoot,
+      skills: ["workspace", "patch-approval", "checks"],
+      mcpTools: [],
+    });
+    // 中文注释：这里只要求模型生成结构化计划，真正写入仍由 workspace policy 和审批链负责。
     const result = await generateJson(input.provider, modelEditPlanSchema, {
       temperature: 0,
       maxTokens: 4096,
@@ -81,6 +87,7 @@ export async function generateWorkspaceEditPlan(
         {
           role: "system",
           content: [
+            systemPrompt.finalPrompt,
             "You are EGO-Graph's coding agent edit planner.",
             "Return only JSON that matches this shape:",
             '{"rationale":"...","editPlan":{"goal":"...","operations":[...]}}',

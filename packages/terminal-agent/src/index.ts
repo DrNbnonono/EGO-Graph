@@ -1,4 +1,10 @@
-import { draftAgentPlan, runCodingAgentTurn, type AgentCheckCommand } from "@ego-graph/agent";
+import {
+  draftAgentPlan,
+  loadAgentSystemPrompt,
+  runAssistantChatTurn,
+  runCodingAgentTurn,
+  type AgentCheckCommand,
+} from "@ego-graph/agent";
 import { createTrajectoryEvent, type TrajectoryEvent } from "@ego-graph/core";
 import { createHermesEvent } from "@ego-graph/hermes";
 import {
@@ -31,6 +37,8 @@ export type PermissionLevel =
   "read-only" | "workspace-write" | "shell-readonly" | "network-low" | "security-active";
 
 export type AgentRunEventType =
+  | "user.message"
+  | "assistant.message"
   | "run.started"
   | "context.loaded"
   | "memory.recalled"
@@ -87,6 +95,7 @@ export type TerminalAgentSessionOptions = {
 export type TerminalAgentSession = {
   getPermissionLevel(): PermissionLevel;
   setPermissionLevel(level: PermissionLevel): void;
+  submitMessage(message: string): AsyncIterable<AgentRunEvent>;
   startTask(message: string): AsyncIterable<AgentRunEvent>;
   approvePlan(runId: string): AsyncIterable<AgentRunEvent>;
   rejectPlan(runId: string): AsyncIterable<AgentRunEvent>;
@@ -100,7 +109,8 @@ export type TerminalAgentRunState = {
   runId: string;
   sessionId: string;
   message: string;
-  status: "planning" | "plan_pending" | "patch_pending" | "applied" | "blocked" | "rejected";
+  status:
+    "planning" | "answered" | "plan_pending" | "patch_pending" | "applied" | "blocked" | "rejected";
   plan?: EvidenceGapStep[];
   diff?: string;
   files?: string[];
@@ -111,6 +121,8 @@ type PendingRun = TerminalAgentRunState & {
   editPlan?: WorkspaceEditPlan;
   approvalId?: string;
 };
+
+export type TerminalIntent = "chat" | "project_analysis" | "code_change" | "security_task";
 
 const permissionRank: Record<PermissionLevel, number> = {
   "read-only": 0,
@@ -137,6 +149,30 @@ export function createTerminalAgentSession(
     },
     setPermissionLevel(level) {
       permissionLevel = level;
+    },
+    submitMessage(message) {
+      const intent = classifyTerminalIntent(message);
+      if (intent === "code_change" || intent === "security_task") {
+        return streamStartTask({
+          message,
+          workspaceRoot,
+          store,
+          toolRegistry,
+          pendingRuns,
+          plannerProvider,
+          getPermissionLevel: () => permissionLevel,
+        });
+      }
+
+      return streamChatTurn({
+        message,
+        workspaceRoot,
+        store,
+        pendingRuns,
+        intent,
+        modelProvider: options.modelProvider,
+        getPermissionLevel: () => permissionLevel,
+      });
     },
     startTask(message) {
       return streamStartTask({
@@ -194,6 +230,113 @@ export function createTerminalAgentSession(
       return pendingRuns.get(runId);
     },
   };
+}
+
+async function* streamChatTurn(input: {
+  message: string;
+  workspaceRoot: string;
+  store: SqliteEgoStore;
+  pendingRuns: Map<string, PendingRun>;
+  intent: TerminalIntent;
+  modelProvider: TerminalAgentSessionOptions["modelProvider"];
+  getPermissionLevel(): PermissionLevel;
+}): AsyncIterable<AgentRunEvent> {
+  const now = new Date().toISOString();
+  const runId = `tui-chat-${now.replace(/\D/g, "")}-${Math.random().toString(36).slice(2, 8)}`;
+  const sessionId = `tui-session-${Date.now()}`;
+  const workspace = createWorkspaceService(input.workspaceRoot);
+  input.pendingRuns.set(runId, {
+    runId,
+    sessionId,
+    message: input.message,
+    status: "planning",
+  });
+  await input.store.saveAgentRun({
+    runId,
+    message: input.message,
+    mode: "terminal-chat",
+    status: "inspect",
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  yield await emit(input.store, {
+    type: "user.message",
+    runId,
+    sessionId,
+    message: input.message,
+    payload: { intent: input.intent, permissionLevel: input.getPermissionLevel() },
+  });
+
+  const memoryHits = await recallStoreMemories(input.store, input.message);
+  if (input.intent === "project_analysis") {
+    const [summary, files] = await Promise.all([
+      workspace.summarizeProject(),
+      workspace.listFiles({ limit: 60, maxDepth: 4 }),
+    ]);
+    yield await emit(input.store, {
+      type: "context.loaded",
+      runId,
+      sessionId,
+      message: `已读取项目上下文：${summary.apps.length} 个 app、${summary.packages.length} 个 package、${files.length} 个文件样本。`,
+      payload: { summary, files: files.slice(0, 30) },
+    });
+  }
+
+  try {
+    const turn = await runAssistantChatTurn({
+      message: input.message,
+      workspaceRoot: input.workspaceRoot,
+      memoryHints: memoryHits.map((memory) => `[${memory.scope}] ${memory.content}`),
+      ...(input.modelProvider !== undefined ? { modelProvider: input.modelProvider } : {}),
+    });
+    const reply =
+      turn.status === "needs_model"
+        ? buildLocalAssistantFallback(input.message, input.intent, turn.observations)
+        : turn.reply;
+
+    input.pendingRuns.set(runId, {
+      runId,
+      sessionId,
+      message: input.message,
+      status: "answered",
+    });
+    await input.store.saveAgentRun({
+      runId,
+      message: input.message,
+      mode: "terminal-chat",
+      status: "inspect",
+      createdAt: now,
+      updatedAt: new Date().toISOString(),
+    });
+
+    yield await emit(input.store, {
+      type: "assistant.message",
+      runId,
+      sessionId,
+      message: reply,
+      payload: {
+        status: turn.status,
+        model: turn.model,
+        suggestedCommands: turn.suggestedCommands,
+      },
+    });
+  } catch (error) {
+    const debug = error instanceof Error ? error.message : String(error);
+    input.pendingRuns.set(runId, {
+      runId,
+      sessionId,
+      message: input.message,
+      status: "blocked",
+    });
+    yield await emit(input.store, {
+      type: "assistant.message",
+      runId,
+      sessionId,
+      message: "模型回答失败，已保留调试信息。请检查模型配置或使用 /debug 查看详情。",
+      payload: { debug },
+    });
+  }
 }
 
 async function* streamStartTask(input: {
@@ -271,6 +414,7 @@ async function* streamStartTask(input: {
   if (input.plannerProvider) {
     const modelPlan = await generateEvidenceGapPlan({
       provider: input.plannerProvider,
+      workspaceRoot: input.workspaceRoot,
       message: input.message,
       summary,
       files,
@@ -298,6 +442,7 @@ async function* streamStartTask(input: {
         payload: {
           provider: input.plannerProvider.name,
           model: input.plannerProvider.model,
+          debug: modelPlan.debug,
         },
       });
       yield await emit(input.store, {
@@ -875,13 +1020,15 @@ function buildReadOnlyToolRequests(
 
 async function generateEvidenceGapPlan(input: {
   provider: ChatModelProvider;
+  workspaceRoot: string;
   message: string;
   summary: ProjectSummary;
   files: string[];
   memories: MemoryRecord[];
   tools: Array<Record<string, unknown>>;
 }): Promise<
-  { status: "proposed"; plan: EvidenceGapStep[] } | { status: "failed"; message: string }
+  | { status: "proposed"; plan: EvidenceGapStep[] }
+  | { status: "failed"; message: string; debug: string }
 > {
   const stepSchema = z.object({
     id: z.string().min(1),
@@ -895,16 +1042,25 @@ async function generateEvidenceGapPlan(input: {
   });
   const schema = z.object({ plan: z.array(stepSchema).min(2).max(6) });
   try {
+    const systemPrompt = await loadAgentSystemPrompt({
+      workspaceRoot: input.workspaceRoot,
+      memoryHints: input.memories.map((memory) => `[${memory.scope}] ${memory.content}`),
+      skills: ["workspace", "memory", "evidence", "patch-approval", "checks"],
+      mcpTools: [],
+    });
     const result = await generateJson(input.provider, schema, {
       temperature: 0,
       messages: [
         {
           role: "system",
           content: [
+            systemPrompt.finalPrompt,
             "You are the EGO-Graph terminal security agent planner.",
             "Return concise evidence-gap planning JSON only.",
+            "The top-level JSON object MUST contain a plan array.",
             "Do not reveal hidden chain-of-thought; provide auditable summaries.",
             "Do not plan unauthorized public scanning or exploitation.",
+            'Required JSON shape: {"plan":[{"id":"...","title":"...","knownEvidence":["..."],"missingEvidence":["..."],"toolChoiceRationale":"...","expectedResult":"...","stopCondition":"...","riskNote":"..."}]}',
           ].join(" "),
         },
         {
@@ -937,9 +1093,11 @@ async function generateEvidenceGapPlan(input: {
     });
     return { status: "proposed", plan: result.plan };
   } catch (error) {
+    const debug = error instanceof Error ? error.message : String(error);
     return {
       status: "failed",
-      message: `Model evidence-gap planner failed: ${error instanceof Error ? error.message : String(error)}`,
+      message: "模型计划生成失败，已切换到本地 fallback plan。",
+      debug,
     };
   }
 }
@@ -1071,6 +1229,60 @@ function summarizeTool(tool: ToolDefinition<ZodTypeAny, ZodTypeAny>): Record<str
   };
 }
 
+export function classifyTerminalIntent(message: string): TerminalIntent {
+  const normalized = message.trim().toLowerCase();
+  if (!normalized) {
+    return "chat";
+  }
+
+  if (
+    /渗透|攻击|漏洞利用|扫描公网|nmap|端口扫描|靶场|ctf|exploit|pentest|scan target/.test(
+      normalized,
+    )
+  ) {
+    return "security_task";
+  }
+
+  if (
+    /修改|改成|更新|补充|创建|删除|重构|修复|实现|写入|生成\s*patch|edit|update|modify|refactor|fix|implement|write|delete|create/.test(
+      normalized,
+    )
+  ) {
+    return "code_change";
+  }
+
+  if (
+    /分析|项目结构|结构|总结|解释|为什么|怎么|阅读项目|查看项目|架构|依赖|analy[sz]e|explain|summarize|architecture|structure/.test(
+      normalized,
+    )
+  ) {
+    return "project_analysis";
+  }
+
+  return "chat";
+}
+
+function buildLocalAssistantFallback(
+  message: string,
+  intent: TerminalIntent,
+  observations: string[],
+): string {
+  if (intent === "project_analysis") {
+    return [
+      "当前模型未配置完整，所以我先给出只读本地摘要：",
+      ...observations.slice(0, 4).map((item) => `- ${item}`),
+      "",
+      "要获得更完整的自然语言分析，请在 Web Workbench 的 Models 页面或 `.ego/config.json` 配置模型。",
+    ].join("\n");
+  }
+
+  return [
+    "你好，我是 EGO-Graph 终端 Agent。",
+    "当前模型未配置完整，所以这次使用本地降级回答；我仍然可以帮你查看项目结构、生成待审批计划，或提示如何配置模型。",
+    `你刚才的问题是：${message}`,
+  ].join("\n");
+}
+
 function selectSearchQuery(message: string): string {
   const normalized = message.match(/README|readme/i) ? "README" : message.slice(0, 32).trim();
   return normalized.length > 0 ? normalized : "EGO-Graph";
@@ -1098,6 +1310,8 @@ function buildFinalSummary(checks: Array<{ status: string; command: string }>): 
 
 function normalizeEventType(type: string): AgentRunEventType {
   const known: AgentRunEventType[] = [
+    "user.message",
+    "assistant.message",
     "run.started",
     "context.loaded",
     "memory.recalled",

@@ -51,9 +51,9 @@ export async function runAssistantChatTurn(input: AssistantChatInput): Promise<A
 
   if (!provider) {
     const reply = [
-      "模型尚未启用，所以这一回合保持只读提示，不伪装成真实模型回复。",
-      "请在右侧“模型设置”选择 MiniMax、DeepSeek 或 OpenAI-compatible，填写 Base URL、模型名和 API Key 后保存；也可以用 `ego config model` 写入 `.ego/config.json`。",
-      "需要改代码时请切换到“生成 Patch”模式，那里会生成 diff 并等待审批。",
+      "模型尚未启用，所以这次保持只读本地回答，不伪装成真实模型回复。",
+      "请在 Web Workbench 的 Models 页面选择 MiniMax、DeepSeek 或 OpenAI-compatible，并填写 Base URL、模型名和 API Key；也可以用 `ego config model` 写入 `.ego/config.json`。",
+      "需要修改代码时，请使用 Plan/Patch 审批流；未审批前不会写入文件。",
     ].join("\n\n");
 
     return {

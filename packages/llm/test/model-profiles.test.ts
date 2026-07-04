@@ -75,7 +75,9 @@ describe("model profiles", () => {
     };
 
     expect(profiles.activeProfile?.id).toBe("local-openai");
-    expect(profiles.profiles.find((profile) => profile.id === "local-openai")?.config.apiKey).toBeUndefined();
+    expect(
+      profiles.profiles.find((profile) => profile.id === "local-openai")?.config.apiKey,
+    ).toBeUndefined();
     expect(active.config.model).toBe("qwen-coder");
     expect(active.config.apiKey).toBe("local-secret");
     expect(file.activeModelProfileId).toBe("local-openai");

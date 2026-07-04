@@ -3,11 +3,11 @@ import {
   type AgentRunEvent,
   type EvidenceGapStep,
   type PermissionLevel,
-  type TerminalAgentSession,
   type TerminalAgentRunState,
+  type TerminalAgentSession,
 } from "@ego-graph/terminal-agent";
 import { readWorkbenchState, type WorkbenchState } from "@ego-graph/workbench";
-import { Box, Text, render, useApp, useInput } from "ink";
+import { Box, Text, render, useApp, useInput, useStdout } from "ink";
 import { useEffect, useMemo, useState, type ReactElement, type SetStateAction } from "react";
 
 const permissionLevels: PermissionLevel[] = [
@@ -18,7 +18,7 @@ const permissionLevels: PermissionLevel[] = [
   "security-active",
 ];
 
-type DetailMode = "timeline" | "plan" | "diff" | "checks" | "commands";
+type DetailMode = "status" | "plan" | "diff" | "checks" | "debug";
 
 type TuiRunSession = {
   runId: string;
@@ -29,20 +29,19 @@ type TuiRunSession = {
 
 const commandPalette = [
   "/help",
+  "/status",
   "/permissions",
   "/allow workspace-write",
   "/allow shell-readonly",
+  "/allow network-low",
   "/allow security-active",
   "/plan approve",
   "/plan reject",
   "/diff",
-  "/next",
-  "/prev",
-  "/file next",
-  "/file prev",
   "/patch approve",
   "/patch reject",
   "/checks",
+  "/debug",
   "/sessions",
   "/new",
   "/replay ",
@@ -51,23 +50,22 @@ const commandPalette = [
 
 export function EgoTui(): ReactElement {
   const { exit } = useApp();
+  const { stdout } = useStdout();
+  const terminalHeight = Math.max(24, stdout.rows ?? 32);
+  const bodyHeight = Math.max(10, terminalHeight - 7);
   const session = useMemo(() => createTerminalAgentSession({ workspaceRoot: process.cwd() }), []);
   const [input, setInput] = useState("");
   const [events, setEvents] = useState<AgentRunEvent[]>([
-    {
-      type: "run.started",
-      runId: "welcome",
-      sessionId: "welcome",
-      message: "欢迎使用 EGO-Graph Terminal Agent。输入自然语言任务，或输入 /help 查看命令。",
-      createdAt: new Date().toISOString(),
-      payload: {},
-    },
+    localEvent(
+      "欢迎使用 EGO-Graph 终端 Agent。直接输入问题即可对话；需要改代码时我会先给计划和 diff 审批。",
+      "assistant.message",
+    ),
   ]);
   const [workbench, setWorkbench] = useState<WorkbenchState | undefined>();
   const [busy, setBusy] = useState(false);
   const [activeRunId, setActiveRunId] = useState<string | undefined>();
-  const [detailMode, setDetailMode] = useState<DetailMode>("timeline");
-  const [detailPage, setDetailPage] = useState(0);
+  const [detailMode, setDetailMode] = useState<DetailMode>("status");
+  const [scrollOffset, setScrollOffset] = useState(0);
   const [diffFileIndex, setDiffFileIndex] = useState(0);
   const [runSessions, setRunSessions] = useState<TuiRunSession[]>([]);
   const [permissionLevel, setPermissionLevel] = useState<PermissionLevel>(
@@ -87,27 +85,26 @@ export function EgoTui(): ReactElement {
       return;
     }
 
+    if (key.pageUp || key.upArrow) {
+      setScrollOffset((previous) => Math.min(previous + 4, Math.max(0, events.length - 1)));
+      return;
+    }
+    if (key.pageDown || key.downArrow) {
+      setScrollOffset((previous) => Math.max(0, previous - 4));
+      return;
+    }
+
     if (busy) {
       return;
     }
 
-    if (key.upArrow) {
-      setDetailPage((previous) => Math.max(0, previous - 1));
-      return;
-    }
-    if (key.downArrow) {
-      setDetailPage((previous) => previous + 1);
-      return;
-    }
     if (value === "[") {
       setDiffFileIndex((previous) => Math.max(0, previous - 1));
-      setDetailPage(0);
       setDetailMode("diff");
       return;
     }
     if (value === "]") {
       setDiffFileIndex((previous) => previous + 1);
-      setDetailPage(0);
       setDetailMode("diff");
       return;
     }
@@ -118,6 +115,7 @@ export function EgoTui(): ReactElement {
         return;
       }
       setInput("");
+      setScrollOffset(0);
       void submitInput({
         submitted,
         session,
@@ -127,7 +125,7 @@ export function EgoTui(): ReactElement {
         setBusy,
         setWorkbench,
         setDetailMode,
-        setDetailPage,
+        setScrollOffset,
         setDiffFileIndex,
         runSessions,
         setRunSessions,
@@ -136,51 +134,36 @@ export function EgoTui(): ReactElement {
       return;
     }
 
-    if (value === "y" && activeRunId) {
+    if ((value === "y" || value === "n") && activeRunId) {
       const state = session.getRunState(activeRunId);
       if (state?.status === "plan_pending") {
-        void runStream(session.approvePlan(activeRunId), setEvents, setBusy, setWorkbench, {
-          onEvent(event) {
-            updateRunSessions(setRunSessions, event);
+        void runStream(
+          value === "y" ? session.approvePlan(activeRunId) : session.rejectPlan(activeRunId),
+          setEvents,
+          setBusy,
+          setWorkbench,
+          {
+            onEvent(event) {
+              updateRunSessions(setRunSessions, event);
+            },
           },
-        });
+        );
         return;
       }
       if (state?.status === "patch_pending") {
-        void runStream(session.approvePatch(activeRunId), setEvents, setBusy, setWorkbench, {
-          onEvent(event) {
-            updateRunSessions(setRunSessions, event);
+        void runStream(
+          value === "y" ? session.approvePatch(activeRunId) : session.rejectPatch(activeRunId),
+          setEvents,
+          setBusy,
+          setWorkbench,
+          {
+            onEvent(event) {
+              updateRunSessions(setRunSessions, event);
+            },
           },
-        });
+        );
         return;
       }
-    }
-    if (value === "n" && activeRunId) {
-      const state = session.getRunState(activeRunId);
-      if (state?.status === "plan_pending") {
-        void runStream(session.rejectPlan(activeRunId), setEvents, setBusy, setWorkbench, {
-          onEvent(event) {
-            updateRunSessions(setRunSessions, event);
-          },
-        });
-        return;
-      }
-      if (state?.status === "patch_pending") {
-        void runStream(session.rejectPatch(activeRunId), setEvents, setBusy, setWorkbench, {
-          onEvent(event) {
-            updateRunSessions(setRunSessions, event);
-          },
-        });
-        return;
-      }
-    }
-    if (value === "d") {
-      setDetailMode("diff");
-      return;
-    }
-    if (value === "c") {
-      setDetailMode("checks");
-      return;
     }
 
     if (key.backspace || key.delete) {
@@ -197,7 +180,7 @@ export function EgoTui(): ReactElement {
     return (
       <Box borderStyle="round" borderColor="magenta" paddingX={1} flexDirection="column">
         <Text color="magentaBright">EGO-Graph Terminal Agent</Text>
-        <Text color="gray">正在读取项目、模型、SQLite 与轨迹状态...</Text>
+        <Text color="gray">正在读取项目、模型、SQLite 与 Agent Kernel 状态...</Text>
       </Box>
     );
   }
@@ -205,29 +188,24 @@ export function EgoTui(): ReactElement {
   const activeRun = activeRunId ? session.getRunState(activeRunId) : undefined;
 
   return (
-    <Box flexDirection="column" paddingX={1} paddingY={0} gap={1}>
-      <Header workbench={workbench} permissionLevel={permissionLevel} />
-      <Box flexDirection="row" gap={1}>
-        <LeftSidebar workbench={workbench} permissionLevel={permissionLevel} />
-        <MainConsole
+    <Box flexDirection="column" height={terminalHeight}>
+      <Header workbench={workbench} permissionLevel={permissionLevel} busy={busy} />
+      <Box flexGrow={1} height={bodyHeight} flexDirection="row" gap={1}>
+        <ConversationStream
           events={events}
-          input={input}
-          busy={busy}
-          workbench={workbench}
-          activeRun={activeRun}
-          detailPage={detailPage}
-          paletteMatches={paletteMatches}
+          height={bodyHeight}
+          scrollOffset={scrollOffset}
+          detailMode={detailMode}
         />
-        <RightSidebar
+        <RightRail
           workbench={workbench}
           activeRun={activeRun}
           detailMode={detailMode}
-          detailPage={detailPage}
           diffFileIndex={diffFileIndex}
           runSessions={runSessions}
         />
       </Box>
-      <Footer />
+      <InputBar input={input} busy={busy} paletteMatches={paletteMatches} />
     </Box>
   );
 }
@@ -245,7 +223,7 @@ async function submitInput(input: {
   setBusy(value: boolean): void;
   setWorkbench(value: WorkbenchState | undefined): void;
   setDetailMode(value: DetailMode): void;
-  setDetailPage(value: SetStateAction<number>): void;
+  setScrollOffset(value: SetStateAction<number>): void;
   setDiffFileIndex(value: SetStateAction<number>): void;
   runSessions: TuiRunSession[];
   setRunSessions(value: SetStateAction<TuiRunSession[]>): void;
@@ -255,14 +233,27 @@ async function submitInput(input: {
 
   if (normalized === "/clear") {
     input.setEvents([]);
-    input.setDetailPage(0);
+    input.setScrollOffset(0);
     return;
   }
   if (normalized === "/new") {
     input.setActiveRunId(undefined);
-    input.setEvents([localEvent("新会话已创建。输入自然语言任务开始新的终端 Agent run。")]);
-    input.setDetailMode("timeline");
-    input.setDetailPage(0);
+    input.setEvents([localEvent("新会话已创建。直接输入自然语言即可开始新的终端 Agent 对话。")]);
+    input.setDetailMode("status");
+    input.setScrollOffset(0);
+    return;
+  }
+  if (normalized === "/help") {
+    input.setEvents((previous) => [...previous, localEvent(helpText())]);
+    input.setDetailMode("status");
+    return;
+  }
+  if (normalized === "/status") {
+    input.setDetailMode("status");
+    return;
+  }
+  if (normalized === "/debug") {
+    input.setDetailMode("debug");
     return;
   }
   if (normalized === "/sessions") {
@@ -277,15 +268,10 @@ async function submitInput(input: {
                 .map((session, index) => `${index + 1}. ${session.runId} ${session.title}`),
               "使用 /switch <runId> 或 /replay <runId> 切换。",
             ].join("\n")
-          : "暂无活动 run。完成一次任务后可在 /sessions 中查看。",
+          : "暂无活动 run。",
       ),
     ]);
-    input.setDetailMode("commands");
-    return;
-  }
-  if (normalized === "/help") {
-    input.setEvents((previous) => [...previous, localEvent(helpText())]);
-    input.setDetailMode("commands");
+    input.setDetailMode("status");
     return;
   }
   if (normalized === "/permissions") {
@@ -313,37 +299,14 @@ async function submitInput(input: {
   }
   if (normalized === "/diff") {
     input.setDetailMode("diff");
-    input.setDetailPage(0);
     return;
   }
   if (normalized === "/checks") {
     input.setDetailMode("checks");
-    input.setDetailPage(0);
-    return;
-  }
-  if (normalized === "/next") {
-    input.setDetailPage((previous) => previous + 1);
-    return;
-  }
-  if (normalized === "/prev") {
-    input.setDetailPage((previous) => Math.max(0, previous - 1));
-    return;
-  }
-  if (normalized === "/file next") {
-    input.setDiffFileIndex((previous) => previous + 1);
-    input.setDetailPage(0);
-    input.setDetailMode("diff");
-    return;
-  }
-  if (normalized === "/file prev") {
-    input.setDiffFileIndex((previous) => Math.max(0, previous - 1));
-    input.setDetailPage(0);
-    input.setDetailMode("diff");
     return;
   }
   if (normalized === "/plan approve" && input.activeRunId) {
     input.setDetailMode("diff");
-    input.setDetailPage(0);
     await runStream(
       input.session.approvePlan(input.activeRunId),
       input.setEvents,
@@ -373,7 +336,6 @@ async function submitInput(input: {
   }
   if (normalized === "/patch approve" && input.activeRunId) {
     input.setDetailMode("checks");
-    input.setDetailPage(0);
     await runStream(
       input.session.approvePatch(input.activeRunId),
       input.setEvents,
@@ -401,40 +363,25 @@ async function submitInput(input: {
     );
     return;
   }
-  if (normalized.startsWith("/switch ")) {
-    const selector = input.submitted.replace("/switch ", "").trim();
-    const index = Number.parseInt(selector, 10);
-    const runId =
-      Number.isInteger(index) && index > 0
-        ? (input.runSessions[index - 1]?.runId ?? selector)
-        : selector;
+  if (normalized.startsWith("/switch ") || normalized.startsWith("/replay ")) {
+    const runId = input.submitted.replace(/^\/(?:switch|replay)\s+/, "").trim();
     const replay = await input.session.replayRun(runId);
     input.setActiveRunId(runId);
     input.setEvents(replay.length > 0 ? replay : [localEvent(`未找到 run: ${runId}`)]);
-    input.setDetailMode("timeline");
-    input.setDetailPage(0);
-    return;
-  }
-  if (normalized.startsWith("/replay ")) {
-    const runId = input.submitted.replace("/replay ", "").trim();
-    const replay = await input.session.replayRun(runId);
-    input.setActiveRunId(runId);
-    input.setEvents(replay.length > 0 ? replay : [localEvent(`未找到 run: ${runId}`)]);
-    input.setDetailMode("timeline");
-    input.setDetailPage(0);
+    input.setDetailMode("status");
+    input.setScrollOffset(0);
     return;
   }
 
-  input.setDetailMode("timeline");
-  input.setDetailPage(0);
+  input.setDetailMode("status");
   await runStream(
-    input.session.startTask(input.submitted),
+    input.session.submitMessage(input.submitted),
     input.setEvents,
     input.setBusy,
     input.setWorkbench,
     {
       onEvent(event) {
-        if (event.type === "run.started") {
+        if (event.type === "user.message" || event.type === "run.started") {
           input.setActiveRunId(event.runId);
         }
         updateRunSessions(input.setRunSessions, event);
@@ -454,7 +401,7 @@ async function runStream(
   try {
     for await (const event of stream) {
       hooks.onEvent?.(event);
-      setEvents((previous) => [...previous, event].slice(-80));
+      setEvents((previous) => [...previous, event].slice(-160));
     }
     await refreshWorkbench(setWorkbench, appendSystemEvent(setEvents));
   } catch (error) {
@@ -470,163 +417,174 @@ async function runStream(
 function Header({
   workbench,
   permissionLevel,
-}: {
-  workbench: WorkbenchState;
-  permissionLevel: PermissionLevel;
-}): ReactElement {
-  return (
-    <Box borderStyle="round" borderColor="magenta" paddingX={1} justifyContent="space-between">
-      <Text color="magentaBright">
-        {workbench.title} {workbench.version} {workbench.cwd}
-      </Text>
-      <Text>
-        权限: <Text color="yellow">{permissionLevel}</Text> 模型:{" "}
-        <Text color="cyan">{workbench.model.label}</Text> {workbench.cpuLabel}{" "}
-        {workbench.memoryLabel} {workbench.clock}
-      </Text>
-    </Box>
-  );
-}
-
-function LeftSidebar({
-  workbench,
-  permissionLevel,
-}: {
-  workbench: WorkbenchState;
-  permissionLevel: PermissionLevel;
-}): ReactElement {
-  return (
-    <Box flexDirection="column" width={30} gap={1}>
-      <Box borderStyle="single" borderColor="magenta" paddingX={1} flexDirection="column">
-        <Text color="magentaBright">会话 / 任务</Text>
-        {workbench.sessions.map((session) => (
-          <Text key={session.id} color={session.active ? "magentaBright" : "gray"}>
-            {session.active ? ">" : " "} {session.title} {session.timeLabel}
-          </Text>
-        ))}
-      </Box>
-      <Box borderStyle="single" borderColor="magenta" paddingX={1} flexDirection="column">
-        <Text color="magentaBright">权限等级</Text>
-        {permissionLevels.map((level) => (
-          <Text key={level} color={level === permissionLevel ? "yellow" : "gray"}>
-            {level === permissionLevel ? "●" : "○"} {level}
-          </Text>
-        ))}
-      </Box>
-      <Box borderStyle="single" borderColor="magenta" paddingX={1} flexDirection="column">
-        <Text color="magentaBright">基础工具</Text>
-        <Text>workspace.list/read/grep</Text>
-        <Text>memory.recall / evidence.write</Text>
-        <Text>shell.readonly / checks</Text>
-        <Text color="gray">security-active: reserved</Text>
-      </Box>
-    </Box>
-  );
-}
-
-function MainConsole({
-  events,
-  input,
   busy,
-  workbench,
-  activeRun,
-  detailPage,
-  paletteMatches,
+}: {
+  workbench: WorkbenchState;
+  permissionLevel: PermissionLevel;
+  busy: boolean;
+}): ReactElement {
+  return (
+    <Box paddingX={1} justifyContent="space-between">
+      <Text color="magentaBright">
+        EGO-Graph · {workbench.model.label} · {permissionLevel} · {workbench.cwd}
+      </Text>
+      <Text color={busy ? "yellow" : "gray"}>
+        {busy ? "运行中" : "就绪"} · {workbench.cpuLabel} · {workbench.memoryLabel}
+      </Text>
+    </Box>
+  );
+}
+
+function ConversationStream({
+  events,
+  height,
+  scrollOffset,
+  detailMode,
 }: {
   events: AgentRunEvent[];
-  input: string;
-  busy: boolean;
-  workbench: WorkbenchState;
-  activeRun: TerminalAgentRunState | undefined;
-  detailPage: number;
-  paletteMatches: string[];
+  height: number;
+  scrollOffset: number;
+  detailMode: DetailMode;
 }): ReactElement {
+  const visibleCount = Math.max(6, height - 2);
+  const end = Math.max(0, events.length - scrollOffset);
+  const start = Math.max(0, end - visibleCount);
+  const visibleEvents = events.slice(start, end);
+
   return (
-    <Box flexDirection="column" flexGrow={1} gap={1}>
-      <Box borderStyle="round" borderColor="magenta" paddingX={1} flexDirection="column">
-        <Box justifyContent="space-between">
-          <Text color="magentaBright">Terminal Agent Run Stream</Text>
-          <Text color="gray">
-            {activeRun ? `${activeRun.runId} · ${activeRun.status}` : "idle"} · page{" "}
-            {detailPage + 1}
-          </Text>
-        </Box>
-        {events.slice(-16).map((event, index) => (
-          <Box
-            key={`${event.runId}-${event.type}-${event.createdAt}-${index}`}
-            flexDirection="column"
-          >
-            <Text color={eventColor(event.type)}>
-              {eventIcon(event.type)} {event.type}{" "}
-              <Text color="gray">{shortTime(event.createdAt)}</Text>
-            </Text>
-            <Text>{event.message}</Text>
-          </Box>
-        ))}
-        <Text color="gray">SQLite: {workbench.storage.sqlite}</Text>
-      </Box>
-      <Box borderStyle="round" borderColor="magentaBright" paddingX={1} flexDirection="column">
-        {paletteMatches.length > 0 ? (
-          <Box flexDirection="column">
-            <Text color="yellow">Command Palette</Text>
-            {paletteMatches.slice(0, 6).map((command, index) => (
-              <Text key={command} color={index === 0 ? "magentaBright" : "gray"}>
-                {index === 0 ? ">" : " "} {command}
-              </Text>
-            ))}
-          </Box>
-        ) : null}
-        <Text color="gray">
-          输入自然语言任务，或 /help、/allow shell-readonly、/plan approve、/patch approve
-        </Text>
-        <Text color="magentaBright">
-          {"> "}
-          {input || (busy ? "运行中..." : "等待输入")}
-        </Text>
-      </Box>
+    <Box flexDirection="column" flexGrow={1} paddingX={1}>
+      {visibleEvents.map((event, index) => (
+        <ConversationEvent
+          key={`${event.runId}-${event.type}-${event.createdAt}-${start + index}`}
+          event={event}
+          showDebug={detailMode === "debug"}
+        />
+      ))}
+      {scrollOffset > 0 ? (
+        <Text color="gray">已向上滚动 {scrollOffset} 条；PageDown/↓ 返回底部。</Text>
+      ) : null}
     </Box>
   );
 }
 
-function RightSidebar({
+function ConversationEvent({
+  event,
+  showDebug,
+}: {
+  event: AgentRunEvent;
+  showDebug: boolean;
+}): ReactElement {
+  if (event.type === "user.message") {
+    return (
+      <Box marginBottom={1}>
+        <Text color="cyan">› </Text>
+        <Text>{truncate(event.message, 180)}</Text>
+      </Box>
+    );
+  }
+
+  if (event.type === "assistant.message") {
+    return (
+      <Box flexDirection="column" marginBottom={1}>
+        <Text color="magentaBright">lotus</Text>
+        {event.message
+          .split("\n")
+          .slice(0, 8)
+          .map((line, index) => (
+            <Text key={`${event.createdAt}-${index}`}>{truncate(line, 180)}</Text>
+          ))}
+      </Box>
+    );
+  }
+
+  if (event.type === "model.failed" && !showDebug) {
+    return <CollapsedEvent event={event} message={event.message} color="yellow" />;
+  }
+
+  if (event.type.includes("tool") || event.type.includes("evidence")) {
+    return <CollapsedEvent event={event} message={event.message} color="gray" />;
+  }
+
+  if (showDebug && event.payload.debug) {
+    return (
+      <Box flexDirection="column">
+        <CollapsedEvent event={event} message={event.message} color={eventColor(event.type)} />
+        <Text color="gray">{truncate(String(event.payload.debug), 220)}</Text>
+      </Box>
+    );
+  }
+
+  return <CollapsedEvent event={event} message={event.message} color={eventColor(event.type)} />;
+}
+
+function CollapsedEvent({
+  event,
+  message,
+  color,
+}: {
+  event: AgentRunEvent;
+  message: string;
+  color: "green" | "yellow" | "cyan" | "magentaBright" | "red" | "gray";
+}): ReactElement {
+  return (
+    <Text color={color}>
+      {eventIcon(event.type)} {shortTime(event.createdAt)} {truncate(message, 160)}
+    </Text>
+  );
+}
+
+function RightRail({
   workbench,
   activeRun,
   detailMode,
-  detailPage,
   diffFileIndex,
   runSessions,
 }: {
   workbench: WorkbenchState;
   activeRun: TerminalAgentRunState | undefined;
   detailMode: DetailMode;
-  detailPage: number;
   diffFileIndex: number;
   runSessions: TuiRunSession[];
 }): ReactElement {
   return (
-    <Box flexDirection="column" width={42} gap={1}>
-      <Box borderStyle="single" borderColor="magenta" paddingX={1} flexDirection="column">
-        <Text color="magentaBright">审批 / 执行</Text>
-        <Text>
-          当前面板: {detailMode} p{detailPage + 1}
+    <Box flexDirection="column" width={38} paddingX={1}>
+      <Text color="magentaBright">状态</Text>
+      <Text>Plan: {activeRun?.status === "plan_pending" ? "等待 y/n 或 /plan approve" : "无"}</Text>
+      <Text>
+        Patch: {activeRun?.status === "patch_pending" ? "等待 y/n 或 /patch approve" : "无"}
+      </Text>
+      <Text>Memory: {workbench.memory.total}</Text>
+      <Text>Skills: {workbench.skills.length}</Text>
+      <Text>MCP: {workbench.mcp.status}</Text>
+      <Box marginTop={1} flexDirection="column">
+        {renderDetail(activeRun, detailMode, diffFileIndex, runSessions)}
+      </Box>
+    </Box>
+  );
+}
+
+function InputBar({
+  input,
+  busy,
+  paletteMatches,
+}: {
+  input: string;
+  busy: boolean;
+  paletteMatches: string[];
+}): ReactElement {
+  return (
+    <Box borderStyle="single" borderColor="gray" paddingX={1} flexDirection="column">
+      {paletteMatches.length > 0 ? (
+        <Text color="yellow">
+          {paletteMatches
+            .slice(0, 5)
+            .map((command, index) => `${index === 0 ? ">" : ""}${command}`)
+            .join("  ")}
         </Text>
-        <Text>Plan: {activeRun?.status === "plan_pending" ? "等待审批 y/n" : "无待审批"}</Text>
-        <Text>Patch: {activeRun?.status === "patch_pending" ? "等待审批 y/n" : "无待审批"}</Text>
-        <Text color="gray">快捷键: y/n approve · d diff · c checks · ↑↓ page · [] file</Text>
-      </Box>
-      <Box borderStyle="single" borderColor="magenta" paddingX={1} flexDirection="column">
-        <Text color="magentaBright">详情</Text>
-        {renderDetail(activeRun, detailMode, detailPage, diffFileIndex, runSessions)}
-      </Box>
-      <Box borderStyle="single" borderColor="magenta" paddingX={1} flexDirection="column">
-        <Text color="magentaBright">Agent Kernel</Text>
-        <Text>Memory: {workbench.memory.total} items</Text>
-        <Text>Plan: {workbench.plans.draftCount} draft</Text>
-        <Text>Skills: {workbench.skills.length} loaded</Text>
-        <Text>
-          MCP: {workbench.mcp.status} / {workbench.mcp.transport}
-        </Text>
-      </Box>
+      ) : (
+        <Text color="gray">输入自然语言，或 /help /allow shell-readonly /plan approve /debug</Text>
+      )}
+      <Text color="magentaBright">{`> ${input || (busy ? "思考中..." : "")}`}</Text>
     </Box>
   );
 }
@@ -634,18 +592,23 @@ function RightSidebar({
 function renderDetail(
   activeRun: TerminalAgentRunState | undefined,
   detailMode: DetailMode,
-  detailPage: number,
   diffFileIndex: number,
   runSessions: TuiRunSession[],
 ): ReactElement {
+  if (detailMode === "debug") {
+    return (
+      <Box flexDirection="column">
+        <Text color="yellow">Debug</Text>
+        <Text color="gray">主界面默认隐藏 JSON/Zod/SQLite 细节。</Text>
+        <Text color="gray">使用 /replay &lt;runId&gt; 查看审计轨迹。</Text>
+      </Box>
+    );
+  }
   if (!activeRun) {
-    if (detailMode === "commands") {
-      return <CommandDetail runSessions={runSessions} />;
-    }
-    return <Text color="gray">暂无活动 run。输入任务开始。</Text>;
+    return <CommandDetail runSessions={runSessions} />;
   }
   if (detailMode === "diff") {
-    return <DiffDetail diff={activeRun.diff} fileIndex={diffFileIndex} page={detailPage} />;
+    return <DiffDetail diff={activeRun.diff} fileIndex={diffFileIndex} />;
   }
   if (detailMode === "checks") {
     if (!activeRun.checks?.length) {
@@ -658,34 +621,30 @@ function renderDetail(
             key={`${check.name}-${check.createdAt}`}
             color={check.status === "passed" ? "green" : "red"}
           >
-            {check.status} {check.command} exit={check.exitCode}
+            {check.status} {truncate(check.command, 28)}
           </Text>
         ))}
       </Box>
     );
   }
-  if (detailMode === "commands") {
-    return <CommandDetail runSessions={runSessions} />;
+  if (detailMode === "plan") {
+    return <PlanDetail plan={activeRun.plan ?? []} />;
   }
-  return <PlanDetail plan={activeRun.plan ?? []} page={detailPage} />;
+  return <CommandDetail runSessions={runSessions} />;
 }
 
-function PlanDetail({ plan, page }: { plan: EvidenceGapStep[]; page: number }): ReactElement {
+function PlanDetail({ plan }: { plan: EvidenceGapStep[] }): ReactElement {
   if (plan.length === 0) {
-    return <Text color="gray">暂无 evidence-gap plan。</Text>;
+    return <Text color="gray">暂无 plan。</Text>;
   }
-  const step = plan[Math.min(page, plan.length - 1)]!;
   return (
     <Box flexDirection="column">
-      <Text color="yellow">
-        {page + 1}/{plan.length} {step.title}
-      </Text>
-      <Text>已知: {step.knownEvidence.join(" | ")}</Text>
-      <Text>缺口: {step.missingEvidence.join(" | ")}</Text>
-      <Text>工具理由: {step.toolChoiceRationale}</Text>
-      <Text>预期: {step.expectedResult}</Text>
-      <Text color="gray">停止: {step.stopCondition}</Text>
-      <Text color="gray">风险: {step.riskNote}</Text>
+      <Text color="yellow">当前计划</Text>
+      {plan.slice(0, 4).map((step, index) => (
+        <Text key={step.id}>
+          {index + 1}. {truncate(step.title, 30)}
+        </Text>
+      ))}
     </Box>
   );
 }
@@ -693,11 +652,9 @@ function PlanDetail({ plan, page }: { plan: EvidenceGapStep[]; page: number }): 
 function DiffDetail({
   diff,
   fileIndex,
-  page,
 }: {
   diff: string | undefined;
   fileIndex: number;
-  page: number;
 }): ReactElement {
   if (!diff) {
     return <Text color="gray">暂无 pending diff。</Text>;
@@ -705,23 +662,20 @@ function DiffDetail({
   const files = splitDiffByFile(diff);
   const safeFileIndex = Math.min(fileIndex, Math.max(0, files.length - 1));
   const file = files[safeFileIndex] ?? { header: "diff", lines: diff.split("\n") };
-  const pageSize = 22;
-  const pageCount = Math.max(1, Math.ceil(file.lines.length / pageSize));
-  const safePage = Math.min(page, pageCount - 1);
   return (
     <Box flexDirection="column">
       <Text color="yellow">
-        File {safeFileIndex + 1}/{files.length} · page {safePage + 1}/{pageCount}
+        Diff {safeFileIndex + 1}/{files.length}
       </Text>
-      <Text color="magentaBright">{file.header}</Text>
-      {file.lines.slice(safePage * pageSize, safePage * pageSize + pageSize).map((line, index) => {
+      <Text color="magentaBright">{truncate(file.header, 34)}</Text>
+      {file.lines.slice(0, 12).map((line, index) => {
         const color = diffLineColor(line);
         return color ? (
-          <Text key={`${safeFileIndex}-${safePage}-${index}`} color={color}>
-            {line || " "}
+          <Text key={`${safeFileIndex}-${index}`} color={color}>
+            {truncate(line || " ", 34)}
           </Text>
         ) : (
-          <Text key={`${safeFileIndex}-${safePage}-${index}`}>{line || " "}</Text>
+          <Text key={`${safeFileIndex}-${index}`}>{truncate(line || " ", 34)}</Text>
         );
       })}
     </Box>
@@ -731,30 +685,20 @@ function DiffDetail({
 function CommandDetail({ runSessions }: { runSessions: TuiRunSession[] }): ReactElement {
   return (
     <Box flexDirection="column">
-      <Text color="yellow">命令面板</Text>
-      {commandPalette.slice(0, 12).map((command) => (
-        <Text key={command}>{command}</Text>
+      <Text color="yellow">常用命令</Text>
+      {commandPalette.slice(0, 7).map((command) => (
+        <Text key={command}>{truncate(command, 34)}</Text>
       ))}
       <Text color="yellow">最近会话</Text>
       {runSessions.length === 0 ? (
-        <Text color="gray">暂无 run session。</Text>
+        <Text color="gray">暂无 run。</Text>
       ) : (
-        runSessions.slice(0, 5).map((session, index) => (
+        runSessions.slice(0, 4).map((session, index) => (
           <Text key={session.runId}>
-            {index + 1}. {session.runId} {session.title}
+            {index + 1}. {truncate(session.title, 28)}
           </Text>
         ))
       )}
-    </Box>
-  );
-}
-
-function Footer(): ReactElement {
-  return (
-    <Box borderStyle="single" borderColor="magenta" paddingX={1} justifyContent="space-between">
-      <Text color="magentaBright">/help</Text>
-      <Text color="magenta">/permissions /allow workspace-write /allow shell-readonly</Text>
-      <Text color="magenta">/plan approve /diff /patch approve /checks /replay &lt;runId&gt;</Text>
     </Box>
   );
 }
@@ -768,19 +712,19 @@ function helpText(): string {
     "/diff 查看 pending Patch diff",
     "/patch approve|reject 批准或拒绝 Patch",
     "/checks 查看检查结果",
-    "/next /prev 翻页",
-    "/file next|prev 切换 diff 文件",
-    "/new 新会话",
+    "/debug 显示调试摘要",
     "/sessions 查看最近 run",
-    "/switch <runId> 切换/回放 run",
     "/replay <runId> 回放 Hermes 轨迹",
     "/clear 清屏",
   ].join("\n");
 }
 
-function localEvent(message: string): AgentRunEvent {
+function localEvent(
+  message: string,
+  type: AgentRunEvent["type"] = "assistant.message",
+): AgentRunEvent {
   return {
-    type: "reflection.created",
+    type,
     runId: "local",
     sessionId: "local",
     message,
@@ -809,7 +753,7 @@ async function refreshWorkbench(
 function eventColor(
   type: AgentRunEvent["type"],
 ): "green" | "yellow" | "cyan" | "magentaBright" | "red" | "gray" {
-  if (type.includes("blocked") || type.includes("rejected")) {
+  if (type.includes("blocked") || type.includes("rejected") || type.includes("failed")) {
     return "red";
   }
   if (type.includes("approval") || type.includes("plan") || type.includes("patch")) {
@@ -821,7 +765,7 @@ function eventColor(
   if (type.includes("evidence")) {
     return "green";
   }
-  if (type.includes("reflection")) {
+  if (type.includes("reflection") || type.includes("assistant")) {
     return "magentaBright";
   }
   return "gray";
@@ -842,6 +786,9 @@ function eventIcon(type: AgentRunEvent["type"]): string {
   }
   if (type.includes("check")) {
     return "check";
+  }
+  if (type.includes("model")) {
+    return "model";
   }
   return "agent";
 }
@@ -921,4 +868,8 @@ function diffLineColor(line: string): "green" | "red" | "cyan" | "gray" | undefi
     return "gray";
   }
   return undefined;
+}
+
+function truncate(value: string, maxLength: number): string {
+  return value.length > maxLength ? `${value.slice(0, Math.max(0, maxLength - 1))}…` : value;
 }

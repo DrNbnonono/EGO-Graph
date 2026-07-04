@@ -21,6 +21,88 @@ async function collect(iterable: AsyncIterable<AgentRunEvent>): Promise<AgentRun
 }
 
 describe("terminal agent session", () => {
+  it("answers normal chat turns without forcing plan approval", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-terminal-agent-chat-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-terminal-agent-home-"));
+    await writeFile(join(root, "package.json"), '{"name":"fixture"}', "utf8");
+    const session = createTerminalAgentSession({
+      workspaceRoot: root,
+      egoHome,
+      modelProvider: fakeProvider(
+        "你好，我是 EGO-Graph 终端 Agent，可以先对话再决定是否需要工具。",
+      ),
+    });
+
+    const events = await collect(session.submitMessage("你好"));
+
+    expect(events.map((event) => event.type)).toContain("assistant.message");
+    expect(events.map((event) => event.type)).not.toContain("plan.proposed");
+    expect(events.at(-1)?.message).toContain("你好");
+    expect(session.getRunState(events[0]!.runId)?.status).toBe("answered");
+  });
+
+  it("answers project analysis with workspace context before any patch flow", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-terminal-agent-project-analysis-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-terminal-agent-home-"));
+    const calls: Array<{ messages: Array<{ role: string; content: string }> }> = [];
+    await writeFile(join(root, "package.json"), '{"name":"fixture"}', "utf8");
+    await writeFile(join(root, "README.md"), "hello lotus\n", "utf8");
+    const session = createTerminalAgentSession({
+      workspaceRoot: root,
+      egoHome,
+      modelProvider: {
+        name: "fake",
+        model: "fake-model",
+        async complete(input: { messages: Array<{ role: string; content: string }> }) {
+          calls.push({ messages: input.messages });
+          return "这个项目包含 CLI、Web 和 Agent 包，当前应先改善 TUI 对话体验。";
+        },
+      },
+    });
+
+    const events = await collect(session.submitMessage("帮我分析这个项目的结构"));
+
+    expect(events.map((event) => event.type)).toEqual(
+      expect.arrayContaining(["context.loaded", "assistant.message"]),
+    );
+    expect(events.map((event) => event.type)).not.toContain("plan.proposed");
+    expect(events.at(-1)?.message).toContain("项目");
+    expect(calls[0]?.messages[0]?.content).toContain("EGO-Graph");
+  });
+
+  it("routes code modification requests to an approvable plan", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-terminal-agent-code-intent-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-terminal-agent-home-"));
+    await writeFile(join(root, "package.json"), '{"name":"fixture"}', "utf8");
+    await writeFile(join(root, "README.md"), "hello lotus\n", "utf8");
+    const session = createTerminalAgentSession({ workspaceRoot: root, egoHome });
+
+    const events = await collect(session.submitMessage("帮我修改 README"));
+
+    expect(events.map((event) => event.type)).toContain("plan.proposed");
+    expect(session.getRunState(events[0]!.runId)?.status).toBe("plan_pending");
+  });
+
+  it("hides evidence-gap planner schema details from the main event message", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-terminal-agent-planner-fallback-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-terminal-agent-home-"));
+    await writeFile(join(root, "package.json"), '{"name":"fixture"}', "utf8");
+    await writeFile(join(root, "README.md"), "hello\n", "utf8");
+    const session = createTerminalAgentSession({
+      workspaceRoot: root,
+      egoHome,
+      modelProvider: fakeProvider(JSON.stringify({})),
+    });
+
+    const events = await collect(session.startTask("更新 README"));
+    const modelFailed = events.find((event) => event.type === "model.failed");
+
+    expect(modelFailed?.message).toBe("模型计划生成失败，已切换到本地 fallback plan。");
+    expect(modelFailed?.message).not.toContain("expected");
+    expect(modelFailed?.payload.debug).toContain("expected");
+    expect(events.map((event) => event.type)).toContain("planner.fallback");
+  });
+
   it("streams context, tools, evidence, reflection, and a pending plan in read-only mode", async () => {
     const root = await mkdtemp(join(tmpdir(), "ego-terminal-agent-readonly-"));
     const egoHome = await mkdtemp(join(tmpdir(), "ego-terminal-agent-home-"));

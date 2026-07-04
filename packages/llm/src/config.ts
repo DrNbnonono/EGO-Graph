@@ -268,7 +268,9 @@ export async function saveModelProfile(input: ModelProfileInput): Promise<ModelP
     model:
       activeModelProfileId === normalized.id
         ? removeUndefined(normalized.config)
-        : (isObject(existing.model) ? existing.model : parsed.model),
+        : isObject(existing.model)
+          ? existing.model
+          : parsed.model,
   };
 
   await writeFile(path, `${JSON.stringify(content, null, 2)}\n`, "utf8");
