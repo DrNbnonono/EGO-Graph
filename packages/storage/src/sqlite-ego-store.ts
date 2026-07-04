@@ -634,6 +634,18 @@ export class SqliteEgoStore {
     return rows.map(memoryRowToRecord);
   }
 
+  async archiveMemory(id: string, updatedAt = new Date().toISOString()): Promise<boolean> {
+    const result = this.db
+      .prepare("update memory_items set status = 'archived', updated_at = ? where id = ?")
+      .run(updatedAt, id);
+    return Number(result.changes ?? 0) > 0;
+  }
+
+  async deleteMemory(id: string): Promise<boolean> {
+    const result = this.db.prepare("delete from memory_items where id = ?").run(id);
+    return Number(result.changes ?? 0) > 0;
+  }
+
   async saveAgentPlan(record: AgentPlanRecord): Promise<void> {
     this.db
       .prepare(

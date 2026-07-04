@@ -11,6 +11,11 @@ import {
   type AgentPlanMode,
 } from "@ego-graph/agent";
 import {
+  createTerminalAgentSession,
+  type AgentRunEvent,
+  type PermissionLevel,
+} from "@ego-graph/agent-harness";
+import {
   createModelBackedPlanner,
   createTrajectoryEvent,
   runMission,
@@ -707,6 +712,101 @@ export function createServer(options: CreateServerOptions = {}): Hono {
     });
   });
 
+  app.post("/api/mcp/tools/call", async (context) => {
+    const body = (await context.req.json()) as {
+      name?: string;
+      args?: Record<string, unknown>;
+      approved?: boolean;
+      permissionLevel?: PermissionLevel;
+    };
+    if (!body.name) {
+      return context.json({ ok: false, error: "name is required" }, 400);
+    }
+    if (!body.approved) {
+      return context.json(
+        { ok: false, error: "MCP tool calls require explicit approved=true." },
+        403,
+      );
+    }
+    const session = createTerminalAgentSession({
+      workspaceRoot,
+      egoHome,
+      permissionLevel: body.permissionLevel ?? "security-active",
+      ...(options.modelProvider !== undefined ? { modelProvider: options.modelProvider } : {}),
+    });
+    const events = await collectHarnessEvents(session.callMcpTool(body.name, body.args ?? {}));
+    return context.json({
+      ok: true,
+      runId: events[0]?.runId,
+      events,
+      status: events.some((event) => event.type === "tool.blocked") ? "blocked" : "complete",
+    });
+  });
+
+  app.post("/agent/harness/runs", async (context) => {
+    const body = (await context.req.json()) as {
+      message?: string;
+      permissionLevel?: PermissionLevel;
+    };
+    const message = body.message?.trim();
+    if (!message) {
+      return context.json({ ok: false, error: "message is required" }, 400);
+    }
+    const session = createTerminalAgentSession({
+      workspaceRoot,
+      egoHome,
+      permissionLevel: body.permissionLevel ?? "read-only",
+      ...(options.modelProvider !== undefined ? { modelProvider: options.modelProvider } : {}),
+    });
+    await session.hydratePendingRuns();
+    const events = await collectHarnessEvents(session.submitMessage(message));
+    const runId = events[0]?.runId;
+    return context.json({
+      ok: true,
+      runId,
+      events,
+      state: runId ? session.getRunState(runId) : undefined,
+    });
+  });
+
+  app.post("/agent/harness/runs/:id/plan/approve", async (context) => {
+    const body = (await context.req.json().catch(() => ({}))) as {
+      permissionLevel?: PermissionLevel;
+    };
+    const session = createTerminalAgentSession({
+      workspaceRoot,
+      egoHome,
+      permissionLevel: body.permissionLevel ?? "workspace-write",
+      ...(options.modelProvider !== undefined ? { modelProvider: options.modelProvider } : {}),
+    });
+    await session.hydratePendingRuns();
+    const runId = context.req.param("id");
+    const events = await collectHarnessEvents(session.approvePlan(runId));
+    return context.json({ ok: true, runId, events, state: session.getRunState(runId) });
+  });
+
+  app.post("/agent/harness/runs/:id/patch/approve", async (context) => {
+    const body = (await context.req.json().catch(() => ({}))) as {
+      permissionLevel?: PermissionLevel;
+    };
+    const session = createTerminalAgentSession({
+      workspaceRoot,
+      egoHome,
+      permissionLevel: body.permissionLevel ?? "shell-readonly",
+      ...(options.modelProvider !== undefined ? { modelProvider: options.modelProvider } : {}),
+    });
+    await session.hydratePendingRuns();
+    const runId = context.req.param("id");
+    const events = await collectHarnessEvents(session.approvePatch(runId));
+    return context.json({ ok: true, runId, events, state: session.getRunState(runId) });
+  });
+
+  app.get("/agent/harness/runs/:id/replay", async (context) => {
+    const session = createTerminalAgentSession({ workspaceRoot, egoHome });
+    const runId = context.req.param("id");
+    return context.json({ ok: true, runId, events: await session.replayRun(runId) });
+  });
+
   app.post("/agent/runs", async (context) => {
     const body = (await context.req.json()) as {
       message?: string;
@@ -1126,6 +1226,16 @@ function parseAgentPlanMode(mode: string | undefined): AgentPlanMode | undefined
     return "coding";
   }
   return mode === "coding" || mode === "ctf" || mode === "research" ? mode : undefined;
+}
+
+async function collectHarnessEvents(
+  stream: AsyncIterable<AgentRunEvent>,
+): Promise<AgentRunEvent[]> {
+  const events: AgentRunEvent[] = [];
+  for await (const event of stream) {
+    events.push(event);
+  }
+  return events;
 }
 
 async function readEvents(runId: string, egoHome: string): Promise<TrajectoryEvent[]> {

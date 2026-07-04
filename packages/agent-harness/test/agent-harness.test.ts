@@ -358,4 +358,99 @@ describe("terminal agent session", () => {
     const recalled = await session.recallMemory("fixture");
     expect(recalled[0]?.type).toBe("memory.recalled");
   });
+
+  it("hydrates pending patch state from SQLite after restart", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-agent-harness-hydrate-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-agent-harness-home-"));
+    await writeFile(join(root, "package.json"), '{"name":"fixture"}', "utf8");
+    await writeFile(join(root, "README.md"), "hello\n", "utf8");
+    const first = createTerminalAgentSession({
+      workspaceRoot: root,
+      egoHome,
+      permissionLevel: "workspace-write",
+      modelProvider: fakeProvider(
+        JSON.stringify({
+          rationale: "README contains the requested text.",
+          editPlan: {
+            goal: "update readme",
+            operations: [
+              { type: "replace_text", path: "README.md", oldText: "hello", newText: "lotus" },
+            ],
+          },
+        }),
+      ),
+    });
+    const started = await collect(first.startTask("把 README hello 改成 lotus"));
+    const runId = started[0]!.runId;
+    await collect(first.approvePlan(runId));
+
+    const restarted = createTerminalAgentSession({ workspaceRoot: root, egoHome });
+    const hydrated = await restarted.hydratePendingRuns();
+
+    expect(hydrated.map((run) => run.runId)).toContain(runId);
+    expect(restarted.getRunState(runId)?.status).toBe("patch_pending");
+    expect(restarted.getRunState(runId)?.diff).toContain("+lotus");
+  });
+
+  it("discovers and executes approved stdio MCP tool calls", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-agent-harness-mcp-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-agent-harness-home-"));
+    const serverPath = join(root, "mcp-server.mjs");
+    await writeFile(join(root, "package.json"), '{"name":"fixture"}', "utf8");
+    await writeFile(
+      serverPath,
+      `
+let buffer = Buffer.alloc(0);
+function send(message) {
+  const body = Buffer.from(JSON.stringify(message), "utf8");
+  process.stdout.write(Buffer.concat([Buffer.from("Content-Length: " + body.length + "\\r\\n\\r\\n"), body]));
+}
+function handle(message) {
+  if (message.method === "initialize") {
+    send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} } } });
+  } else if (message.method === "tools/list") {
+    send({ jsonrpc: "2.0", id: message.id, result: { tools: [{ name: "echo", description: "Echo input", inputSchema: { type: "object" } }] } });
+  } else if (message.method === "tools/call") {
+    send({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: "echo:" + message.params.arguments.value }] } });
+  }
+}
+process.stdin.on("data", (chunk) => {
+  buffer = Buffer.concat([buffer, chunk]);
+  while (true) {
+    const separator = buffer.indexOf(Buffer.from("\\r\\n\\r\\n"));
+    if (separator < 0) break;
+    const header = buffer.subarray(0, separator).toString("utf8");
+    const length = Number(/Content-Length: (\\d+)/i.exec(header)?.[1] ?? 0);
+    const bodyStart = separator + 4;
+    if (buffer.length < bodyStart + length) break;
+    const body = buffer.subarray(bodyStart, bodyStart + length).toString("utf8");
+    buffer = buffer.subarray(bodyStart + length);
+    handle(JSON.parse(body));
+  }
+});
+`,
+      "utf8",
+    );
+    await writeFile(
+      join(root, "ego.config.json"),
+      JSON.stringify({
+        mcpServers: {
+          fixture: { command: process.execPath, args: [serverPath], enabled: true },
+        },
+      }),
+      "utf8",
+    );
+    const session = createTerminalAgentSession({
+      workspaceRoot: root,
+      egoHome,
+      permissionLevel: "security-active",
+    });
+
+    const discovered = await session.discoverMcpTools();
+    const called = await collect(session.callMcpTool("mcp.fixture.echo", { value: "ok" }));
+
+    expect(discovered[0]?.message).toContain("1 MCP tool");
+    expect(called.map((event) => event.type)).toContain("tool.completed");
+    expect(JSON.stringify(called.map((event) => event.payload))).toContain("echo:ok");
+  });
 });

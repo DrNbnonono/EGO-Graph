@@ -35,6 +35,12 @@ Implemented:
 - Persistent LLM settings through Web, CLI, `.ego/config.json`, `ego.config.json`, or environment variables.
 - Dynamic Web Workbench modes: read-only chat, plan-approved Patch generation, and controlled security tasks.
 - Web/TUI Agent Kernel status panels for Memory, Plans, Skills, MCP, Search, approvals, and checks.
+- Codex-like terminal Agent Harness for chat, inspect, plan, tool calls, diff preview, approval,
+  apply, checks, repair proposals, memory, and replay.
+- Workspace Context Pack with repo map, relevance-ranked files, long-file compression, and recent
+  event summaries so models receive minimal context instead of raw file dumps.
+- Memory v2 categories for project facts, preferences, decisions, failures, tool results, security
+  scope, and run summaries, with recall, compact, archive, and forget operations.
 
 In progress:
 
@@ -57,10 +63,25 @@ pnpm install
 pnpm build
 ```
 
-Start the terminal cockpit:
+Start the terminal Agent Harness:
 
 ```bash
 ego
+```
+
+In the TUI:
+
+```text
+你好                         # normal chat, no plan
+分析项目结构                   # reads a context pack, then answers
+修改 README                   # proposes an evidence-gap plan first
+/allow workspace-write
+/plan approve                 # generates diff only after plan approval
+/diff
+/patch approve                # applies, checks, and may propose repair
+/checks
+/memory compact
+/replay <runId>
 ```
 
 Start the browser dashboard:
@@ -194,7 +215,9 @@ apps/
 
 packages/
   agent       Coding-agent turn runner
-  workspace   Safe repository inspection, edit preview, and policy-gated writes
+  agent-harness  Shared Agent Harness state machine, run stream, approval, repair, memory, replay
+  terminal-agent  Compatibility re-export for older terminal integrations
+  workspace   Safe repository inspection, context packs, edit preview, and policy-gated writes
   workbench   Shared TUI/Web state model
   hermes      Internal event bus and runtime timeline
   memory      Session/project/task memory and context compression
@@ -210,6 +233,9 @@ packages/
 ## Competition Scoring Mapping
 
 - **Task understanding and execution design:** read-only `/chat`, approvable Plan mode, mission planning, and policy-gated edit runs.
+- **Codex-like terminal agent:** conversation-first TUI backed by the Agent Harness; UI is thin,
+  while session/run state, tools, memory, diff approval, checks, repair, and replay live in the
+  kernel.
 - **System architecture and engineering:** separated CLI/API/Web/agent/workspace/MCP packages.
 - **Decision explainability and robustness:** Hermes timeline, mission graph, trajectories, evidence, memory summaries, reports.
 - **Tool calling and collaboration:** tool registry, skills/plugins, workspace tools, MCP stdio boundary, web.search, security overlays.

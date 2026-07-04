@@ -15,15 +15,15 @@ export type McpManifest = {
   notes: string[];
 };
 
-// 中文注释：当前先声明 MCP 边界，后续再接入真实 stdio/http MCP server，避免把工具协议混进业务层。
+// 中文注释：MCP 边界保持独立，Agent Harness 通过工具注册层接入 stdio v1。
 export function createMcpManifest(servers: McpServerDescriptor[] = []): McpManifest {
   return {
     status: servers.some((server) => server.enabled) ? "configured" : "not_configured",
     capabilities: ["workspace.read", "workspace.search", "shell.run", "ctf.tool"],
     servers,
     notes: [
-      "MCP 传输层尚未启用，当前通过内部 ToolRegistry 与 WorkspaceService 提供等价的本地能力。",
-      "后续 CTF 工具、知识库检索和沙箱命令执行会挂载到 MCP server 描述中。",
+      "stdio MCP server 可通过 tools/list 发现工具，并通过 tools/call 在审批后执行。",
+      "HTTP/OAuth MCP、长期连接池和更细粒度工具权限会在后续阶段扩展。",
     ],
   };
 }

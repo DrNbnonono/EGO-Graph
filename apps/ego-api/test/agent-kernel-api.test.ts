@@ -163,6 +163,8 @@ function handle(message) {
     send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "api-fixture", version: "0.1.0" } } });
   } else if (message.method === "tools/list") {
     send({ jsonrpc: "2.0", id: message.id, result: { tools: [{ name: "lookup", description: "Lookup evidence", inputSchema: { type: "object" } }] } });
+  } else if (message.method === "tools/call") {
+    send({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: "lookup:" + message.params.arguments.query }] } });
   }
 }
 process.stdin.on("data", (chunk) => {
@@ -202,5 +204,84 @@ process.stdin.on("data", (chunk) => {
 
     expect(response.status).toBe(200);
     expect(body.tools.map((tool: { name: string }) => tool.name)).toContain("mcp.fixture.lookup");
+  });
+
+  it("executes approved MCP tool calls through the agent harness", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "ego-mcp-call-api-workspace-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-mcp-call-api-home-"));
+    const serverPath = join(workspaceRoot, "mcp-server.mjs");
+    await writeFile(
+      serverPath,
+      `
+let buffer = Buffer.alloc(0);
+function send(message) {
+  const body = Buffer.from(JSON.stringify(message), "utf8");
+  process.stdout.write(Buffer.concat([
+    Buffer.from("Content-Length: " + body.length + "\\r\\n\\r\\n"),
+    body,
+  ]));
+}
+function handle(message) {
+  if (message.method === "initialize") {
+    send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "api-fixture", version: "0.1.0" } } });
+  } else if (message.method === "tools/list") {
+    send({ jsonrpc: "2.0", id: message.id, result: { tools: [{ name: "lookup", description: "Lookup evidence", inputSchema: { type: "object" } }] } });
+  } else if (message.method === "tools/call") {
+    send({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: "lookup:" + message.params.arguments.query }] } });
+  }
+}
+process.stdin.on("data", (chunk) => {
+  buffer = Buffer.concat([buffer, chunk]);
+  while (true) {
+    const separator = buffer.indexOf(Buffer.from("\\r\\n\\r\\n"));
+    if (separator < 0) break;
+    const header = buffer.subarray(0, separator).toString("utf8");
+    const match = /Content-Length: (\\d+)/i.exec(header);
+    const length = Number(match?.[1] ?? 0);
+    const bodyStart = separator + 4;
+    if (buffer.length < bodyStart + length) break;
+    const body = buffer.subarray(bodyStart, bodyStart + length).toString("utf8");
+    buffer = buffer.subarray(bodyStart + length);
+    handle(JSON.parse(body));
+  }
+});
+`,
+      "utf8",
+    );
+    await writeFile(
+      join(workspaceRoot, "ego.config.json"),
+      JSON.stringify({
+        mcpServers: {
+          fixture: {
+            command: process.execPath,
+            args: [serverPath],
+          },
+        },
+      }),
+      "utf8",
+    );
+    const app = createServer({ workspaceRoot, egoHome, modelProvider: null });
+
+    const rejectedResponse = await app.request("/api/mcp/tools/call", {
+      method: "POST",
+      body: JSON.stringify({ name: "mcp.fixture.lookup", args: { query: "lotus" } }),
+      headers: { "content-type": "application/json" },
+    });
+    const callResponse = await app.request("/api/mcp/tools/call", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "mcp.fixture.lookup",
+        args: { query: "lotus" },
+        approved: true,
+      }),
+      headers: { "content-type": "application/json" },
+    });
+    const body = await callResponse.json();
+
+    expect(rejectedResponse.status).toBe(403);
+    expect(callResponse.status).toBe(200);
+    expect(body.status).toBe("complete");
+    expect(body.events.map((event: { type: string }) => event.type)).toContain("tool.completed");
+    expect(JSON.stringify(body.events)).toContain("lookup:lotus");
   });
 });

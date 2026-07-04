@@ -12,6 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@ego-graph/agent-harness": "workspace:*",
     "@ego-graph/agent": "workspace:*",
     "@ego-graph/core": "workspace:*",
     "@ego-graph/hermes": "workspace:*",

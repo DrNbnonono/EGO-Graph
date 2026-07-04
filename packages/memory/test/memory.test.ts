@@ -41,6 +41,29 @@ describe("memory service", () => {
     expect(await memory.listMemories("session")).toEqual([]);
   });
 
+  it("supports memory v2 kinds, compact, archive, and forget", async () => {
+    const memory = createMemoryService();
+
+    const stored = await memory.remember({
+      scope: "project",
+      kind: "decision",
+      content: "Use terminal harness for Codex-like agent workflows.",
+      source: "test",
+      tags: ["agent"],
+    });
+
+    expect(stored.status).toBe("stored");
+    const hits = await memory.recall({ query: "terminal harness", kind: "decision" });
+    expect(hits[0]?.tags).toContain("kind:decision");
+    expect(await memory.compact({ query: "harness" })).toContain("terminal harness");
+
+    if (stored.status === "stored") {
+      expect(await memory.archive(stored.memory.id)).toBe(true);
+      expect(await memory.recall({ query: "terminal harness" })).toEqual([]);
+      expect(await memory.forget(stored.memory.id)).toBe(true);
+    }
+  });
+
   it("compresses context while preserving operational facts", () => {
     const summary = summarizeContext({
       goal: "Generate an approvable patch from natural language.",

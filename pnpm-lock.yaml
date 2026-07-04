@@ -44,6 +44,9 @@ importers:
       '@ego-graph/agent':
         specifier: workspace:*
         version: link:../../packages/agent
+      '@ego-graph/agent-harness':
+        specifier: workspace:*
+        version: link:../../packages/agent-harness
       '@ego-graph/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -92,6 +95,9 @@ importers:
       '@ego-graph/agent':
         specifier: workspace:*
         version: link:../../packages/agent
+      '@ego-graph/agent-harness':
+        specifier: workspace:*
+        version: link:../../packages/agent-harness
       '@ego-graph/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -168,6 +174,39 @@ importers:
         specifier: ^3.24.1
         version: 3.25.76
 
+  packages/agent-harness:
+    dependencies:
+      '@ego-graph/agent':
+        specifier: workspace:*
+        version: link:../agent
+      '@ego-graph/core':
+        specifier: workspace:*
+        version: link:../core
+      '@ego-graph/hermes':
+        specifier: workspace:*
+        version: link:../hermes
+      '@ego-graph/llm':
+        specifier: workspace:*
+        version: link:../llm
+      '@ego-graph/mcp':
+        specifier: workspace:*
+        version: link:../mcp
+      '@ego-graph/memory':
+        specifier: workspace:*
+        version: link:../memory
+      '@ego-graph/storage':
+        specifier: workspace:*
+        version: link:../storage
+      '@ego-graph/tools':
+        specifier: workspace:*
+        version: link:../tools
+      '@ego-graph/workspace':
+        specifier: workspace:*
+        version: link:../workspace
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+
   packages/core:
     dependencies:
       '@ego-graph/llm':
@@ -229,6 +268,9 @@ importers:
       '@ego-graph/agent':
         specifier: workspace:*
         version: link:../agent
+      '@ego-graph/agent-harness':
+        specifier: workspace:*
+        version: link:../agent-harness
       '@ego-graph/core':
         specifier: workspace:*
         version: link:../core

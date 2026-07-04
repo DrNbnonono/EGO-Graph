@@ -5,7 +5,7 @@ import {
   type PermissionLevel,
   type TerminalAgentRunState,
   type TerminalAgentSession,
-} from "@ego-graph/terminal-agent";
+} from "@ego-graph/agent-harness";
 import { readWorkbenchState, type WorkbenchState } from "@ego-graph/workbench";
 import { Box, Text, render, useApp, useInput, useStdout } from "ink";
 import { useEffect, useMemo, useState, type ReactElement, type SetStateAction } from "react";
@@ -42,6 +42,8 @@ const commandPalette = [
   "/patch reject",
   "/checks",
   "/debug",
+  "/memory",
+  "/memory compact",
   "/sessions",
   "/new",
   "/replay ",
@@ -77,6 +79,22 @@ export function EgoTui(): ReactElement {
 
   useEffect(() => {
     void refreshWorkbench(setWorkbench, appendSystemEvent(setEvents));
+    void session.hydratePendingRuns().then((runs) => {
+      if (runs.length > 0) {
+        setRunSessions(
+          runs.map((run) => ({
+            runId: run.runId,
+            title: run.message,
+            events: [],
+            updatedAt: new Date().toISOString(),
+          })),
+        );
+        setEvents((previous) => [
+          ...previous,
+          localEvent(`已恢复 ${runs.length} 个 pending Agent run，可用 /replay <runId> 查看。`),
+        ]);
+      }
+    });
   }, []);
 
   useInput((value, key) => {
@@ -303,6 +321,23 @@ async function submitInput(input: {
   }
   if (normalized === "/checks") {
     input.setDetailMode("checks");
+    return;
+  }
+  if (normalized === "/memory" || normalized.startsWith("/memory ")) {
+    const parts = input.submitted.trim().split(/\s+/u);
+    const action = parts[1] ?? "recall";
+    const argument = parts.slice(2).join(" ");
+    const memoryEvents =
+      action === "compact"
+        ? await input.session.compactMemory(argument || undefined)
+        : action === "archive" && argument
+          ? await input.session.archiveMemory(argument)
+          : action === "forget" && argument
+            ? await input.session.forgetMemory(argument)
+            : await input.session.recallMemory(argument || "project");
+    input.setEvents((previous) => [...previous, ...memoryEvents].slice(-160));
+    input.setDetailMode("debug");
+    await refreshWorkbench(input.setWorkbench, appendSystemEvent(input.setEvents));
     return;
   }
   if (normalized === "/plan approve" && input.activeRunId) {
@@ -553,6 +588,8 @@ function RightRail({
       <Text>
         Patch: {activeRun?.status === "patch_pending" ? "等待 y/n 或 /patch approve" : "无"}
       </Text>
+      <Text>Phase: {activeRun?.phase ?? "idle"}</Text>
+      <Text>Repair: {activeRun?.repairAttempts ?? 0}/2</Text>
       <Text>Memory: {workbench.memory.total}</Text>
       <Text>Skills: {workbench.skills.length}</Text>
       <Text>MCP: {workbench.mcp.status}</Text>
@@ -712,6 +749,7 @@ function helpText(): string {
     "/diff 查看 pending Patch diff",
     "/patch approve|reject 批准或拒绝 Patch",
     "/checks 查看检查结果",
+    "/memory recall|compact|archive|forget 管理长期记忆",
     "/debug 显示调试摘要",
     "/sessions 查看最近 run",
     "/replay <runId> 回放 Hermes 轨迹",
@@ -759,6 +797,9 @@ function eventColor(
   if (type.includes("approval") || type.includes("plan") || type.includes("patch")) {
     return "yellow";
   }
+  if (type.includes("repair") || type.includes("memory")) {
+    return "yellow";
+  }
   if (type.includes("tool") || type.includes("check")) {
     return "cyan";
   }
@@ -786,6 +827,12 @@ function eventIcon(type: AgentRunEvent["type"]): string {
   }
   if (type.includes("check")) {
     return "check";
+  }
+  if (type.includes("repair")) {
+    return "repair";
+  }
+  if (type.includes("memory")) {
+    return "memory";
   }
   if (type.includes("model")) {
     return "model";

@@ -12,8 +12,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@ego-graph/core": "workspace:*",
     "@ego-graph/agent": "workspace:*",
+    "@ego-graph/agent-harness": "workspace:*",
+    "@ego-graph/core": "workspace:*",
     "@ego-graph/ego-api": "workspace:*",
     "@ego-graph/llm": "workspace:*",
     "@ego-graph/overlays": "workspace:*",
