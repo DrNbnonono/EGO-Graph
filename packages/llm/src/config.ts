@@ -61,6 +61,48 @@ export type PublicModelConfig = Omit<ModelConfig, "apiKey"> & {
   sourcePath?: string;
 };
 
+export class ModelConfigValidationError extends Error {}
+
+export const modelProviderProfiles: Record<
+  ModelProviderName,
+  {
+    provider: ModelProviderName;
+    baseUrl?: string;
+    chatPath: string;
+    model?: string;
+    maxTokens: number;
+    wireApi: ModelWireApi;
+  }
+> = {
+  disabled: {
+    provider: "disabled",
+    chatPath: "/v1/chat/completions",
+    maxTokens: 4096,
+    wireApi: "openai-chat-completions",
+  },
+  "openai-compatible": {
+    provider: "openai-compatible",
+    chatPath: "/v1/chat/completions",
+    maxTokens: 4096,
+    wireApi: "openai-chat-completions",
+  },
+  deepseek: {
+    provider: "deepseek",
+    baseUrl: "https://api.deepseek.com",
+    chatPath: "/v1/chat/completions",
+    maxTokens: 4096,
+    wireApi: "openai-chat-completions",
+  },
+  minimax: {
+    provider: "minimax",
+    baseUrl: "https://api.minimaxi.com/anthropic",
+    chatPath: "/v1/messages",
+    model: "MiniMax-M3",
+    maxTokens: 4096,
+    wireApi: "anthropic-messages",
+  },
+};
+
 export function loadModelConfig(
   input: NodeJS.ProcessEnv | LoadModelConfigOptions = process.env,
 ): ModelConfig {
@@ -80,13 +122,16 @@ export function loadModelConfigWithSource(
     env.EGO_MODEL_PROVIDER === undefined || env.EGO_MODEL_PROVIDER === fileConfig?.config.provider;
   const persisted = canUseFileConfig ? fileConfig?.config : undefined;
   const defaults = providerDefaults(provider);
+  const disabled = provider === "disabled";
 
   const config = modelConfigSchema.parse({
     provider,
-    baseUrl: env.EGO_MODEL_BASE_URL ?? persisted?.baseUrl ?? defaults.baseUrl,
+    baseUrl: disabled
+      ? undefined
+      : (env.EGO_MODEL_BASE_URL ?? persisted?.baseUrl ?? defaults.baseUrl),
     chatPath: env.EGO_MODEL_CHAT_PATH ?? persisted?.chatPath ?? defaults.chatPath,
-    apiKey: resolveApiKey(provider, env) ?? persisted?.apiKey,
-    model: env.EGO_MODEL_NAME ?? persisted?.model ?? defaults.model,
+    apiKey: disabled ? undefined : (resolveApiKey(provider, env) ?? persisted?.apiKey),
+    model: disabled ? undefined : (env.EGO_MODEL_NAME ?? persisted?.model ?? defaults.model),
     headers:
       env.EGO_MODEL_HEADERS !== undefined
         ? parseHeaders(env.EGO_MODEL_HEADERS)
@@ -116,12 +161,17 @@ export async function saveModelConfig(input: SaveModelConfigInput): Promise<Load
     Object.entries(input).filter(([key]) => key !== "workspaceRoot"),
   ) as PersistedModelConfig;
   const normalized = normalizePersistedModelConfig(model);
+  validatePersistedModelConfig(normalized);
+  const existingModel = isObject(existing.model) ? existing.model : {};
   const content = {
     ...existing,
-    model: removeUndefined({
-      ...(isObject(existing.model) ? existing.model : {}),
-      ...normalized,
-    }),
+    model:
+      normalized.provider === "disabled"
+        ? { provider: "disabled" }
+        : removeUndefined({
+            ...existingModel,
+            ...normalized,
+          }),
   };
 
   await writeFile(path, `${JSON.stringify(content, null, 2)}\n`, "utf8");
@@ -146,35 +196,7 @@ function providerDefaults(provider: string): {
   maxTokens: number;
   wireApi: ModelWireApi;
 } {
-  switch (provider) {
-    case "deepseek":
-      return {
-        baseUrl: "https://api.deepseek.com",
-        chatPath: "/v1/chat/completions",
-        maxTokens: 4096,
-        wireApi: "openai-chat-completions",
-      };
-    case "minimax":
-      return {
-        baseUrl: "https://api.minimaxi.com/anthropic",
-        chatPath: "/v1/messages",
-        model: "MiniMax-M3",
-        maxTokens: 4096,
-        wireApi: "anthropic-messages",
-      };
-    case "openai-compatible":
-      return {
-        chatPath: "/v1/chat/completions",
-        maxTokens: 4096,
-        wireApi: "openai-chat-completions",
-      };
-    default:
-      return {
-        chatPath: "/v1/chat/completions",
-        maxTokens: 4096,
-        wireApi: "openai-chat-completions",
-      };
-  }
+  return modelProviderProfiles[modelProviderNameSchema.catch("disabled").parse(provider)];
 }
 
 function resolveApiKey(provider: string, env: NodeJS.ProcessEnv): string | undefined {
@@ -205,6 +227,19 @@ function normalizePersistedModelConfig(input: PersistedModelConfig): PersistedMo
       }),
     ),
   );
+}
+
+function validatePersistedModelConfig(input: PersistedModelConfig): void {
+  if (input.provider !== "disabled") {
+    return;
+  }
+
+  const hasModelFields = Boolean(input.baseUrl || input.apiKey || input.model);
+  if (hasModelFields) {
+    throw new ModelConfigValidationError(
+      "provider=disabled cannot be saved together with baseUrl, apiKey, or model",
+    );
+  }
 }
 
 function normalizeLoadOptions(

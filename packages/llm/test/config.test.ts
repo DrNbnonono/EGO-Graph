@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -134,5 +134,65 @@ describe("model config", () => {
     expect(content.model?.model).toBe("MiniMax-M3");
     expect(publicConfig.apiKeyConfigured).toBe(true);
     expect(publicConfig.apiKeyPreview).toBe("****");
+  });
+
+  it("rejects disabled provider with live model fields", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-llm-disabled-conflict-"));
+
+    await expect(
+      saveModelConfig({
+        workspaceRoot: root,
+        provider: "disabled",
+        baseUrl: "https://gateway.example.test",
+        apiKey: "should-not-save",
+        model: "conflicting-model",
+      }),
+    ).rejects.toThrow("provider=disabled");
+  });
+
+  it("clears local model settings when saving disabled without model fields", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-llm-disabled-clear-"));
+    await saveModelConfig({
+      workspaceRoot: root,
+      provider: "openai-compatible",
+      baseUrl: "https://gateway.example.test",
+      apiKey: "persisted-key",
+      model: "persisted-model",
+    });
+
+    await saveModelConfig({ workspaceRoot: root, provider: "disabled" });
+
+    const content = JSON.parse(await readFile(join(root, ".ego", "config.json"), "utf8")) as {
+      model: { provider: string; apiKey?: string; baseUrl?: string; model?: string };
+    };
+    const loaded = loadModelConfigWithSource({ workspaceRoot: root, env: {} });
+
+    expect(content.model).toEqual({ provider: "disabled" });
+    expect(loaded.config.provider).toBe("disabled");
+    expect(isModelConfigured(loaded.config)).toBe(false);
+  });
+
+  it("ignores legacy disabled config fields at load time", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-llm-disabled-legacy-"));
+    await mkdir(join(root, ".ego"), { recursive: true });
+    await writeFile(
+      join(root, ".ego", "config.json"),
+      JSON.stringify({
+        model: {
+          provider: "disabled",
+          baseUrl: "https://api.minimaxi.com/anthropic",
+          apiKey: "legacy-key",
+          model: "MiniMax-M3",
+        },
+      }),
+      "utf8",
+    );
+
+    const loaded = loadModelConfigWithSource({ workspaceRoot: root, env: {} });
+
+    expect(loaded.config.provider).toBe("disabled");
+    expect(loaded.config.baseUrl).toBeUndefined();
+    expect(loaded.config.apiKey).toBeUndefined();
+    expect(loaded.config.model).toBeUndefined();
   });
 });

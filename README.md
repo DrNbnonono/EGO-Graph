@@ -28,6 +28,7 @@ Implemented:
 - Policy-gated agent edit preview, approval, apply, check, and trajectory events.
 - MCP config loading and policy-gated placeholder tool registration.
 - Persistent LLM settings through Web, CLI, `.ego/config.json`, `ego.config.json`, or environment variables.
+- Dynamic Web Workbench modes: read-only chat, approved Patch generation, and controlled security tasks.
 
 In progress:
 
@@ -93,6 +94,13 @@ ego serve
 ```
 
 Open `http://127.0.0.1:4317`, then use the right-side model settings panel. Saved keys are written to local `.ego/config.json`.
+Use **Test connection** after saving to verify the current provider without starting a Patch run.
+
+The Web Workbench has three modes:
+
+- **对话** calls `/chat` and is read-only. If no model is enabled it returns `needs_model` with setup guidance instead of a canned fake answer.
+- **生成 Patch** calls `/agent/runs` with `autoPropose=true`; generated diffs appear in the right-side approval panel and are not applied until **Approve** is clicked.
+- **安全任务** uses controlled local scenario entry points such as the bundled `web_pentest` fixture.
 
 Use the CLI:
 
@@ -141,6 +149,10 @@ The `minimax` profile defaults to:
 - `https://api.minimaxi.com/anthropic`
 - `/v1/messages`
 - `MiniMax-M3`
+- `anthropic-messages`
+
+Provider profiles in the Web UI auto-fill the matching endpoint/protocol defaults. `provider=disabled`
+cannot be saved together with `baseUrl`, `apiKey`, or `model`; choose a real provider or clear those fields.
 
 Never commit API keys. Use shell environment variables, `.env.local`, or a secret manager.
 `.ego/` is ignored by git and is the recommended place for local persisted keys.

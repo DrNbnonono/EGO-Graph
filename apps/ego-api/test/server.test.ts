@@ -50,9 +50,12 @@ describe("ego api server", () => {
     expect(css).toContain(".lotus-mark");
     expect(js).toContain("submitMission");
     expect(js).toContain("/agent/runs");
+    expect(js).toContain("/chat");
     expect(js).toContain("/approve");
     expect(js).toContain("/api/config/model");
+    expect(js).toContain("/api/config/model/test");
     expect(js).toContain("renderDiffPreview");
+    expect(js).toContain("setInterval");
     expect(logoResponse.status).toBe(200);
     expect(logoResponse.headers.get("content-type")).toContain("image/png");
     expect(faviconResponse.status).toBe(200);
@@ -107,8 +110,47 @@ describe("ego api server", () => {
     expect(workbench.workbench.model.source).toBe("workspace-local");
   });
 
+  it("rejects contradictory disabled model settings through the config API", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "ego-api-model-config-conflict-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-api-model-config-conflict-home-"));
+    await writeFile(join(workspaceRoot, "package.json"), '{"name":"model-config-fixture"}', "utf8");
+    const app = createServer({ workspaceRoot, egoHome });
+
+    const saveResponse = await app.request("/api/config/model", {
+      method: "POST",
+      body: JSON.stringify({
+        provider: "disabled",
+        baseUrl: "https://gateway.example.test",
+        apiKey: "local-secret-key",
+        model: "lotus-test-model",
+      }),
+      headers: { "content-type": "application/json" },
+    });
+    const saved = await saveResponse.json();
+
+    expect(saveResponse.status).toBe(400);
+    expect(saved.ok).toBe(false);
+    expect(saved.error).toContain("provider=disabled");
+  });
+
+  it("tests model connectivity through the config API", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "ego-api-model-test-workspace-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-api-model-test-home-"));
+    await writeFile(join(workspaceRoot, "package.json"), '{"name":"model-test-fixture"}', "utf8");
+    const app = createServer({ workspaceRoot, egoHome, modelProvider: fakeProvider("ego-ok") });
+
+    const response = await app.request("/api/config/model/test", {
+      method: "POST",
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.status).toBe("connected");
+    expect(body.reply).toBe("ego-ok");
+  });
+
   it("handles natural-language coding agent turns through the chat API", async () => {
-    const app = createServer();
+    const app = createServer({ modelProvider: fakeProvider("来自模型的只读回复") });
     const response = await app.request("/chat", {
       method: "POST",
       body: JSON.stringify({ message: "阅读项目状态并说明下一步应该做什么" }),
@@ -119,13 +161,31 @@ describe("ego api server", () => {
     expect(response.status).toBe(200);
     expect(body).toMatchObject({
       ok: true,
-      mode: "coding-agent",
+      mode: "assistant-chat",
+      status: "answered",
     });
-    expect(body.assistantMessage).toContain("coding agent");
-    expect(body.plan.length).toBeGreaterThan(0);
+    expect(body.reply).toContain("来自模型");
     expect(body.suggestedCommands).toContain("pnpm test");
     expect(body.mcp.status).toBe("not_configured");
-    expect(body.status).toBe("inspect");
+  });
+
+  it("keeps chat read-only and explicit when no model is configured", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "ego-api-chat-needs-model-workspace-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-api-chat-needs-model-home-"));
+    await writeFile(join(workspaceRoot, "package.json"), '{"name":"chat-fixture"}', "utf8");
+    const app = createServer({ workspaceRoot, egoHome, modelProvider: null });
+    const response = await app.request("/chat", {
+      method: "POST",
+      body: JSON.stringify({ message: "你好" }),
+      headers: { "content-type": "application/json" },
+    });
+    const body = await response.json();
+    const workbench = await app.request("/api/workbench").then((result) => result.json());
+
+    expect(response.status).toBe(200);
+    expect(body.status).toBe("needs_model");
+    expect(body.reply).toContain("模型尚未启用");
+    expect(workbench.workbench.pendingEdits).toEqual([]);
   });
 
   it("auto-proposes natural-language agent edits through the HTTP API", async () => {
@@ -181,7 +241,10 @@ describe("ego api server", () => {
 
     const approveResponse = await app.request("/agent/runs/agent-api-auto-001/approve", {
       method: "POST",
-      body: JSON.stringify({ approvalId: "approval-api-auto-test" }),
+      body: JSON.stringify({
+        approvalId: "approval-api-auto-test",
+        checkCommands: [{ name: "node-version", command: "node", args: ["--version"] }],
+      }),
       headers: { "content-type": "application/json" },
     });
     const approved = await approveResponse.json();
@@ -190,7 +253,7 @@ describe("ego api server", () => {
     expect(approveResponse.status).toBe(200);
     expect(approved.status).toBe("applied");
     expect(approved.checks[0].status).toBe("passed");
-    expect(approved.checks[0].command).toBe("pnpm typecheck");
+    expect(approved.checks[0].command).toBe("node --version");
     expect(refreshedWorkbench.workbench.pendingEdits).toEqual([]);
     expect(refreshedWorkbench.workbench.lastChecks[0].status).toBe("passed");
     expect(await readFile(join(workspaceRoot, "README.md"), "utf8")).toBe("lotus auto\n");

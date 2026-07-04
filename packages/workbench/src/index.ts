@@ -64,6 +64,7 @@ export type WorkbenchState = {
   mode: string;
   network: "connected" | "local-only";
   clock: string;
+  serverTime: string;
   cpuLabel: string;
   memoryLabel: string;
   model: {
@@ -77,6 +78,7 @@ export type WorkbenchState = {
     label: string;
     source: string;
     sourcePath?: string;
+    testStatus?: "idle" | "connected" | "failed" | "needs_model";
   };
   storage: {
     egoHome: string;
@@ -96,6 +98,7 @@ export type WorkbenchState = {
   logs: WorkbenchLog[];
   approvals: WorkbenchApprovalItem[];
   pendingEdits: WorkbenchPendingEdit[];
+  pendingApprovalDetail?: WorkbenchPendingEdit;
   changedFiles: string[];
   lastChecks: WorkbenchCheck[];
   quickCommands: string[];
@@ -150,6 +153,7 @@ export async function readWorkbenchState(input: ReadWorkbenchStateInput): Promis
       mode: "智能安全分析",
       network: configured ? "connected" : "local-only",
       clock: clock.toLocaleTimeString("zh-CN", { hour12: false }),
+      serverTime: clock.toISOString(),
       cpuLabel: `CPU ${Math.max(1, Math.round(loadavg()[0] ?? 1))}%`,
       memoryLabel: `内存 ${Math.round(((totalmem() - freemem()) / totalmem()) * 100)}%`,
       model: {
@@ -187,6 +191,16 @@ export async function readWorkbenchState(input: ReadWorkbenchStateInput): Promis
         files: edit.files,
         createdAt: edit.createdAt,
       })),
+      ...(pendingEdits[0]
+        ? {
+            pendingApprovalDetail: {
+              runId: pendingEdits[0].runId,
+              previewId: pendingEdits[0].previewId,
+              files: pendingEdits[0].files,
+              createdAt: pendingEdits[0].createdAt,
+            },
+          }
+        : {}),
       changedFiles: [...new Set(pendingEdits.flatMap((edit) => edit.files))],
       lastChecks: recentChecks.map((check) => ({
         runId: check.runId,

@@ -22,7 +22,7 @@ Use a TypeScript-first stack aligned with terminal agent tools such as OpenCode,
 - Web package layout: `apps/ego-web/src/pages`, `components`, `styles`, `client`, and `assets`
 - Schemas: Zod
 - Storage: SQLite plus JSONL trajectories
-- Agent core: self-owned mission graph engine plus a coding-agent turn runner for natural-language tasks
+- Agent core: self-owned mission graph engine plus read-only assistant chat and a coding-agent turn runner for approved writes
 - LLM access: `packages/llm` owns persistent config loading/saving, MiniMax M3 defaults, OpenAI-compatible gateways, and environment-variable overrides
 - MCP boundary: `packages/mcp` declares local capability boundaries before stdio/http MCP transports are implemented
 - Workspace inspection: `packages/workspace` provides safe repository summary, text reads, file listing, and command suggestions
@@ -33,7 +33,8 @@ Use a TypeScript-first stack aligned with terminal agent tools such as OpenCode,
 
 - The terminal command `ego` is the primary product entry and must remain interactive.
 - `ego serve` must expose a Web visualization of project progress, model status, recent runs, evidence, and reports.
-- `/chat` remains a read-only compatibility endpoint; writable natural-language tasks must use `/agent/runs` with `autoPropose: true`.
+- `/chat` is a model-first, read-only assistant endpoint. It must never create pending edits.
+- Writable natural-language tasks must use `/agent/runs` with `autoPropose: true`.
 - Every workspace write must pass through model/generated `WorkspaceEditPlan`, workspace policy, diff preview, Web approval, apply, checks, and SQLite/trajectory audit.
 - Frontend code must stay in `apps/ego-web`; API code must not own page/component/style/client-script source.
 - TypeScript orchestrates tools; mature security tools run as controlled external processes.
@@ -54,6 +55,7 @@ curl -X POST http://127.0.0.1:4317/chat -H "content-type: application/json" -d "
 curl -X POST http://127.0.0.1:4317/agent/runs -H "content-type: application/json" -d "{\"message\":\"update README quick start\",\"autoPropose\":true}"
 curl -X POST http://127.0.0.1:4317/agent/runs/<run-id>/approve -H "content-type: application/json" -d "{}"
 curl -X POST http://127.0.0.1:4317/api/config/model -H "content-type: application/json" -d "{\"provider\":\"openai-compatible\",\"baseUrl\":\"https://api.example.com\",\"apiKey\":\"sk-...\",\"model\":\"your-model\"}"
+curl -X POST http://127.0.0.1:4317/api/config/model/test
 ego config model --provider openai-compatible --base-url https://api.example.com --api-key sk-... --model your-model
 ego run --scenario web_pentest --task "..."
 ego run --scenario incident_response --input ./case.zip
@@ -107,6 +109,10 @@ The `minimax` profile defaults to:
 - `EGO_MODEL_NAME=MiniMax-M3`
 - `EGO_MODEL_WIRE_API=anthropic-messages`
 
+Web provider profiles auto-fill MiniMax, DeepSeek, and OpenAI-compatible defaults. The API rejects
+`provider=disabled` when `baseUrl`, `apiKey`, or `model` are supplied; saving disabled with no model
+fields clears local persisted model credentials.
+
 Never hardcode API keys in tracked files. `.ego/` is ignored and may store local demo keys; `ego.config.json`
 should avoid secrets unless the user intentionally keeps it private.
 
@@ -139,16 +145,19 @@ Core docs to maintain:
 
 ## Current Milestone
 
-Current milestone adds persistent LLM settings on top of the natural-language Patch approval loop:
+Current milestone makes the Web Workbench usable and dynamic on top of persistent LLM settings and the
+natural-language Patch approval loop:
 
 - Root `README.md` and purple lotus logo asset are present.
 - `apps/ego-web` owns Dashboard pages/components/styles/client scripts.
 - `packages/workspace`, `packages/mcp`, and `packages/agent` are first-class workspace packages.
 - `packages/agent` can generate a model-backed `WorkspaceEditPlan` from natural language through `generateWorkspaceEditPlan`.
-- API exposes `/chat` for read-only compatibility plus `/agent/runs`, `/agent/runs/:id/approve`, `/agent/runs/:id/diff`, and `/agent/runs/:id/checks` for approved writes.
-- API exposes `/api/config/model` for local model settings and returns redacted model config metadata.
-- Web submits natural-language coding tasks through `/agent/runs`, renders diff previews, applies approved patches, and shows checks.
-- Web includes a right-side model settings panel that writes `.ego/config.json`.
+- API exposes `/chat` for read-only model replies plus `/agent/runs`, `/agent/runs/:id/approve`, `/agent/runs/:id/diff`, and `/agent/runs/:id/checks` for approved writes.
+- API exposes `/api/config/model` and `/api/config/model/test` for local model settings and connectivity checks.
+- Web has three modes: `对话` calls `/chat`, `生成 Patch` calls `/agent/runs`, and `安全任务` runs controlled fixtures.
+- Web keeps Patch preview, affected files, Approve, and checks in the right-side approval panel.
+- Web polls `/api/workbench`, ticks local time, supports local session switching, and makes quick commands executable.
+- Web includes a right-side model settings panel that writes `.ego/config.json`, validates disabled-provider conflicts, and tests connectivity.
 - CLI exposes `ego config model` for persistent provider/baseUrl/model/API key setup.
 - TUI keeps a lightweight status view and points users to `ego serve` for full diff approval.
 - Model-unavailable fallback is `needs_model`: no pending edit, no diff, no file write.

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { runCodingAgentTurn, type AgentCheckCommand } from "@ego-graph/agent";
+import { runAssistantChatTurn, runCodingAgentTurn, type AgentCheckCommand } from "@ego-graph/agent";
 import {
   createModelBackedPlanner,
   createTrajectoryEvent,
@@ -14,6 +14,8 @@ import {
   createChatModelProvider,
   loadModelConfig,
   loadModelConfigWithSource,
+  ModelConfigValidationError,
+  modelProviderProfiles,
   saveModelConfig,
   toPublicModelConfig,
   type ChatModelProvider,
@@ -116,17 +118,62 @@ export function createServer(options: CreateServerOptions = {}): Hono {
     return context.json({
       ok: true,
       model: toPublicModelConfig(loadModelConfigWithSource({ workspaceRoot })),
+      profiles: modelProviderProfiles,
     });
   });
 
   app.post("/api/config/model", async (context) => {
     const body = (await context.req.json()) as PersistedModelConfig;
-    const loaded = await saveModelConfig({ workspaceRoot, ...body });
+    try {
+      const loaded = await saveModelConfig({ workspaceRoot, ...body });
 
-    return context.json({
-      ok: true,
-      model: toPublicModelConfig(loaded),
-    });
+      return context.json({
+        ok: true,
+        model: toPublicModelConfig(loaded),
+        profiles: modelProviderProfiles,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const status = error instanceof ModelConfigValidationError ? 400 : 500;
+      return context.json({ ok: false, error: message }, status);
+    }
+  });
+
+  app.post("/api/config/model/test", async (context) => {
+    const provider =
+      options.modelProvider !== undefined
+        ? options.modelProvider
+        : createChatModelProvider(loadModelConfig({ workspaceRoot }));
+    if (!provider) {
+      return context.json({
+        ok: true,
+        status: "needs_model",
+        message: "模型尚未配置完整，无法测试连接。",
+      });
+    }
+
+    try {
+      const reply = await provider.complete({
+        temperature: 0,
+        maxTokens: 32,
+        messages: [
+          { role: "system", content: "Reply with the exact text: ego-ok" },
+          { role: "user", content: "ping" },
+        ],
+      });
+      return context.json({
+        ok: true,
+        status: "connected",
+        model: { provider: provider.name, name: provider.model },
+        reply: reply.slice(0, 200),
+      });
+    } catch (error) {
+      return context.json({
+        ok: true,
+        status: "failed",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   });
 
   app.post("/chat", async (context) => {
@@ -137,9 +184,10 @@ export function createServer(options: CreateServerOptions = {}): Hono {
       return context.json({ ok: false, error: "message is required" }, 400);
     }
 
-    const turn = await runCodingAgentTurn({
+    const turn = await runAssistantChatTurn({
       message,
       workspaceRoot,
+      ...(options.modelProvider !== undefined ? { modelProvider: options.modelProvider } : {}),
     });
 
     return context.json({ ok: true, ...turn });

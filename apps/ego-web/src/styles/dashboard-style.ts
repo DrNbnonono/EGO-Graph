@@ -214,7 +214,14 @@ h2 {
   padding: 7px 9px;
   border: 1px solid transparent;
   border-radius: 6px;
+  background: transparent;
   color: var(--muted);
+  text-align: left;
+}
+
+button.session-item,
+button.approval-item {
+  cursor: pointer;
 }
 
 .session-item.active {
@@ -315,6 +322,15 @@ h2 {
   font-weight: 700;
 }
 
+.model-test-button {
+  min-height: 34px;
+  border: 1px solid rgba(109, 232, 255, 0.42);
+  border-radius: 6px;
+  background: rgba(109, 232, 255, 0.1);
+  color: var(--cyan);
+  cursor: pointer;
+}
+
 .model-save-button:disabled {
   cursor: wait;
   opacity: 0.62;
@@ -333,6 +349,30 @@ h2 {
 
 .console-panel {
   min-height: 270px;
+}
+
+.mode-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+}
+
+.mode-tab {
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid rgba(178, 94, 255, 0.28);
+  border-radius: 6px;
+  background: rgba(5, 7, 15, 0.74);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.mode-tab.active {
+  border-color: var(--line-strong);
+  background: rgba(195, 92, 255, 0.16);
+  color: var(--text);
+  box-shadow: 0 0 16px rgba(195, 92, 255, 0.12);
 }
 
 .conversation {
@@ -371,10 +411,6 @@ h2 {
   border-color: rgba(109, 232, 255, 0.45);
 }
 
-.patch-panel {
-  min-height: 210px;
-}
-
 .approve-action {
   min-width: 88px;
   padding: 6px 10px;
@@ -387,14 +423,55 @@ h2 {
   background: var(--green);
 }
 
+.approval-preview {
+  display: grid;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.approval-preview-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding-top: 6px;
+}
+
+.approval-preview-heading strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.approval-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.approval-file-chip {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 4px 7px;
+  border: 1px solid rgba(178, 94, 255, 0.24);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .diff-preview {
   min-height: 150px;
-  max-height: 260px;
+  max-height: 360px;
   margin: 0;
   overflow: auto;
   padding: 12px 14px;
-  border: 0;
-  border-bottom: 1px solid rgba(178, 94, 255, 0.2);
+  border: 1px solid rgba(178, 94, 255, 0.2);
+  border-radius: 6px;
   background: rgba(3, 5, 10, 0.78);
   color: var(--text);
   white-space: pre-wrap;

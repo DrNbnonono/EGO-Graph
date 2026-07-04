@@ -2,21 +2,108 @@ export function renderDashboardJs(): string {
   return String.raw`const state = {
   workbench: null,
   activePatch: null,
+  activeMode: "chat",
+  sessions: loadSessions(),
+  activeSessionId: null,
+  modelFormDirty: false,
+};
+
+const providerProfiles = {
+  disabled: {
+    provider: "disabled",
+    baseUrl: "",
+    chatPath: "/v1/chat/completions",
+    model: "",
+    wireApi: "openai-chat-completions",
+  },
+  "openai-compatible": {
+    provider: "openai-compatible",
+    baseUrl: "",
+    chatPath: "/v1/chat/completions",
+    model: "",
+    wireApi: "openai-chat-completions",
+  },
+  deepseek: {
+    provider: "deepseek",
+    baseUrl: "https://api.deepseek.com",
+    chatPath: "/v1/chat/completions",
+    model: "deepseek-chat",
+    wireApi: "openai-chat-completions",
+  },
+  minimax: {
+    provider: "minimax",
+    baseUrl: "https://api.minimaxi.com/anthropic",
+    chatPath: "/v1/messages",
+    model: "MiniMax-M3",
+    wireApi: "anthropic-messages",
+  },
 };
 
 const byId = (id) => document.getElementById(id);
 
-function appendMessage(role, body) {
+function ensureSession() {
+  if (state.activeSessionId && state.sessions.some((session) => session.id === state.activeSessionId)) {
+    return state.sessions.find((session) => session.id === state.activeSessionId);
+  }
+  const session = {
+    id: "session-" + Date.now(),
+    title: "新会话",
+    updatedAt: new Date().toISOString(),
+    messages: [],
+  };
+  state.sessions.unshift(session);
+  state.activeSessionId = session.id;
+  saveSessions();
+  renderLocalSessions();
+  return session;
+}
+
+function loadSessions() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem("ego.workbench.sessions") || "[]");
+    return Array.isArray(parsed) ? parsed.slice(0, 8) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveSessions() {
+  localStorage.setItem("ego.workbench.sessions", JSON.stringify(state.sessions.slice(0, 8)));
+}
+
+function appendMessage(role, body, options = {}) {
   const list = byId("conversation");
   const item = document.createElement("article");
   item.className = "message " + role;
   const speaker = document.createElement("span");
-  speaker.textContent = role === "user" ? "user" : "lotus";
-  const text = document.createElement("p");
+  speaker.textContent = role === "user" ? "user" : role === "tool" ? "tool" : "lotus";
+  const text = document.createElement(options.pre ? "pre" : "p");
   text.textContent = body;
   item.append(speaker, text);
   list.append(item);
   list.scrollTop = list.scrollHeight;
+
+  if (!options.skipPersist) {
+    const session = ensureSession();
+    session.messages.push({ role, body, pre: Boolean(options.pre), at: new Date().toISOString() });
+    session.updatedAt = new Date().toISOString();
+    if (role === "user" && session.title === "新会话") {
+      session.title = body.slice(0, 18) || "新会话";
+    }
+    saveSessions();
+    renderLocalSessions();
+  }
+}
+
+function restoreConversation(session) {
+  const list = byId("conversation");
+  list.replaceChildren();
+  for (const message of session.messages || []) {
+    appendMessage(message.role, message.body, { pre: message.pre, skipPersist: true });
+  }
+  if (!session.messages || session.messages.length === 0) {
+    appendMessage("assistant", "新会话已创建。选择“对话”可直接问模型；选择“生成 Patch”才会进入审批写入流程。", { skipPersist: true });
+  }
 }
 
 function fillList(id, items) {
@@ -29,15 +116,68 @@ function fillList(id, items) {
   }));
 }
 
-function renderSessions(sessions) {
-  byId("session-list").replaceChildren(...sessions.map((session) => {
-    const item = document.createElement("div");
-    item.className = "session-item" + (session.active ? " active" : "");
-    item.innerHTML = "<span>" + (session.active ? "*" : "-") + "</span><strong></strong><small></small>";
-    item.querySelector("strong").textContent = session.title;
-    item.querySelector("small").textContent = session.timeLabel;
+function renderLocalSessions() {
+  const list = byId("session-list");
+  if (!list) return;
+  const newButton = document.createElement("button");
+  newButton.type = "button";
+  newButton.className = "session-item active";
+  newButton.innerHTML = "<span>+</span><strong>新会话</strong><small>创建</small>";
+  newButton.addEventListener("click", createNewSession);
+
+  const localItems = state.sessions.map((session) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "session-item" + (session.id === state.activeSessionId ? " active" : "");
+    const icon = document.createElement("span");
+    icon.textContent = session.id === state.activeSessionId ? "*" : "-";
+    const title = document.createElement("strong");
+    title.textContent = session.title || "新会话";
+    const time = document.createElement("small");
+    time.textContent = relativeTime(session.updatedAt);
+    item.append(icon, title, time);
+    item.addEventListener("click", () => {
+      state.activeSessionId = session.id;
+      restoreConversation(session);
+      renderLocalSessions();
+    });
     return item;
-  }));
+  });
+
+  const serverRuns = (state.workbench?.recentRuns || []).slice(0, 3).map((run) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "session-item";
+    const icon = document.createElement("span");
+    icon.textContent = "run";
+    const title = document.createElement("strong");
+    title.textContent = run.scenario || run.runId;
+    const time = document.createElement("small");
+    time.textContent = run.status;
+    item.append(icon, title, time);
+    item.addEventListener("click", () => {
+      appendMessage("assistant", "已选择运行记录 " + run.runId + "。可使用 /report 查看报告入口。");
+    });
+    return item;
+  });
+
+  list.replaceChildren(newButton, ...localItems, ...serverRuns);
+}
+
+function createNewSession() {
+  const session = {
+    id: "session-" + Date.now(),
+    title: "新会话",
+    updatedAt: new Date().toISOString(),
+    messages: [],
+  };
+  state.sessions.unshift(session);
+  state.sessions = state.sessions.slice(0, 8);
+  state.activeSessionId = session.id;
+  saveSessions();
+  restoreConversation(session);
+  renderLocalSessions();
+  byId("goal-input").focus();
 }
 
 function renderTools(tools) {
@@ -125,10 +265,7 @@ function renderQuickCommands(commands) {
     item.type = "button";
     item.className = "quick-command";
     item.textContent = command;
-    item.addEventListener("click", () => {
-      byId("goal-input").value = command;
-      byId("goal-input").focus();
-    });
+    item.addEventListener("click", () => executeCommand(command));
     return item;
   }));
 }
@@ -179,7 +316,9 @@ function renderMcp(mcp) {
   list.replaceChildren(status);
 }
 
-function renderModelSettings(model) {
+function renderModelSettings(model, options = {}) {
+  const form = byId("model-settings-form");
+  if (!options.force && state.modelFormDirty && form?.contains(document.activeElement)) return;
   const provider = byId("model-provider");
   const baseUrl = byId("model-base-url");
   const modelName = byId("model-name");
@@ -203,20 +342,35 @@ function renderModelSettings(model) {
     source.textContent = model.source || "none";
     source.title = model.sourcePath || model.source || "none";
   }
-  if (note) {
+  if (note && !state.modelFormDirty) {
     note.textContent = model.apiKeyConfigured
       ? "已检测到本地密钥；保存时留空 API Key 会保持原值。"
       : "API Key 仅写入本地 .ego/config.json。";
   }
 }
 
+function applyProviderProfile(providerName) {
+  const profile = providerProfiles[providerName] || providerProfiles.disabled;
+  byId("model-base-url").value = profile.baseUrl || "";
+  byId("model-chat-path").value = profile.chatPath;
+  byId("model-wire-api").value = profile.wireApi;
+  if (profile.model) {
+    byId("model-name").value = profile.model;
+  }
+  state.modelFormDirty = true;
+}
+
 function renderDiffPreview(result) {
   const preview = byId("diff-preview");
   const approve = byId("approve-button");
+  const title = byId("approval-preview-title");
+  const files = byId("approval-files");
   if (!preview) return;
 
   if (!result || !result.diff) {
-    preview.textContent = "暂无待审批 Patch";
+    preview.textContent = "在“生成 Patch”模式提交修改任务后，diff 会出现在这里。";
+    if (title) title.textContent = "暂无待审批 Patch";
+    if (files) files.replaceChildren();
     state.activePatch = null;
     if (approve) approve.disabled = true;
     return;
@@ -228,6 +382,15 @@ function renderDiffPreview(result) {
     status: result.status,
   };
   preview.textContent = result.diff;
+  if (title) title.textContent = result.status === "applied" ? "Patch 已应用" : "待审批 Patch: " + result.runId;
+  if (files) {
+    files.replaceChildren(...(result.files || result.editPreview?.files || []).map((file) => {
+      const chip = document.createElement("span");
+      chip.className = "approval-file-chip";
+      chip.textContent = file;
+      return chip;
+    }));
+  }
   if (approve) {
     approve.disabled = result.status !== "pending_approval";
   }
@@ -264,6 +427,7 @@ async function loadDiffForPendingEdit(edit) {
     approvalId: "approval-" + edit.previewId,
     status: "pending_approval",
     diff,
+    files: edit.files,
   });
 }
 
@@ -303,12 +467,11 @@ async function approvePendingPatch() {
 function renderWorkbench(workbench) {
   state.workbench = workbench;
   byId("cwd-label").textContent = workbench.cwd;
-  byId("mode-label").textContent = workbench.mode;
+  byId("mode-label").textContent = modeLabel(state.activeMode);
   byId("network-label").textContent = workbench.network === "connected" ? "连接" : "本地";
   byId("model-chip").textContent = workbench.model.label;
   byId("cpu-label").textContent = workbench.cpuLabel;
   byId("memory-label").textContent = workbench.memoryLabel;
-  byId("clock-label").textContent = workbench.clock;
   byId("run-count").textContent = workbench.recentRuns.length + " runs";
   byId("context-target").textContent = workbench.context.target;
   byId("context-type").textContent = workbench.context.type;
@@ -317,7 +480,7 @@ function renderWorkbench(workbench) {
   byId("ego-home").textContent = workbench.storage.egoHome;
   byId("sqlite-path").textContent = workbench.storage.sqlite;
   byId("trajectory-path").textContent = workbench.storage.trajectories;
-  renderSessions(workbench.sessions);
+  renderLocalSessions();
   renderTools(workbench.tools);
   renderFiles(workbench.files);
   renderLogs(workbench.logs);
@@ -330,8 +493,10 @@ function renderWorkbench(workbench) {
   renderCommands(workbench.commands);
   renderMcp(workbench.mcp);
   renderModelSettings(workbench.model);
-  renderChecks(workbench.lastChecks || []);
 
+  if (!state.activePatch) {
+    renderChecks(workbench.lastChecks || []);
+  }
   if (!state.activePatch && workbench.pendingEdits && workbench.pendingEdits.length > 0) {
     loadDiffForPendingEdit(workbench.pendingEdits[0]).catch(() => {
       const preview = byId("diff-preview");
@@ -355,8 +520,18 @@ async function submitModelSettings(event) {
   event.preventDefault();
   const button = event.currentTarget.querySelector("button[type=submit]");
   const note = byId("model-settings-note");
+  const provider = byId("model-provider").value;
+  const hasModelFields = Boolean(
+    byId("model-base-url").value.trim() ||
+    byId("model-name").value.trim() ||
+    byId("model-api-key").value.trim(),
+  );
+  if (provider === "disabled" && hasModelFields) {
+    if (note) note.textContent = "disabled 不能同时保存 Base URL、模型名或 API Key。请选择真实 provider 或清空这些字段。";
+    return;
+  }
   const payload = compactObject({
-    provider: byId("model-provider").value,
+    provider,
     baseUrl: byId("model-base-url").value.trim(),
     model: byId("model-name").value.trim(),
     apiKey: byId("model-api-key").value.trim(),
@@ -379,8 +554,10 @@ async function submitModelSettings(event) {
     if (!response.ok || !result.ok) {
       throw new Error(result.error || "model config save failed");
     }
+    state.modelFormDirty = false;
     if (note) note.textContent = "模型配置已保存到本地 .ego/config.json。";
-    appendMessage("assistant", "模型配置已保存，后续自然语言 Patch 会优先使用新配置。");
+    appendMessage("assistant", "模型配置已保存。对话模式会调用 /chat；生成 Patch 模式会调用 /agent/runs 并等待审批。");
+    renderModelSettings(result.model, { force: true });
     await refreshStatus();
   } catch (error) {
     if (note) note.textContent = "模型配置保存失败：" + formatError(error);
@@ -393,31 +570,104 @@ async function submitModelSettings(event) {
   }
 }
 
+async function testModelSettings() {
+  const button = byId("model-test-button");
+  const note = byId("model-settings-note");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "测试中";
+  }
+  try {
+    const response = await fetch("/api/config/model/test", { method: "POST" });
+    const result = await response.json();
+    if (!response.ok || !result.ok) {
+      throw new Error(result.error || "model test failed");
+    }
+    if (note) {
+      note.textContent = result.status === "connected"
+        ? "模型连接成功：" + (result.model?.name || "")
+        : "模型测试：" + (result.message || result.status);
+    }
+    appendMessage("assistant", "模型测试结果：" + result.status + (result.message ? "\n" + result.message : ""));
+  } catch (error) {
+    if (note) note.textContent = "模型测试失败：" + formatError(error);
+    appendMessage("assistant", "模型测试失败：" + formatError(error));
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "测试连接";
+    }
+  }
+}
+
+async function executeCommand(command) {
+  if (command === "/clear") {
+    const session = ensureSession();
+    session.messages = [];
+    session.updatedAt = new Date().toISOString();
+    saveSessions();
+    restoreConversation(session);
+    renderDiffPreview(null);
+    renderChecks([]);
+    return;
+  }
+  if (command === "/config") {
+    byId("model-provider")?.focus();
+    appendMessage("assistant", commandReply(command));
+    return;
+  }
+  if (command === "/scan") {
+    appendMessage("user", "/scan");
+    await runSecurityFixture();
+    return;
+  }
+  const reply = commandReply(command);
+  if (reply) {
+    appendMessage("user", command);
+    appendMessage("assistant", reply);
+  }
+}
+
 function commandReply(goal) {
   if (goal === "/help") {
-    return "可用命令：/scan、/analyze、/report、/threat、/config、/clear。自然语言任务会生成可审批 Patch。";
-  }
-  if (goal === "/scan") {
-    return "运行受控示例：ego run --scenario web_pentest --input scenarios/web_pentest/basic/task.json";
+    return "可用命令：/scan 运行受控 web_pentest 示例，/analyze 刷新分析状态，/report 查看最近报告入口，/threat 查看威胁情报边界，/config 聚焦模型设置，/clear 清空当前会话。";
   }
   if (goal === "/analyze") {
-    return "建议运行 pnpm typecheck、pnpm build、ego doctor，并检查最新 trajectory。";
+    refreshStatus().catch(() => {});
+    return "已刷新 Workbench 状态。继续深入分析时可以在对话模式提问，或切换到生成 Patch 模式提出明确修改。";
   }
   if (goal === "/report") {
-    return "报告入口：ego replay --trajectory-id <run-id>，或访问 /runs/:id/report。";
+    const run = state.workbench?.recentRuns?.[0];
+    return run ? "最近报告入口：/runs/" + run.runId + "/report" : "暂无运行记录。先执行 /scan 或 ego run 生成报告。";
   }
   if (goal === "/threat") {
-    return "威胁情报查询需要通过 Policy Gate 和授权范围校验后执行。";
+    return "威胁情报、扫描和外部工具调用必须经过 Policy Gate、授权范围和审计链；当前 Web 只暴露受控示例入口。";
   }
   if (goal === "/config") {
     const workbench = state.workbench;
     const pending = workbench?.pendingEdits?.length || 0;
     return "模型：" + (workbench?.model.label || "deterministic fallback") +
-      "\n模型配置：" + (workbench?.model.source || "none") +
+      "\n模型配置来源：" + (workbench?.model.source || "none") +
       "\nSQLite：" + (workbench?.storage.sqlite || ".ego/ego.sqlite") +
-      "\n待审批 Patch：" + pending + "，打开 ego serve 完成审批。";
+      "\n待审批 Patch：" + pending;
   }
   return null;
+}
+
+async function runSecurityFixture() {
+  appendMessage("assistant", "正在运行受控 web_pentest 示例，所有结果会写入 trajectory 与 SQLite。");
+  const response = await fetch("/runs", {
+    method: "POST",
+    headers: {"content-type": "application/json"},
+    body: JSON.stringify({ runId: "web-ui-run-" + Date.now() }),
+  });
+  const result = await response.json();
+  if (!response.ok || !result.ok) {
+    appendMessage("assistant", "安全任务失败：" + (result.error || "unknown error"));
+    return;
+  }
+  appendMessage("tool", "runId: " + result.runId + "\nstatus: " + result.status + "\nevidence: " + (result.evidence || []).length + "\nreport: " + result.reportPath, { pre: true });
+  await refreshStatus();
 }
 
 export async function submitMission(event) {
@@ -431,57 +681,25 @@ export async function submitMission(event) {
     return;
   }
 
-  if (goal === "/clear") {
-    byId("conversation").replaceChildren();
+  if (goal.startsWith("/")) {
+    await executeCommand(goal);
     byId("goal-input").value = "";
-    renderDiffPreview(null);
-    renderChecks([]);
     return;
   }
 
   appendMessage("user", goal);
-  const localReply = commandReply(goal);
-  if (localReply) {
-    appendMessage("assistant", localReply);
-    byId("goal-input").value = "";
-    return;
-  }
-
   button.disabled = true;
-  button.textContent = "思考中";
+  button.textContent = state.activeMode === "patch" ? "生成 Patch" : "思考中";
 
   try {
-    const response = await fetch("/agent/runs", {
-      method: "POST",
-      headers: {"content-type": "application/json"},
-      body: JSON.stringify({
-        message: goal,
-        autoPropose: true,
-        ...(runId ? { runId } : {}),
-      }),
-    });
-    const result = await response.json();
-    if (!response.ok || !result.ok) {
-      throw new Error(result.error || "请求失败");
+    if (state.activeMode === "patch") {
+      await submitPatchGoal(goal, runId);
+    } else if (state.activeMode === "security") {
+      appendMessage("assistant", "安全任务模式会优先使用受控场景入口。当前将运行 web_pentest fixture；主动扫描真实目标前必须确认授权范围。");
+      await runSecurityFixture();
+    } else {
+      await submitChatGoal(goal);
     }
-
-    const plan = result.plan?.length ? "\n\n计划：\n- " + result.plan.join("\n- ") : "";
-    const commands = result.suggestedCommands?.length
-      ? "\n\n建议命令：\n- " + result.suggestedCommands.join("\n- ")
-      : "";
-    let statusLine = "";
-    if (result.status === "pending_approval") {
-      statusLine = "\n\n已生成候选 Patch，请确认 diff 后点击 Approve。";
-      renderDiffPreview(result);
-    } else if (result.status === "needs_model") {
-      statusLine = "\n\n模型未配置，已保持只读，不创建待审批 Patch。";
-      renderDiffPreview(null);
-    } else if (result.status === "blocked") {
-      statusLine = "\n\n任务被策略或模型输出阻断，未创建待审批 Patch。";
-      renderDiffPreview(null);
-    }
-    renderChecks(result.checks || []);
-    appendMessage("assistant", (result.assistantMessage || "已处理。") + statusLine + plan + commands);
     byId("goal-input").value = "";
     await refreshStatus();
   } catch (error) {
@@ -490,6 +708,92 @@ export async function submitMission(event) {
     button.disabled = false;
     button.textContent = "发送 (Enter)";
   }
+}
+
+async function submitChatGoal(goal) {
+  const response = await fetch("/chat", {
+    method: "POST",
+    headers: {"content-type": "application/json"},
+    body: JSON.stringify({ message: goal }),
+  });
+  const result = await response.json();
+  if (!response.ok || !result.ok) {
+    throw new Error(result.error || "请求失败");
+  }
+  const commands = result.suggestedCommands?.length
+    ? "\n\n建议命令：\n- " + result.suggestedCommands.join("\n- ")
+    : "";
+  appendMessage("assistant", (result.reply || result.assistantMessage || "已处理。") + commands);
+}
+
+async function submitPatchGoal(goal, runId) {
+  const response = await fetch("/agent/runs", {
+    method: "POST",
+    headers: {"content-type": "application/json"},
+    body: JSON.stringify({
+      message: goal,
+      autoPropose: true,
+      ...(runId ? { runId } : {}),
+    }),
+  });
+  const result = await response.json();
+  if (!response.ok || !result.ok) {
+    throw new Error(result.error || "请求失败");
+  }
+
+  const plan = result.plan?.length ? "\n\n计划：\n- " + result.plan.join("\n- ") : "";
+  let statusLine = "";
+  if (result.status === "pending_approval") {
+    statusLine = "\n\n已生成候选 Patch，请在右侧审批栏确认 diff 后点击 Approve。";
+    renderDiffPreview(result);
+  } else if (result.status === "needs_model") {
+    statusLine = "\n\n模型未配置，已保持只读，不创建待审批 Patch。";
+    renderDiffPreview(null);
+  } else if (result.status === "blocked") {
+    statusLine = "\n\n任务被策略或模型输出阻断，未创建待审批 Patch。";
+    renderDiffPreview(null);
+  }
+  renderChecks(result.checks || []);
+  appendMessage("assistant", (result.assistantMessage || "已处理。") + statusLine + plan);
+}
+
+function setMode(mode) {
+  state.activeMode = mode;
+  byId("mode-label").textContent = modeLabel(mode);
+  document.querySelectorAll(".mode-tab").forEach((button) => {
+    button.classList.toggle("active", button.dataset.mode === mode);
+  });
+  const input = byId("goal-input");
+  if (mode === "patch") {
+    input.placeholder = "描述你要修改的文件或功能，系统会生成 diff 并等待右侧审批...";
+  } else if (mode === "security") {
+    input.placeholder = "描述授权安全任务，或使用 /scan 运行受控 web_pentest 示例...";
+  } else {
+    input.placeholder = "在此输入你的问题，模型可用时会调用 /chat 进行只读回复...";
+  }
+}
+
+function modeLabel(mode) {
+  if (mode === "patch") return "生成 Patch";
+  if (mode === "security") return "安全任务";
+  return "对话";
+}
+
+function tickClock() {
+  const clock = byId("clock-label");
+  if (clock) {
+    clock.textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+  }
+}
+
+function relativeTime(value) {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return "";
+  const minutes = Math.max(0, Math.round((Date.now() - timestamp) / 60000));
+  if (minutes < 1) return "刚刚";
+  if (minutes < 60) return minutes + "分钟前";
+  const hours = Math.round(minutes / 60);
+  return hours < 24 ? hours + "小时前" : Math.round(hours / 24) + "天前";
 }
 
 function formatError(error) {
@@ -504,12 +808,39 @@ function compactObject(input) {
 
 byId("mission-form").addEventListener("submit", submitMission);
 byId("model-settings-form")?.addEventListener("submit", submitModelSettings);
+byId("model-settings-form")?.addEventListener("input", () => {
+  state.modelFormDirty = true;
+});
+byId("model-provider")?.addEventListener("change", (event) => {
+  applyProviderProfile(event.currentTarget.value);
+});
+byId("model-test-button")?.addEventListener("click", () => {
+  testModelSettings().catch((error) => appendMessage("assistant", "模型测试失败：" + formatError(error)));
+});
 byId("approve-button")?.addEventListener("click", () => {
   approvePendingPatch().catch((error) => {
     appendMessage("assistant", "审批失败：" + formatError(error));
   });
 });
+document.querySelectorAll(".mode-tab").forEach((button) => {
+  button.addEventListener("click", () => setMode(button.dataset.mode || "chat"));
+});
+byId("goal-input")?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    byId("mission-form").requestSubmit();
+  }
+});
+ensureSession();
+setMode("chat");
+tickClock();
+setInterval(tickClock, 1000);
 refreshStatus().catch((error) => {
   appendMessage("assistant", "状态读取失败：" + formatError(error));
-});`;
+});
+setInterval(() => {
+  refreshStatus().catch((error) => {
+    console.warn("workbench refresh failed", error);
+  });
+}, 3000);`;
 }

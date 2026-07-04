@@ -111,29 +111,21 @@ export function renderDashboardHtml(): string {
           </section>
 
           <section class="panel console-panel">
-            <div class="panel-heading compact"><h2>对话控制台</h2><span id="run-count">0 runs</span></div>
+            <div class="panel-heading compact">
+              <h2>对话控制台</h2>
+              <div class="mode-tabs" role="tablist" aria-label="工作模式">
+                <button class="mode-tab active" type="button" data-mode="chat">对话</button>
+                <button class="mode-tab" type="button" data-mode="patch">生成 Patch</button>
+                <button class="mode-tab" type="button" data-mode="security">安全任务</button>
+              </div>
+              <span id="run-count">0 runs</span>
+            </div>
             <div class="conversation" id="conversation">
               <article class="message assistant">
                 <span>lotus</span>
-                <p>输入自然语言任务，我会先读取项目、给出计划、列出建议命令，并展示 MCP、SQLite、Evidence 与运行轨迹状态。</p>
-              </article>
-              <article class="message assistant output">
-                <span>tool</span>
-                <pre>PORT     STATE   SERVICE   VERSION
-22/tcp   open    ssh       OpenSSH 8.4p1
-80/tcp   open    http      nginx 1.18.0
-443/tcp  open    https     nginx 1.18.0</pre>
+                <p>当前是对话模式：模型可用时我会调用 LLM 进行只读分析；需要改文件请切到“生成 Patch”，所有写入都会先进入右侧审批。</p>
               </article>
             </div>
-          </section>
-
-          <section class="panel patch-panel">
-            <div class="panel-heading compact">
-              <h2>Patch Preview</h2>
-              <button class="ghost approve-action" id="approve-button" type="button" disabled>Approve</button>
-            </div>
-            <pre class="diff-preview" id="diff-preview">暂无待审批 Patch</pre>
-            <div class="check-list" id="check-list"></div>
           </section>
 
           <form class="composer" id="mission-form">
@@ -175,6 +167,7 @@ export function renderDashboardHtml(): string {
                 </select>
               </div>
               <button class="model-save-button" type="submit">保存模型配置</button>
+              <button class="model-test-button" id="model-test-button" type="button">测试连接</button>
               <p id="model-settings-note">API Key 仅写入本地 .ego/config.json。</p>
             </form>
           </section>
@@ -189,6 +182,15 @@ export function renderDashboardHtml(): string {
           <section class="panel">
             <div class="panel-heading compact"><h2>审批 / 执行</h2><button class="ghost">⌄</button></div>
             <div class="approval-list" id="approval-list"></div>
+            <div class="approval-preview">
+              <div class="approval-preview-heading">
+                <strong id="approval-preview-title">暂无待审批 Patch</strong>
+                <button class="ghost approve-action" id="approve-button" type="button" disabled>Approve</button>
+              </div>
+              <div class="approval-files" id="approval-files"></div>
+              <pre class="diff-preview" id="diff-preview">在“生成 Patch”模式提交修改任务后，diff 会出现在这里。</pre>
+              <div class="check-list" id="check-list"></div>
+            </div>
           </section>
         </aside>
       </section>
