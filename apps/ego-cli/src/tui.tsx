@@ -247,6 +247,18 @@ function RightSidebar({ workbench }: { workbench: WorkbenchState }): ReactElemen
         <Text>优先级: {workbench.context.priority}</Text>
       </Box>
       <Box borderStyle="single" borderColor="magenta" paddingX={1} flexDirection="column">
+        <Text color="magentaBright">Agent Kernel</Text>
+        <Text>Memory: {workbench.memory.total} items</Text>
+        <Text>Plan: {workbench.plans.draftCount} draft</Text>
+        <Text>Skills: {workbench.skills.length} loaded</Text>
+        <Text>
+          MCP: {workbench.mcp.status} / {workbench.mcp.transport}
+        </Text>
+        <Text>
+          Search: {workbench.search.tool} {workbench.search.status}
+        </Text>
+      </Box>
+      <Box borderStyle="single" borderColor="magenta" paddingX={1} flexDirection="column">
         <Text color="magentaBright">文件</Text>
         {workbench.files.slice(0, 4).map((file) => (
           <Text key={file.path}>

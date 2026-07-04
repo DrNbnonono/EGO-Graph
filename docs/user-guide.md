@@ -20,7 +20,15 @@ http://127.0.0.1:4317
 ```
 
 The Web dashboard shows project progress, model status, storage paths, recent runs, terminal
-commands, and a dialog-style mission form for controlled `web_pentest` runs.
+commands, and a dialog-style mission form for controlled `web_pentest` runs. It also shows the
+Agent Kernel status: recent memories, draft plans, built-in skills, MCP stdio status, web search,
+pending approvals, and checks.
+
+Web modes:
+
+- **对话**: read-only assistant chat through `/chat`.
+- **生成 Patch**: creates a draft plan through `/agent/plans`; after plan approval, it generates a diff and waits for Patch approval before writing files.
+- **安全任务**: runs controlled security scenarios such as the bundled `web_pentest` fixture.
 
 Run the controlled web pentest scenario:
 
@@ -50,6 +58,18 @@ Runtime API endpoints:
 
 - `GET /`
 - `GET /api/status`
+- `GET /api/workbench`
+- `GET /api/memory`
+- `GET /api/hermes/timeline`
+- `GET /api/skills`
+- `GET /api/mcp/tools`
+- `POST /chat`
+- `POST /agent/plans`
+- `POST /agent/plans/:id/approve`
+- `POST /agent/runs`
+- `POST /agent/runs/:id/approve`
+- `GET /agent/runs/:id/diff`
+- `GET /agent/runs/:id/checks`
 - `POST /runs`
 - `GET /runs/:id`
 - `GET /runs/:id/events`

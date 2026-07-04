@@ -1,6 +1,7 @@
 import { createChatModelProvider, loadModelConfig, type ChatModelProvider } from "@ego-graph/llm";
 import { loadMcpConfig, type McpManifest } from "@ego-graph/mcp";
 import { createWorkspaceService, type ProjectSummary } from "@ego-graph/workspace";
+import { loadAgentSystemPrompt } from "./system-prompt.js";
 
 export type AssistantChatStatus = "answered" | "needs_model" | "failed";
 
@@ -8,6 +9,7 @@ export type AssistantChatInput = {
   message: string;
   workspaceRoot: string;
   modelProvider?: ChatModelProvider | null;
+  memoryHints?: string[];
 };
 
 export type AssistantChatTurn = {
@@ -39,6 +41,13 @@ export async function runAssistantChatTurn(input: AssistantChatInput): Promise<A
   const provider = resolveModelProvider(input);
   const suggestedCommands = workspace.suggestCommands(input.message);
   const observations = buildChatObservations(summary, files);
+  const memoryHints = input.memoryHints ?? [];
+  const systemPrompt = await loadAgentSystemPrompt({
+    workspaceRoot: input.workspaceRoot,
+    memoryHints,
+    skills: ["workspace", "shell-readonly", "web-search", "ctf-basic"],
+    mcpTools: mcpConfig.manifest.servers.map((server) => `mcp.${server.name}`),
+  });
 
   if (!provider) {
     const reply = [
@@ -71,13 +80,7 @@ export async function runAssistantChatTurn(input: AssistantChatInput): Promise<A
       messages: [
         {
           role: "system",
-          content: [
-            "You are Lotus, the read-only assistant inside EGO-Graph.",
-            "Answer in Chinese unless the user asks otherwise.",
-            "Be concise, practical, and grounded in the local workspace context.",
-            "Do not claim files were modified. Direct code changes must use the Patch approval flow.",
-            "For cybersecurity actions, remind the user that active operations must stay inside authorized scope.",
-          ].join("\n"),
+          content: systemPrompt.finalPrompt,
         },
         {
           role: "user",
@@ -92,6 +95,11 @@ export async function runAssistantChatTurn(input: AssistantChatInput): Promise<A
             "",
             "Visible files:",
             files.slice(0, 60).join("\n") || "(none)",
+            "",
+            "Memory hints:",
+            memoryHints.length > 0
+              ? memoryHints.map((memory) => `- ${memory}`).join("\n")
+              : "(none)",
           ].join("\n"),
         },
       ],

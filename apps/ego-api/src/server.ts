@@ -1,7 +1,15 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { runAssistantChatTurn, runCodingAgentTurn, type AgentCheckCommand } from "@ego-graph/agent";
+import {
+  draftAgentPlan,
+  loadAgentSystemPrompt,
+  runAssistantChatTurn,
+  runCodingAgentTurn,
+  saveProjectSystemPrompt,
+  type AgentCheckCommand,
+  type AgentPlanMode,
+} from "@ego-graph/agent";
 import {
   createModelBackedPlanner,
   createTrajectoryEvent,
@@ -12,22 +20,43 @@ import {
 } from "@ego-graph/core";
 import {
   createChatModelProvider,
+  deleteModelProfile,
+  listModelProfiles,
   loadModelConfig,
   loadModelConfigWithSource,
   ModelConfigValidationError,
   modelProviderProfiles,
   saveModelConfig,
+  saveModelProfile,
+  selectModelProfile,
   toPublicModelConfig,
   type ChatModelProvider,
+  type ModelProfile,
   type PersistedModelConfig,
 } from "@ego-graph/llm";
+import { createHermesEvent } from "@ego-graph/hermes";
+import { createMemoryService, type MemoryRecord as RuntimeMemoryRecord } from "@ego-graph/memory";
+import {
+  deleteMcpServer,
+  listMcpRuntimeTools,
+  listMcpServers,
+  loadMcpConfig,
+  saveMcpServer,
+  testMcpServer,
+} from "@ego-graph/mcp";
+import { createBuiltinSkillRegistry, loadPluginManifests } from "@ego-graph/tools";
 import {
   readDashboardStatus,
   renderDashboardCss,
   renderDashboardHtml,
   renderDashboardJs,
 } from "@ego-graph/ego-web";
-import { readWorkbenchState } from "@ego-graph/workbench";
+import {
+  createRuntimeMetricsSampler,
+  executeBuiltinCommand,
+  getBuiltinCommands,
+  readWorkbenchState,
+} from "@ego-graph/workbench";
 import { loadOverlay } from "@ego-graph/overlays";
 import {
   extractReportDecisions,
@@ -44,6 +73,7 @@ import {
   sqlitePath,
   SqliteEgoStore,
   trajectoryDir,
+  type MemoryRecord,
 } from "@ego-graph/storage";
 import type { WorkspaceEditPlan } from "@ego-graph/workspace";
 import { Hono } from "hono";
@@ -60,6 +90,7 @@ export function createServer(options: CreateServerOptions = {}): Hono {
     ? resolve(options.workspaceRoot)
     : findWorkspaceRoot(process.cwd());
   const egoHome = options.egoHome ?? defaultEgoHome();
+  const metricsSampler = createRuntimeMetricsSampler();
 
   app.get("/health", (context) => {
     return context.json({ ok: true, service: "ego-api" });
@@ -110,8 +141,12 @@ export function createServer(options: CreateServerOptions = {}): Hono {
   app.get("/api/workbench", async (context) => {
     return context.json({
       ok: true,
-      workbench: await readWorkbenchState({ workspaceRoot, egoHome }),
+      workbench: await readWorkbenchState({ workspaceRoot, egoHome, metricsSampler }),
     });
+  });
+
+  app.get("/api/runtime/metrics", (context) => {
+    return context.json({ ok: true, ...metricsSampler.sample() });
   });
 
   app.get("/api/config/model", (context) => {
@@ -176,32 +211,513 @@ export function createServer(options: CreateServerOptions = {}): Hono {
     }
   });
 
+  app.get("/api/config/models", async (context) => {
+    return context.json({
+      ok: true,
+      ...(await listModelProfiles({ workspaceRoot, env: {} })),
+    });
+  });
+
+  app.post("/api/config/models", async (context) => {
+    const body = (await context.req.json()) as ModelProfile;
+    try {
+      return context.json({
+        ok: true,
+        ...(await saveModelProfile({ workspaceRoot, profile: body })),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const status = error instanceof ModelConfigValidationError ? 400 : 500;
+      return context.json({ ok: false, error: message }, status);
+    }
+  });
+
+  app.post("/api/config/models/:id/select", async (context) => {
+    try {
+      const loaded = await selectModelProfile({
+        workspaceRoot,
+        id: context.req.param("id"),
+      });
+      return context.json({
+        ok: true,
+        model: toPublicModelConfig(loaded),
+        ...(await listModelProfiles({ workspaceRoot, env: {} })),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return context.json({ ok: false, error: message }, 404);
+    }
+  });
+
+  app.delete("/api/config/models/:id", async (context) => {
+    try {
+      return context.json({
+        ok: true,
+        ...(await deleteModelProfile({ workspaceRoot, id: context.req.param("id") })),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const status = error instanceof ModelConfigValidationError ? 400 : 404;
+      return context.json({ ok: false, error: message }, status);
+    }
+  });
+
+  app.post("/api/config/models/:id/test", async (context) => {
+    try {
+      await selectModelProfile({ workspaceRoot, id: context.req.param("id") });
+      const provider = createChatModelProvider(loadModelConfig({ workspaceRoot }));
+      if (!provider) {
+        return context.json({
+          ok: true,
+          status: "needs_model",
+          message: "模型 profile 尚未配置完整。",
+        });
+      }
+      const reply = await provider.complete({
+        temperature: 0,
+        maxTokens: 32,
+        messages: [
+          { role: "system", content: "Reply with the exact text: ego-ok" },
+          { role: "user", content: "ping" },
+        ],
+      });
+      return context.json({
+        ok: true,
+        status: "connected",
+        model: { provider: provider.name, name: provider.model },
+        reply: reply.slice(0, 200),
+      });
+    } catch (error) {
+      return context.json({
+        ok: true,
+        status: "failed",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.get("/api/config/system-prompt", async (context) => {
+    return context.json({
+      ok: true,
+      ...(await loadAgentSystemPrompt({ workspaceRoot })),
+    });
+  });
+
+  app.put("/api/config/system-prompt", async (context) => {
+    const body = (await context.req.json()) as { content?: string };
+    const saved = await saveProjectSystemPrompt({
+      workspaceRoot,
+      content: body.content ?? "",
+    });
+    return context.json({
+      ok: true,
+      ...saved,
+      ...(await loadAgentSystemPrompt({ workspaceRoot })),
+    });
+  });
+
+  app.get("/api/commands", async (context) => {
+    return context.json({ ok: true, commands: getBuiltinCommands() });
+  });
+
+  app.post("/api/commands/execute", async (context) => {
+    const body = (await context.req.json()) as { command?: string };
+    const result = executeBuiltinCommand(body.command ?? "");
+    if (!result) {
+      return context.json({ ok: false, error: `Unknown command: ${body.command ?? ""}` }, 400);
+    }
+    return context.json({ ok: true, ...result });
+  });
+
+  app.get("/api/mcp/servers", async (context) => {
+    return context.json({ ok: true, ...(await listMcpServers(workspaceRoot)) });
+  });
+
+  app.post("/api/mcp/servers", async (context) => {
+    const body = (await context.req.json()) as {
+      name?: string;
+      command?: string;
+      args?: string[];
+      env?: Record<string, string>;
+      enabled?: boolean;
+    };
+    if (!body.name || !body.command) {
+      return context.json({ ok: false, error: "name and command are required" }, 400);
+    }
+    return context.json({
+      ok: true,
+      ...(await saveMcpServer({
+        workspaceRoot,
+        server: {
+          name: body.name,
+          command: body.command,
+          args: body.args ?? [],
+          env: body.env ?? {},
+          enabled: body.enabled ?? true,
+        },
+      })),
+    });
+  });
+
+  app.delete("/api/mcp/servers/:name", async (context) => {
+    return context.json({
+      ok: true,
+      ...(await deleteMcpServer({ workspaceRoot, name: context.req.param("name") })),
+    });
+  });
+
+  app.post("/api/mcp/servers/:name/test", async (context) => {
+    try {
+      const result = await testMcpServer({ workspaceRoot, name: context.req.param("name") });
+      return context.json({
+        ...result,
+        ok: result.ok,
+      });
+    } catch (error) {
+      return context.json(
+        { ok: false, error: error instanceof Error ? error.message : String(error) },
+        404,
+      );
+    }
+  });
+
   app.post("/chat", async (context) => {
-    const body = (await context.req.json()) as { message?: string };
+    const body = (await context.req.json()) as { message?: string; sessionId?: string };
     const message = body.message?.trim();
 
     if (!message) {
       return context.json({ ok: false, error: "message is required" }, 400);
     }
 
+    const sqliteStore = new SqliteEgoStore(sqlitePath(egoHome));
+    const sessionId = body.sessionId ?? "web-chat";
+    try {
+      const memoryHits = await recallStoreMemories(sqliteStore, message);
+      await sqliteStore.saveHermesEvent(
+        createHermesEvent({
+          type: "message.received",
+          sessionId,
+          source: "api.chat",
+          payload: { message },
+        }),
+      );
+      const turn = await runAssistantChatTurn({
+        message,
+        workspaceRoot,
+        memoryHints: toMemoryHints(memoryHits),
+        ...(options.modelProvider !== undefined ? { modelProvider: options.modelProvider } : {}),
+      });
+      const remembered = await rememberInStore(sqliteStore, {
+        scope: "session",
+        content: message,
+        source: "api.chat",
+        tags: ["chat"],
+        references: [],
+      });
+      if (remembered) {
+        await sqliteStore.saveHermesEvent(
+          createHermesEvent({
+            type: "memory.written",
+            sessionId,
+            source: "api.chat",
+            payload: { memoryId: remembered.id, scope: remembered.scope },
+          }),
+        );
+      }
+
+      return context.json({ ok: true, memoryHits, ...turn });
+    } finally {
+      sqliteStore.close();
+    }
+  });
+
+  app.post("/chat/stream", async (context) => {
+    const body = (await context.req.json()) as { message?: string; sessionId?: string };
+    const message = body.message?.trim();
+    if (!message) {
+      return context.json({ ok: false, error: "message is required" }, 400);
+    }
+
+    const sessionId = body.sessionId ?? "web-chat";
     const turn = await runAssistantChatTurn({
       message,
       workspaceRoot,
       ...(options.modelProvider !== undefined ? { modelProvider: options.modelProvider } : {}),
     });
+    const lines = [
+      {
+        type: "agent.event",
+        event: "message.received",
+        sessionId,
+        message,
+      },
+      {
+        type: "agent.event",
+        event: "model.completed",
+        sessionId,
+        model: turn.model,
+      },
+      {
+        type: "model.delta",
+        sessionId,
+        delta: turn.reply,
+      },
+      {
+        type: "assistant.final",
+        sessionId,
+        status: turn.status,
+        message: turn.reply,
+        model: turn.model,
+      },
+    ];
 
-    return context.json({ ok: true, ...turn });
+    return context.text(lines.map((line) => JSON.stringify(line)).join("\n") + "\n", 200, {
+      "content-type": "application/x-ndjson; charset=utf-8",
+    });
+  });
+
+  app.post("/agent/plans", async (context) => {
+    const body = (await context.req.json()) as {
+      message?: string;
+      sessionId?: string;
+      mode?: string;
+    };
+    const message = body.message?.trim();
+    if (!message) {
+      return context.json({ ok: false, error: "message is required" }, 400);
+    }
+    const mode = parseAgentPlanMode(body.mode);
+    if (!mode) {
+      return context.json({ ok: false, error: "mode must be one of: coding, ctf, research" }, 400);
+    }
+
+    const sqliteStore = new SqliteEgoStore(sqlitePath(egoHome));
+    try {
+      const memoryHits = await recallStoreMemories(sqliteStore, message);
+      const draft = await draftAgentPlan({
+        message,
+        workspaceRoot,
+        mode,
+        memoryHits: memoryHits.map(storageMemoryToRuntimeMemory),
+        ...(body.sessionId ? { sessionId: body.sessionId } : {}),
+      });
+      await sqliteStore.saveAgentPlan({
+        planId: draft.planId,
+        sessionId: draft.sessionId,
+        mode: draft.mode,
+        message,
+        status: "draft",
+        plan: draft.plan,
+        contextSummary: draft.contextSummary,
+        memoryIds: memoryHits.map((memory) => memory.id),
+        createdAt: draft.createdAt,
+        updatedAt: draft.createdAt,
+      });
+      await sqliteStore.saveHermesEvent(
+        createHermesEvent({
+          type: "plan.updated",
+          sessionId: draft.sessionId,
+          source: "api.agent.plans",
+          payload: { planId: draft.planId, status: "draft", mode: draft.mode },
+        }),
+      );
+
+      return context.json({ ok: true, ...draft, memoryHits });
+    } finally {
+      sqliteStore.close();
+    }
+  });
+
+  app.post("/agent/plans/:id/approve", async (context) => {
+    const planId = context.req.param("id");
+    const body = (await context.req.json().catch(() => ({}))) as { runId?: string };
+    const sqliteStore = new SqliteEgoStore(sqlitePath(egoHome));
+    const trajectoryStore = new CompositeTrajectoryStore([
+      new JsonlTrajectoryStore(trajectoryDir(egoHome)),
+      sqliteStore,
+    ]);
+    const now = new Date().toISOString();
+
+    try {
+      const plan = await sqliteStore.getAgentPlan(planId);
+      if (!plan) {
+        return context.json({ ok: false, error: `No agent plan for ${planId}` }, 404);
+      }
+      if (plan.status !== "draft") {
+        return context.json(
+          {
+            ok: false,
+            error: `Agent plan ${planId} is not draft; current status is ${plan.status}`,
+          },
+          409,
+        );
+      }
+
+      const runId = body.runId ?? plan.runId ?? `agent-run-${Date.now()}`;
+      await sqliteStore.updateAgentPlanStatus(planId, "approved", runId, now);
+      await sqliteStore.saveHermesEvent(
+        createHermesEvent({
+          type: "plan.updated",
+          sessionId: plan.sessionId,
+          runId,
+          source: "api.agent.plans.approve",
+          payload: { planId, status: "approved", mode: plan.mode },
+        }),
+      );
+
+      if (plan.mode === "ctf" || plan.mode === "research") {
+        await sqliteStore.updateAgentPlanStatus(planId, "executed", runId, now);
+        return context.json({
+          ok: true,
+          planId,
+          runId,
+          status: "approved",
+          message:
+            plan.mode === "ctf"
+              ? "CTF plan approved. Use /runs or security mode to execute the controlled fixture."
+              : "Research plan approved. Use read-only chat or search tools before requesting a coding Patch.",
+        });
+      }
+
+      const memoryHits = await recallStoreMemories(sqliteStore, plan.message);
+      const turn = await runCodingAgentTurn({
+        message: plan.message,
+        workspaceRoot,
+        runId,
+        mode: "propose_edits",
+        autoPropose: true,
+        memoryHints: toMemoryHints(memoryHits),
+        ...(options.modelProvider !== undefined ? { modelProvider: options.modelProvider } : {}),
+      });
+      for (const event of turn.trajectoryEvents) {
+        await trajectoryStore.append(event);
+      }
+
+      await sqliteStore.saveAgentRun({
+        runId,
+        message: plan.message,
+        mode: turn.executionMode,
+        status: turn.status,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      let approvalId: string | undefined;
+      if (turn.status === "pending_approval" && turn.editPreview) {
+        approvalId = `approval-${turn.editPreview.id}`;
+        await sqliteStore.saveAgentEdit({
+          runId,
+          previewId: turn.editPreview.id,
+          status: "pending",
+          diff: turn.editPreview.diff,
+          plan: turn.editPlan as unknown as Record<string, unknown>,
+          files: turn.editPreview.files,
+          createdAt: now,
+        });
+        await sqliteStore.saveApproval({
+          id: approvalId,
+          runId,
+          kind: "agent_edit",
+          status: "pending",
+          createdAt: now,
+          updatedAt: now,
+        });
+        await sqliteStore.saveHermesEvent(
+          createHermesEvent({
+            type: "approval.created",
+            sessionId: plan.sessionId,
+            runId,
+            source: "api.agent.plans.approve",
+            payload: { approvalId, kind: "agent_edit" },
+          }),
+        );
+      }
+
+      return context.json({ ok: true, planId, runId, approvalId, ...turn });
+    } finally {
+      sqliteStore.close();
+    }
+  });
+
+  app.get("/api/hermes/timeline", async (context) => {
+    const sqliteStore = new SqliteEgoStore(sqlitePath(egoHome));
+    try {
+      const sessionId = context.req.query("sessionId");
+      const runId = context.req.query("runId");
+      const type = context.req.query("type");
+      const limit = Number(context.req.query("limit") ?? 50);
+      return context.json({
+        ok: true,
+        events: await sqliteStore.listHermesEvents({
+          ...(sessionId ? { sessionId } : {}),
+          ...(runId ? { runId } : {}),
+          ...(type ? { type } : {}),
+          limit: Number.isFinite(limit) ? limit : 50,
+        }),
+      });
+    } finally {
+      sqliteStore.close();
+    }
+  });
+
+  app.get("/api/memory", async (context) => {
+    const sqliteStore = new SqliteEgoStore(sqlitePath(egoHome));
+    try {
+      const scope = context.req.query("scope") as MemoryRecord["scope"] | undefined;
+      return context.json({
+        ok: true,
+        memories: await sqliteStore.listMemories({
+          ...(scope ? { scope } : {}),
+          limit: 50,
+        }),
+      });
+    } finally {
+      sqliteStore.close();
+    }
+  });
+
+  app.get("/api/skills", async (context) => {
+    const registry = createBuiltinSkillRegistry();
+    const plugins = await loadPluginManifests(workspaceRoot);
+    return context.json({
+      ok: true,
+      skills: registry.listSkills(),
+      tools: registry.listTools().map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        permission: tool.permission,
+      })),
+      plugins,
+    });
+  });
+
+  app.get("/api/mcp/tools", async (context) => {
+    const mcp = await loadMcpConfig(workspaceRoot);
+    const runtime = await listMcpRuntimeTools(mcp);
+    return context.json({
+      ok: true,
+      mcp: mcp.manifest,
+      tools: runtime.tools.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        permission: tool.permission,
+        requiresApproval: tool.requiresApproval ?? false,
+      })),
+      errors: runtime.errors,
+    });
   });
 
   app.post("/agent/runs", async (context) => {
     const body = (await context.req.json()) as {
       message?: string;
       runId?: string;
+      sessionId?: string;
       editPlan?: WorkspaceEditPlan;
       autoPropose?: boolean;
     };
     const message = body.message?.trim() || body.editPlan?.goal || "Agent workspace task";
     const runId = body.runId ?? `agent-run-${Date.now()}`;
+    const sessionId = body.sessionId ?? runId;
     const modelProviderOption = options.modelProvider;
     const sqliteStore = new SqliteEgoStore(sqlitePath(egoHome));
     const trajectoryStore = new CompositeTrajectoryStore([
@@ -211,12 +727,23 @@ export function createServer(options: CreateServerOptions = {}): Hono {
     const now = new Date().toISOString();
 
     try {
+      const memoryHits = await recallStoreMemories(sqliteStore, message);
+      await sqliteStore.saveHermesEvent(
+        createHermesEvent({
+          type: "message.received",
+          sessionId,
+          runId,
+          source: "api.agent.runs",
+          payload: { message, autoPropose: body.autoPropose ?? false },
+        }),
+      );
       const turn = await runCodingAgentTurn({
         message,
         workspaceRoot,
         runId,
         mode: body.editPlan || body.autoPropose ? "propose_edits" : "inspect",
         autoPropose: body.autoPropose ?? false,
+        memoryHints: toMemoryHints(memoryHits),
         ...(body.editPlan ? { editPlan: body.editPlan } : {}),
         ...(modelProviderOption !== undefined ? { modelProvider: modelProviderOption } : {}),
       });
@@ -253,12 +780,22 @@ export function createServer(options: CreateServerOptions = {}): Hono {
           createdAt: now,
           updatedAt: now,
         });
+        await sqliteStore.saveHermesEvent(
+          createHermesEvent({
+            type: "approval.created",
+            sessionId,
+            runId,
+            source: "api.agent.runs",
+            payload: { approvalId, kind: "agent_edit" },
+          }),
+        );
       }
 
       return context.json({
         ok: true,
         runId,
         approvalId,
+        memoryHits,
         ...turn,
       });
     } finally {
@@ -325,6 +862,19 @@ export function createServer(options: CreateServerOptions = {}): Hono {
           stderr: check.stderr,
           createdAt: now,
         });
+        await sqliteStore.saveHermesEvent(
+          createHermesEvent({
+            type: "check.finished",
+            sessionId: runId,
+            runId,
+            source: "api.agent.runs.approve",
+            payload: {
+              name: check.name,
+              status: check.status,
+              exitCode: check.exitCode,
+            },
+          }),
+        );
       }
 
       return context.json({ ok: true, runId, approvalId, ...turn });
@@ -422,6 +972,24 @@ export function createServer(options: CreateServerOptions = {}): Hono {
       reportPath,
       updatedAt: new Date().toISOString(),
     });
+    const remembered = await rememberInStore(sqliteStore, {
+      scope: "task",
+      content: `${task.scenario} ${result.status} with ${result.evidence.length} evidence items for ${task.goal}`,
+      source: "api.runs",
+      tags: ["ctf", task.scenario, result.status],
+      references: [reportPath],
+    });
+    if (remembered) {
+      await sqliteStore.saveHermesEvent(
+        createHermesEvent({
+          type: "memory.written",
+          sessionId: result.runId,
+          runId: result.runId,
+          source: "api.runs",
+          payload: { memoryId: remembered.id, scope: remembered.scope },
+        }),
+      );
+    }
 
     return context.json({
       ok: true,
@@ -553,6 +1121,13 @@ function loadPlannerFromWorkspace(workspaceRoot: string): AgentPlanner | undefin
   return provider ? createModelBackedPlanner(provider) : undefined;
 }
 
+function parseAgentPlanMode(mode: string | undefined): AgentPlanMode | undefined {
+  if (!mode) {
+    return "coding";
+  }
+  return mode === "coding" || mode === "ctf" || mode === "research" ? mode : undefined;
+}
+
 async function readEvents(runId: string, egoHome: string): Promise<TrajectoryEvent[]> {
   const sqliteStore = new SqliteEgoStore(sqlitePath(egoHome));
   const sqliteEvents = await sqliteStore.readRun(runId);
@@ -561,4 +1136,65 @@ async function readEvents(runId: string, egoHome: string): Promise<TrajectoryEve
   }
 
   return new JsonlTrajectoryStore(trajectoryDir(egoHome)).readRun(runId);
+}
+
+async function recallStoreMemories(store: SqliteEgoStore, query: string): Promise<MemoryRecord[]> {
+  const stored = await store.listMemories({ limit: 100 });
+  const service = createMemoryService(stored.map(storageMemoryToRuntimeMemory));
+  const hits = await service.recall({ query, limit: 6 });
+  const byId = new Map(stored.map((memory) => [memory.id, memory]));
+  return hits
+    .map((memory) => byId.get(memory.id))
+    .filter((memory): memory is MemoryRecord => Boolean(memory));
+}
+
+async function rememberInStore(
+  store: SqliteEgoStore,
+  input: {
+    scope: MemoryRecord["scope"];
+    content: string;
+    source: string;
+    tags?: string[];
+    references?: string[];
+  },
+): Promise<MemoryRecord | undefined> {
+  const service = createMemoryService();
+  const result = await service.remember(input);
+  if (result.status !== "stored") {
+    return undefined;
+  }
+  const record = runtimeMemoryToStorageMemory(result.memory);
+  await store.saveMemory(record);
+  return record;
+}
+
+function toMemoryHints(memories: MemoryRecord[]): string[] {
+  return memories.map((memory) => `[${memory.scope}] ${memory.content}`);
+}
+
+function storageMemoryToRuntimeMemory(memory: MemoryRecord): RuntimeMemoryRecord {
+  return {
+    id: memory.id,
+    scope: memory.scope,
+    content: memory.content,
+    source: memory.source,
+    tags: memory.tags,
+    references: memory.references,
+    createdAt: memory.createdAt,
+    updatedAt: memory.updatedAt,
+  };
+}
+
+function runtimeMemoryToStorageMemory(memory: RuntimeMemoryRecord): MemoryRecord {
+  return {
+    id: memory.id,
+    scope: memory.scope,
+    content: memory.content,
+    source: memory.source,
+    tags: memory.tags,
+    references: memory.references,
+    status: "active",
+    createdAt: memory.createdAt,
+    updatedAt: memory.updatedAt,
+  };
 }

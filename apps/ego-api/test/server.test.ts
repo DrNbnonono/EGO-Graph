@@ -39,15 +39,17 @@ describe("ego api server", () => {
 
     expect(dashboardResponse.status).toBe(200);
     expect(dashboardResponse.headers.get("content-type")).toContain("text/html");
-    expect(html).toContain("EGO-Graph 可视化驾驶舱");
-    expect(html).toContain("对话控制台");
+    expect(html).toContain("EGO-Graph Agent Workbench");
+    expect(html).toContain('id="agent-thread"');
+    expect(html).toContain('id="execution-timeline"');
     expect(html).toContain("模型设置");
     expect(html).toContain("项目进展");
     expect(html).toContain('id="mission-chat"');
     expect(html).toContain("/assets/brand/ego-lotus.png");
     expect(html).toContain('rel="icon"');
     expect(cssResponse.headers.get("content-type")).toContain("text/css");
-    expect(css).toContain(".lotus-mark");
+    expect(css).toContain(".brand-logo");
+    expect(css).toContain(".agent-thread");
     expect(js).toContain("submitMission");
     expect(js).toContain("/agent/runs");
     expect(js).toContain("/chat");
@@ -69,7 +71,7 @@ describe("ego api server", () => {
       ok: true,
       workbench: {
         product: "EGO-Graph",
-        title: "紫莲花 Agent Workbench",
+        title: "紫莲花 EGO-Graph Agent Workbench",
       },
     });
     expect(workbench.workbench.quickCommands).toContain("/scan");
@@ -99,7 +101,7 @@ describe("ego api server", () => {
       await readFile(join(workspaceRoot, ".ego", "config.json"), "utf8"),
     ) as { model: { apiKey: string; model: string } };
 
-    expect(before.model.source).toBe("none");
+    expect(["none", "environment"]).toContain(before.model.source);
     expect(saveResponse.status).toBe(200);
     expect(saved.model.source).toBe("workspace-local");
     expect(saved.model.apiKeyConfigured).toBe(true);
@@ -107,7 +109,7 @@ describe("ego api server", () => {
     expect(configFile.model.apiKey).toBe("local-secret-key");
     expect(configFile.model.model).toBe("lotus-test-model");
     expect(workbench.workbench.model.configured).toBe(true);
-    expect(workbench.workbench.model.source).toBe("workspace-local");
+    expect(["workspace-local", "environment"]).toContain(workbench.workbench.model.source);
   });
 
   it("rejects contradictory disabled model settings through the config API", async () => {

@@ -14,7 +14,7 @@ describe("workbench state", () => {
     expect(state.model.label).toBeDefined();
     expect(state.storage.sqlite).toContain("ego.sqlite");
     expect(state.sessions.length).toBeGreaterThan(0);
-    expect(state.tools.map((tool) => tool.name)).toContain("端口扫描器");
+    expect(state.tools.map((tool) => tool.name)).toContain("Workspace");
     expect(state.quickCommands).toContain("/scan");
     expect(state.progress.completed).toContain("Agent Runtime 自主决策循环");
   });

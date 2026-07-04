@@ -6,10 +6,17 @@ Primary structure:
 
 - `apps/ego-cli`: terminal CLI and TUI.
 - `apps/ego-api`: local API for `ego serve`.
+- `apps/ego-web`: Web Workbench pages, components, styles, client scripts, and assets.
+- `packages/agent`: assistant chat, Plan mode, and coding-agent Patch loop.
+- `packages/workspace`: safe repository inspection, diff preview, and policy-gated writes.
+- `packages/workbench`: shared TUI/Web state model.
+- `packages/hermes`: internal event bus and runtime timeline.
+- `packages/memory`: session/project/task memory and context compression.
+- `packages/mcp`: MCP config and stdio client v1 boundary.
 - `packages/core`: task specs, mission graph, trajectories, and runner.
-- `packages/tools`: tool registry and permission policy.
+- `packages/tools`: tool registry, permission policy, skills/plugins, and web search.
 - `packages/overlays`: scenario overlays.
-- `packages/storage`: trajectory storage.
+- `packages/storage`: trajectory, SQLite, approval, memory, plan, and timeline storage.
 - `packages/report`: report generation.
 - `scenarios`: controlled scenario fixtures.
 - `datasets`: evaluation datasets and prompt assets.

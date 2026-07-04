@@ -59,8 +59,48 @@ export type AgentCheckRecord = {
 export type ApprovalRecord = {
   id: string;
   runId: string;
-  kind: "agent_edit" | "tool_call";
+  kind: "agent_edit" | "agent_plan" | "tool_call";
   status: "pending" | "approved" | "rejected";
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type HermesEventRecord = {
+  id: string;
+  type: string;
+  sessionId: string;
+  runId?: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+  source: string;
+};
+
+export type MemoryScope = "session" | "project" | "task";
+
+export type MemoryRecord = {
+  id: string;
+  scope: MemoryScope;
+  content: string;
+  source: string;
+  tags: string[];
+  references: string[];
+  status?: "active" | "archived";
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AgentPlanStatus = "draft" | "approved" | "rejected" | "executed" | "blocked";
+
+export type AgentPlanRecord = {
+  planId: string;
+  sessionId: string;
+  runId?: string;
+  mode: "coding" | "ctf" | "research";
+  message: string;
+  status: AgentPlanStatus;
+  plan: string[];
+  contextSummary: string;
+  memoryIds: string[];
   createdAt: string;
   updatedAt: string;
 };
@@ -135,8 +175,44 @@ type AgentCheckRow = {
 type ApprovalRow = {
   id: string;
   run_id: string;
-  kind: "agent_edit" | "tool_call";
+  kind: "agent_edit" | "agent_plan" | "tool_call";
   status: "pending" | "approved" | "rejected";
+  created_at: string;
+  updated_at: string;
+};
+
+type HermesEventRow = {
+  id: string;
+  type: string;
+  session_id: string;
+  run_id: string | null;
+  payload_json: string;
+  created_at: string;
+  source: string;
+};
+
+type MemoryRow = {
+  id: string;
+  scope: MemoryScope;
+  content: string;
+  source: string;
+  tags_json: string;
+  references_json: string;
+  status: "active" | "archived";
+  created_at: string;
+  updated_at: string;
+};
+
+type AgentPlanRow = {
+  plan_id: string;
+  session_id: string;
+  run_id: string | null;
+  mode: "coding" | "ctf" | "research";
+  message: string;
+  status: AgentPlanStatus;
+  plan_json: string;
+  context_summary: string;
+  memory_ids_json: string;
   created_at: string;
   updated_at: string;
 };
@@ -447,6 +523,194 @@ export class SqliteEgoStore {
     return rows.map(approvalRowToRecord);
   }
 
+  async saveHermesEvent(record: HermesEventRecord): Promise<void> {
+    this.db
+      .prepare(
+        [
+          "insert into hermes_events",
+          "(id, type, session_id, run_id, payload_json, created_at, source)",
+          "values (?, ?, ?, ?, ?, ?, ?)",
+          "on conflict(id) do update set",
+          "type = excluded.type,",
+          "session_id = excluded.session_id,",
+          "run_id = excluded.run_id,",
+          "payload_json = excluded.payload_json,",
+          "created_at = excluded.created_at,",
+          "source = excluded.source",
+        ].join(" "),
+      )
+      .run(
+        record.id,
+        record.type,
+        record.sessionId,
+        record.runId ?? null,
+        JSON.stringify(record.payload),
+        record.createdAt,
+        record.source,
+      );
+  }
+
+  async listHermesEvents(
+    filter: {
+      sessionId?: string;
+      runId?: string;
+      type?: string;
+      limit?: number;
+    } = {},
+  ): Promise<HermesEventRecord[]> {
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+    if (filter.sessionId) {
+      clauses.push("session_id = ?");
+      params.push(filter.sessionId);
+    }
+    if (filter.runId) {
+      clauses.push("run_id = ?");
+      params.push(filter.runId);
+    }
+    if (filter.type) {
+      clauses.push("type = ?");
+      params.push(filter.type);
+    }
+    params.push(filter.limit ?? 50);
+    const where = clauses.length > 0 ? `where ${clauses.join(" and ")}` : "";
+    const rows = this.db
+      .prepare(`select * from hermes_events ${where} order by created_at desc, id desc limit ?`)
+      .all(...params) as HermesEventRow[];
+    return rows.map(hermesEventRowToRecord);
+  }
+
+  async saveMemory(record: MemoryRecord): Promise<void> {
+    this.db
+      .prepare(
+        [
+          "insert into memory_items",
+          "(id, scope, content, source, tags_json, references_json, status, created_at, updated_at)",
+          "values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "on conflict(id) do update set",
+          "scope = excluded.scope,",
+          "content = excluded.content,",
+          "source = excluded.source,",
+          "tags_json = excluded.tags_json,",
+          "references_json = excluded.references_json,",
+          "status = excluded.status,",
+          "updated_at = excluded.updated_at",
+        ].join(" "),
+      )
+      .run(
+        record.id,
+        record.scope,
+        record.content,
+        record.source,
+        JSON.stringify(record.tags),
+        JSON.stringify(record.references),
+        record.status ?? "active",
+        record.createdAt,
+        record.updatedAt,
+      );
+  }
+
+  async listMemories(
+    filter: {
+      scope?: MemoryScope;
+      includeArchived?: boolean;
+      limit?: number;
+    } = {},
+  ): Promise<MemoryRecord[]> {
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+    if (filter.scope) {
+      clauses.push("scope = ?");
+      params.push(filter.scope);
+    }
+    if (!filter.includeArchived) {
+      clauses.push("status = 'active'");
+    }
+    params.push(filter.limit ?? 50);
+    const where = clauses.length > 0 ? `where ${clauses.join(" and ")}` : "";
+    const rows = this.db
+      .prepare(`select * from memory_items ${where} order by updated_at desc, id desc limit ?`)
+      .all(...params) as MemoryRow[];
+    return rows.map(memoryRowToRecord);
+  }
+
+  async saveAgentPlan(record: AgentPlanRecord): Promise<void> {
+    this.db
+      .prepare(
+        [
+          "insert into agent_plans",
+          "(plan_id, session_id, run_id, mode, message, status, plan_json, context_summary, memory_ids_json, created_at, updated_at)",
+          "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "on conflict(plan_id) do update set",
+          "session_id = excluded.session_id,",
+          "run_id = excluded.run_id,",
+          "mode = excluded.mode,",
+          "message = excluded.message,",
+          "status = excluded.status,",
+          "plan_json = excluded.plan_json,",
+          "context_summary = excluded.context_summary,",
+          "memory_ids_json = excluded.memory_ids_json,",
+          "updated_at = excluded.updated_at",
+        ].join(" "),
+      )
+      .run(
+        record.planId,
+        record.sessionId,
+        record.runId ?? null,
+        record.mode,
+        record.message,
+        record.status,
+        JSON.stringify(record.plan),
+        record.contextSummary,
+        JSON.stringify(record.memoryIds),
+        record.createdAt,
+        record.updatedAt,
+      );
+  }
+
+  async getAgentPlan(planId: string): Promise<AgentPlanRecord | undefined> {
+    const row = this.db.prepare("select * from agent_plans where plan_id = ?").get(planId) as
+      AgentPlanRow | undefined;
+    return row ? agentPlanRowToRecord(row) : undefined;
+  }
+
+  async listAgentPlans(
+    filter: {
+      status?: AgentPlanStatus;
+      limit?: number;
+    } = {},
+  ): Promise<AgentPlanRecord[]> {
+    const rows = (
+      filter.status
+        ? this.db
+            .prepare("select * from agent_plans where status = ? order by updated_at desc limit ?")
+            .all(filter.status, filter.limit ?? 20)
+        : this.db
+            .prepare("select * from agent_plans order by updated_at desc limit ?")
+            .all(filter.limit ?? 20)
+    ) as AgentPlanRow[];
+    return rows.map(agentPlanRowToRecord);
+  }
+
+  async updateAgentPlanStatus(
+    planId: string,
+    status: AgentPlanStatus,
+    runId?: string,
+    updatedAt = new Date().toISOString(),
+  ): Promise<void> {
+    this.db
+      .prepare(
+        [
+          "update agent_plans",
+          "set status = ?,",
+          "run_id = coalesce(?, run_id),",
+          "updated_at = ?",
+          "where plan_id = ?",
+        ].join(" "),
+      )
+      .run(status, runId ?? null, updatedAt, planId);
+  }
+
   close(): void {
     this.db.close();
   }
@@ -544,7 +808,7 @@ export class SqliteEgoStore {
       create table if not exists approvals (
         id text primary key,
         run_id text not null,
-        kind text not null check (kind in ('agent_edit', 'tool_call')),
+        kind text not null check (kind in ('agent_edit', 'agent_plan', 'tool_call')),
         status text not null check (status in ('pending', 'approved', 'rejected')),
         created_at text not null,
         updated_at text not null
@@ -561,8 +825,54 @@ export class SqliteEgoStore {
         output_json text,
         created_at text not null
       );
+
+      create table if not exists hermes_events (
+        id text primary key,
+        type text not null,
+        session_id text not null,
+        run_id text,
+        payload_json text not null,
+        created_at text not null,
+        source text not null
+      );
+
+      create index if not exists idx_hermes_session on hermes_events(session_id, created_at);
+      create index if not exists idx_hermes_run on hermes_events(run_id, created_at);
+      create index if not exists idx_hermes_type on hermes_events(type);
+
+      create table if not exists memory_items (
+        id text primary key,
+        scope text not null check (scope in ('session', 'project', 'task')),
+        content text not null,
+        source text not null,
+        tags_json text not null,
+        references_json text not null,
+        status text not null check (status in ('active', 'archived')),
+        created_at text not null,
+        updated_at text not null
+      );
+
+      create index if not exists idx_memory_scope_status on memory_items(scope, status, updated_at);
+
+      create table if not exists agent_plans (
+        plan_id text primary key,
+        session_id text not null,
+        run_id text,
+        mode text not null check (mode in ('coding', 'ctf', 'research')),
+        message text not null,
+        status text not null check (status in ('draft', 'approved', 'rejected', 'executed', 'blocked')),
+        plan_json text not null,
+        context_summary text not null,
+        memory_ids_json text not null,
+        created_at text not null,
+        updated_at text not null
+      );
+
+      create index if not exists idx_agent_plans_status on agent_plans(status, updated_at);
+      create index if not exists idx_agent_plans_session on agent_plans(session_id, updated_at);
     `);
     this.ensureAgentRunsStatusConstraint();
+    this.ensureApprovalsKindConstraint();
   }
 
   private ensureAgentRunsStatusConstraint(): void {
@@ -608,6 +918,38 @@ export class SqliteEgoStore {
         JSON.stringify(event.data.raw ?? event.data),
         event.timestamp,
       );
+  }
+
+  private ensureApprovalsKindConstraint(): void {
+    const row = this.db
+      .prepare("select sql from sqlite_master where type = 'table' and name = 'approvals'")
+      .get() as { sql: string } | undefined;
+
+    if (!row?.sql || row.sql.includes("'agent_plan'")) {
+      return;
+    }
+
+    // 中文注释：旧库 approvals.kind 只允许 agent_edit/tool_call，需要重建表以支持计划审批。
+    this.db.exec(`
+      drop table if exists approvals_agent_plan_migration;
+      alter table approvals rename to approvals_agent_plan_migration;
+
+      create table approvals (
+        id text primary key,
+        run_id text not null,
+        kind text not null check (kind in ('agent_edit', 'agent_plan', 'tool_call')),
+        status text not null check (status in ('pending', 'approved', 'rejected')),
+        created_at text not null,
+        updated_at text not null
+      );
+
+      insert into approvals (id, run_id, kind, status, created_at, updated_at)
+      select id, run_id, kind, status, created_at, updated_at
+      from approvals_agent_plan_migration;
+
+      drop table approvals_agent_plan_migration;
+      create index if not exists idx_approvals_status on approvals(status);
+    `);
   }
 }
 
@@ -667,6 +1009,48 @@ function approvalRowToRecord(row: ApprovalRow): ApprovalRecord {
     runId: row.run_id,
     kind: row.kind,
     status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function hermesEventRowToRecord(row: HermesEventRow): HermesEventRecord {
+  return {
+    id: row.id,
+    type: row.type,
+    sessionId: row.session_id,
+    ...(row.run_id ? { runId: row.run_id } : {}),
+    payload: JSON.parse(row.payload_json) as Record<string, unknown>,
+    createdAt: row.created_at,
+    source: row.source,
+  };
+}
+
+function memoryRowToRecord(row: MemoryRow): MemoryRecord {
+  return {
+    id: row.id,
+    scope: row.scope,
+    content: row.content,
+    source: row.source,
+    tags: JSON.parse(row.tags_json) as string[],
+    references: JSON.parse(row.references_json) as string[],
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function agentPlanRowToRecord(row: AgentPlanRow): AgentPlanRecord {
+  return {
+    planId: row.plan_id,
+    sessionId: row.session_id,
+    ...(row.run_id ? { runId: row.run_id } : {}),
+    mode: row.mode,
+    message: row.message,
+    status: row.status,
+    plan: JSON.parse(row.plan_json) as string[],
+    contextSummary: row.context_summary,
+    memoryIds: JSON.parse(row.memory_ids_json) as string[],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

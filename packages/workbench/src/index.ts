@@ -1,7 +1,8 @@
-import { freemem, loadavg, totalmem } from "node:os";
+import { mkdirSync } from "node:fs";
 import { basename } from "node:path";
-import { isModelConfigured, loadModelConfigWithSource } from "@ego-graph/llm";
+import { isModelConfigured, listModelProfiles, loadModelConfigWithSource } from "@ego-graph/llm";
 import { loadMcpConfig } from "@ego-graph/mcp";
+import { createBuiltinSkillRegistry } from "@ego-graph/tools";
 import {
   defaultEgoHome,
   sqlitePath,
@@ -10,6 +11,17 @@ import {
   type RunIndexRecord,
 } from "@ego-graph/storage";
 import { createWorkspaceService } from "@ego-graph/workspace";
+import { getBuiltinCommands, type CommandManifest } from "./commands.js";
+import {
+  createRuntimeMetricsSampler,
+  type RuntimeMetrics,
+  type RuntimeMetricsSampler,
+} from "./runtime-metrics.js";
+
+export { executeBuiltinCommand, getBuiltinCommands } from "./commands.js";
+export { createRuntimeMetricsSampler } from "./runtime-metrics.js";
+export type { CommandExecutionResult, CommandManifest } from "./commands.js";
+export type { RuntimeMetrics, RuntimeMetricsSampler } from "./runtime-metrics.js";
 
 export type WorkbenchSession = {
   id: string;
@@ -56,6 +68,41 @@ export type WorkbenchCheck = {
   exitCode: number;
 };
 
+export type WorkbenchMemoryItem = {
+  id: string;
+  scope: string;
+  content: string;
+  updatedAt: string;
+};
+
+export type WorkbenchPlanItem = {
+  planId: string;
+  mode: string;
+  status: string;
+  message: string;
+  updatedAt: string;
+};
+
+export type WorkbenchHermesEvent = {
+  id: string;
+  type: string;
+  sessionId: string;
+  runId?: string;
+  createdAt: string;
+  source: string;
+};
+
+export type WorkbenchSkill = {
+  name: string;
+  version: string;
+  capabilities: string[];
+  status: "ready" | "planned" | "offline";
+  enabled: boolean;
+  source: "built-in" | "plugin";
+  permissions: string[];
+  toolCount: number;
+};
+
 export type WorkbenchState = {
   product: "EGO-Graph";
   title: string;
@@ -67,6 +114,9 @@ export type WorkbenchState = {
   serverTime: string;
   cpuLabel: string;
   memoryLabel: string;
+  runtime: {
+    metrics: RuntimeMetrics;
+  };
   model: {
     provider: string;
     name: string;
@@ -78,6 +128,14 @@ export type WorkbenchState = {
     label: string;
     source: string;
     sourcePath?: string;
+    activeProfileId?: string;
+    profiles: Array<{
+      id: string;
+      name: string;
+      provider?: string;
+      model?: string;
+      apiKeyConfigured: boolean;
+    }>;
     testStatus?: "idle" | "connected" | "failed" | "needs_model";
   };
   storage: {
@@ -103,11 +161,36 @@ export type WorkbenchState = {
   lastChecks: WorkbenchCheck[];
   quickCommands: string[];
   commands: string[];
+  commandsRegistry: CommandManifest[];
   recentRuns: RunIndexRecord[];
   mcp: {
     status: string;
+    source: string;
+    transport: "stdio-v1";
     capabilities: string[];
     servers: unknown[];
+    notes: string[];
+  };
+  memory: {
+    total: number;
+    recent: WorkbenchMemoryItem[];
+  };
+  plans: {
+    draftCount: number;
+    recent: WorkbenchPlanItem[];
+  };
+  hermes: {
+    recentEvents: WorkbenchHermesEvent[];
+  };
+  skills: WorkbenchSkill[];
+  search: {
+    status: "ready" | "offline";
+    tool: string;
+    cached: boolean;
+  };
+  prompt: {
+    summary: string;
+    path: string;
   };
   progress: {
     completed: string[];
@@ -119,43 +202,57 @@ export type WorkbenchState = {
 export type ReadWorkbenchStateInput = {
   workspaceRoot: string;
   egoHome?: string;
+  metricsSampler?: RuntimeMetricsSampler;
 };
+
+const defaultMetricsSampler = createRuntimeMetricsSampler();
 
 export async function readWorkbenchState(input: ReadWorkbenchStateInput): Promise<WorkbenchState> {
   const workspaceRoot = input.workspaceRoot;
   const egoHome = input.egoHome ?? defaultEgoHome();
   const workspace = createWorkspaceService(workspaceRoot);
-  const [summary, files] = await Promise.all([
+  const [summary, files, mcpConfig, modelProfiles] = await Promise.all([
     workspace.summarizeProject(),
     workspace.listFiles({ limit: 80, maxDepth: 3 }),
+    loadMcpConfig(workspaceRoot),
+    listModelProfiles({ workspaceRoot }),
   ]);
   const loadedModelConfig = loadModelConfigWithSource({ workspaceRoot });
   const modelConfig = loadedModelConfig.config;
   const configured = isModelConfigured(modelConfig);
-  const mcpConfig = await loadMcpConfig(workspaceRoot);
   const mcp = mcpConfig.manifest;
   const sqlite = sqlitePath(egoHome);
+  mkdirSync(egoHome, { recursive: true });
   const store = new SqliteEgoStore(sqlite);
+  const metrics = (input.metricsSampler ?? defaultMetricsSampler).sample();
 
   try {
     const recentRuns = (await store.listRuns()).slice(0, 8);
     const pendingEdits = (await store.listPendingAgentEdits()).slice(0, 8);
     const pendingApprovals = await store.listApprovals("pending");
     const recentChecks = await store.listRecentAgentChecks(8);
+    const memories = await store.listMemories({ limit: 8 });
+    const agentPlans = await store.listAgentPlans({ limit: 8 });
+    const hermesEvents = await store.listHermesEvents({ limit: 8 });
+    const skills = createBuiltinSkillRegistry().listSkills();
     const newestRun = recentRuns[0];
     const clock = new Date();
+    const commandsRegistry = getBuiltinCommands();
 
     return {
       product: "EGO-Graph",
-      title: "紫莲花 Agent Workbench",
+      title: "紫莲花 EGO-Graph Agent Workbench",
       version: "v0.1.0",
       cwd: compactPath(workspaceRoot),
-      mode: "智能安全分析",
+      mode: "智能安全 Agent",
       network: configured ? "connected" : "local-only",
       clock: clock.toLocaleTimeString("zh-CN", { hour12: false }),
       serverTime: clock.toISOString(),
-      cpuLabel: `CPU ${Math.max(1, Math.round(loadavg()[0] ?? 1))}%`,
-      memoryLabel: `内存 ${Math.round(((totalmem() - freemem()) / totalmem()) * 100)}%`,
+      cpuLabel: metrics.cpuPercent === null ? "EGO CPU sampling" : `EGO CPU ${metrics.cpuPercent}%`,
+      memoryLabel: `RSS ${metrics.memoryRssMb} MB / 系统内存 ${metrics.systemMemoryPercent}%`,
+      runtime: {
+        metrics,
+      },
       model: {
         provider: modelConfig.provider,
         name: modelConfig.model ?? "deterministic",
@@ -167,6 +264,16 @@ export async function readWorkbenchState(input: ReadWorkbenchStateInput): Promis
         label: configured ? (modelConfig.model ?? modelConfig.provider) : "deterministic fallback",
         source: loadedModelConfig.source,
         ...(loadedModelConfig.path ? { sourcePath: loadedModelConfig.path } : {}),
+        ...(modelProfiles.activeProfileId
+          ? { activeProfileId: modelProfiles.activeProfileId }
+          : {}),
+        profiles: modelProfiles.profiles.map((profile) => ({
+          id: profile.id,
+          name: profile.name,
+          ...(profile.config.provider ? { provider: profile.config.provider } : {}),
+          ...(profile.config.model ? { model: profile.config.model } : {}),
+          apiKeyConfigured: profile.apiKeyConfigured,
+        })),
       },
       storage: {
         egoHome,
@@ -174,10 +281,10 @@ export async function readWorkbenchState(input: ReadWorkbenchStateInput): Promis
         trajectories: trajectoryDir(egoHome),
       },
       context: {
-        target: newestRun?.runId ?? "192.168.1.10",
-        type: newestRun?.scenario ?? "主机安全评估",
-        scope: "全面扫描",
-        priority: newestRun?.status === "blocked" ? "需人工确认" : "中",
+        target: newestRun?.runId ?? "local-workspace",
+        type: newestRun?.scenario ?? "Agent Workbench",
+        scope: "对话、计划、Patch、MCP、Skills",
+        priority: newestRun?.status === "blocked" ? "需要人工确认" : "中",
         createdAt: newestRun?.updatedAt ?? clock.toISOString(),
       },
       sessions: buildSessions(recentRuns),
@@ -209,21 +316,73 @@ export async function readWorkbenchState(input: ReadWorkbenchStateInput): Promis
         status: check.status,
         exitCode: check.exitCode,
       })),
-      quickCommands: ["/help", "/scan", "/analyze", "/report", "/threat", "/config", "/clear"],
+      quickCommands: commandsRegistry.map((command) => command.name),
       commands: [
         "ego",
         "ego serve",
         "ego run --scenario web_pentest --input scenarios/web_pentest/basic/task.json",
         "ego replay --trajectory-id <run-id>",
         "ego eval --dataset datasets/evals/web_pentest.jsonl",
-        "ego config model --provider openai-compatible --base-url <url> --api-key <key> --model <name>",
+        "ego config model --provider minimax --model MiniMax-M3",
         "ego doctor",
       ],
+      commandsRegistry,
       recentRuns,
       mcp: {
         status: mcp.status,
+        source: mcpConfig.source,
+        transport: "stdio-v1",
         capabilities: mcp.capabilities,
         servers: mcp.servers,
+        notes: mcp.notes,
+      },
+      memory: {
+        total: memories.length,
+        recent: memories.map((memory) => ({
+          id: memory.id,
+          scope: memory.scope,
+          content: memory.content,
+          updatedAt: memory.updatedAt,
+        })),
+      },
+      plans: {
+        draftCount: agentPlans.filter((plan) => plan.status === "draft").length,
+        recent: agentPlans.map((plan) => ({
+          planId: plan.planId,
+          mode: plan.mode,
+          status: plan.status,
+          message: plan.message,
+          updatedAt: plan.updatedAt,
+        })),
+      },
+      hermes: {
+        recentEvents: hermesEvents.map((event) => ({
+          id: event.id,
+          type: event.type,
+          sessionId: event.sessionId,
+          ...(event.runId ? { runId: event.runId } : {}),
+          createdAt: event.createdAt,
+          source: event.source,
+        })),
+      },
+      skills: skills.map((skill) => ({
+        name: skill.name,
+        version: skill.version,
+        capabilities: skill.capabilities,
+        status: skill.name === "workspace" || skill.name === "web-search" ? "ready" : "planned",
+        enabled: true,
+        source: "built-in",
+        permissions: skill.capabilities,
+        toolCount: skill.tools.length,
+      })),
+      search: {
+        status: "ready",
+        tool: "web.search",
+        cached: false,
+      },
+      prompt: {
+        summary: "System Prompt: default kernel policy plus optional .ego/system-prompt.md.",
+        path: ".ego/system-prompt.md",
       },
       progress: {
         completed: [
@@ -231,17 +390,17 @@ export async function readWorkbenchState(input: ReadWorkbenchStateInput): Promis
           "Agent Runtime 自主决策循环",
           "JSONL + SQLite 审计存储",
           "LLM provider 与 deterministic fallback",
-          "Runtime Server 与 Web/TUI 入口",
+          "Hermes / Memory / Plan Kernel v1",
         ],
         active: [
           `${summary.apps.length} apps / ${summary.packages.length} packages`,
-          "紫莲花 Workbench 交互层",
-          "Evidence Board / Mission Graph 可视化",
+          "Codex-like Agent Workbench",
+          "模型、Prompt、Skills、MCP 管理",
         ],
         next: [
-          pendingEdits.length > 0 ? "审批待处理的 Agent patch" : "真实编辑工具链",
-          mcpConfig.source === "none" ? "MCP 传输层" : "MCP server transport",
-          "更多安全场景 Overlay",
+          pendingEdits.length > 0 ? "审批待处理的 Agent patch" : "补齐真实编辑工具链",
+          mcpConfig.source === "none" ? "配置 MCP stdio server" : "测试 MCP server tools/list",
+          "扩展 CTF 场景自动化 runner",
         ],
       },
     };
@@ -261,17 +420,16 @@ function buildSessions(runs: RunIndexRecord[]): WorkbenchSession[] {
   return [
     { id: "new", title: "新会话", timeLabel: "刚刚", active: recent.length === 0 },
     ...recent,
-    { id: "cleared", title: "清除的会话 (3)", timeLabel: "", active: false },
   ];
 }
 
 function buildTools(modelConfigured: boolean): WorkbenchTool[] {
   return [
-    { name: "端口扫描器", command: "nmap", status: "ready" },
-    { name: "漏洞扫描器", command: "nessus", status: "planned" },
-    { name: "日志分析器", command: "zeek", status: "ready" },
-    { name: "威胁情报", command: "vt / abuseipdb", status: modelConfigured ? "ready" : "planned" },
-    { name: "沙箱分析", command: "cuckoo", status: "offline" },
+    { name: "Workspace", command: "workspace.read", status: "ready" },
+    { name: "Shell Readonly", command: "shell.readonly", status: "ready" },
+    { name: "Web Search", command: "web.search", status: modelConfigured ? "ready" : "planned" },
+    { name: "CTF Basic", command: "ctf.basic", status: "planned" },
+    { name: "MCP Bridge", command: "tools/list", status: "planned" },
   ];
 }
 
@@ -279,21 +437,21 @@ function buildFiles(files: string[]): WorkbenchFile[] {
   const preferred = files.filter((file) =>
     /README|docs\/|package\.json|task\.json|report|trajectory|scenario/.test(file),
   );
-  const selected = (preferred.length > 0 ? preferred : files).slice(0, 4);
+  const selected = (preferred.length > 0 ? preferred : files).slice(0, 6);
 
   return selected.map((path) => ({
     path,
     label: basename(path),
-    sizeLabel: path.endsWith(".md") ? "18 KB" : path.endsWith(".json") ? "2.1 KB" : "---",
+    sizeLabel: path.endsWith(".md") ? "md" : path.endsWith(".json") ? "json" : "file",
     status: "ready",
   }));
 }
 
 function buildLogs(runs: RunIndexRecord[]): WorkbenchLog[] {
   const now = new Date();
-  const base = ["会话已创建", "目标已加载", "Policy Gate 已就绪", "Evidence Board 已同步"];
+  const base = ["Workbench 已加载", "Policy Gate 已就绪", "Hermes timeline 已同步"];
   const runLogs = runs
-    .slice(0, 2)
+    .slice(0, 3)
     .map((run) => `${run.runId} · ${run.status} · ${run.eventCount} events`);
 
   return [...base, ...runLogs].slice(0, 6).map((message, index) => ({
@@ -336,9 +494,9 @@ function relativeTime(value: string): string {
     return "刚刚";
   }
   if (minutes < 60) {
-    return `${minutes}分钟前`;
+    return `${minutes} 分钟前`;
   }
 
   const hours = Math.round(minutes / 60);
-  return hours < 24 ? `${hours}小时前` : `${Math.round(hours / 24)}天前`;
+  return hours < 24 ? `${hours} 小时前` : `${Math.round(hours / 24)} 天前`;
 }

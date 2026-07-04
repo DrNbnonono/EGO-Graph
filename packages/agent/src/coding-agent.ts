@@ -48,6 +48,7 @@ export type CodingAgentTurnInput = {
   autoPropose?: boolean;
   modelProvider?: ChatModelProvider | null;
   checkCommands?: AgentCheckCommand[];
+  memoryHints?: string[];
 };
 
 export type CodingAgentTurn = {
@@ -83,6 +84,9 @@ export async function runCodingAgentTurn(input: CodingAgentTurnInput): Promise<C
   const mcp = (await loadMcpConfig(input.workspaceRoot)).manifest;
   const suggestedCommands = workspace.suggestCommands(input.message);
   const observations = buildObservations(summary, inspectedFiles);
+  if (input.memoryHints?.length) {
+    observations.push(`Memory hints: ${input.memoryHints.slice(0, 5).join(" | ")}`);
+  }
   const plan = buildPlan(input.message, summary);
   const trajectoryEvents: TrajectoryEvent[] = [];
   const checks: AgentCheckResult[] = [];

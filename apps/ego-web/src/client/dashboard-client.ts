@@ -2,10 +2,14 @@ export function renderDashboardJs(): string {
   return String.raw`const state = {
   workbench: null,
   activePatch: null,
+  activePlan: null,
   activeMode: "chat",
   sessions: loadSessions(),
   activeSessionId: null,
   modelFormDirty: false,
+  commandsRegistry: [],
+  slashSelection: 0,
+  activeManagePage: "models",
 };
 
 const providerProfiles = {
@@ -270,6 +274,145 @@ function renderQuickCommands(commands) {
   }));
 }
 
+async function loadCommandRegistry() {
+  const response = await fetch("/api/commands");
+  const body = await response.json();
+  if (!response.ok || !body.ok) {
+    throw new Error(body.error || "commands failed");
+  }
+  state.commandsRegistry = body.commands || [];
+  return state.commandsRegistry;
+}
+
+function openSlashPalette(query = "") {
+  const palette = byId("slash-palette");
+  if (!palette) return;
+  const normalized = query.trim().toLowerCase();
+  const commands = (state.commandsRegistry.length ? state.commandsRegistry : state.workbench?.commandsRegistry || [])
+    .filter((command) => !normalized || command.name.toLowerCase().includes(normalized) || command.description.toLowerCase().includes(normalized));
+  state.slashSelection = Math.min(state.slashSelection, Math.max(0, commands.length - 1));
+  palette.hidden = false;
+  palette.replaceChildren(...commands.map((command, index) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "slash-command-option" + (index === state.slashSelection ? " active" : "");
+    item.innerHTML = "<strong></strong><span></span><small></small>";
+    item.querySelector("strong").textContent = command.name;
+    item.querySelector("span").textContent = command.description;
+    item.querySelector("small").textContent = command.requiresApproval ? "approval" : command.category;
+    item.addEventListener("click", () => {
+      palette.hidden = true;
+      executeCommand(command.name).catch((error) => appendMessage("assistant", "命令执行失败：" + formatError(error)));
+    });
+    return item;
+  }));
+}
+
+function closeSlashPalette() {
+  const palette = byId("slash-palette");
+  if (palette) palette.hidden = true;
+}
+
+function renderExecutionTimeline(events = []) {
+  const timeline = byId("execution-timeline");
+  if (!timeline) return;
+  const recent = events.slice(0, 3);
+  if (!recent.length) {
+    timeline.replaceChildren(...["理解任务", "读取上下文", "审批链"].map((label) => {
+      const row = document.createElement("div");
+      row.className = "timeline-row";
+      row.innerHTML = "<strong></strong><span></span>";
+      row.querySelector("strong").textContent = label;
+      row.querySelector("span").textContent = label === "审批链" ? "Plan → Diff → Checks" : "等待输入";
+      return row;
+    }));
+    return;
+  }
+  timeline.replaceChildren(...recent.map((event) => {
+    const row = document.createElement("div");
+    row.className = "timeline-row";
+    row.innerHTML = "<strong></strong><span></span>";
+    row.querySelector("strong").textContent = event.type || "agent.event";
+    row.querySelector("span").textContent = event.source || event.createdAt || "";
+    return row;
+  }));
+}
+
+async function renderManagementPage(page = state.activeManagePage) {
+  state.activeManagePage = page;
+  const label = byId("manage-page-label");
+  const content = byId("manage-page-content");
+  if (label) label.textContent = page;
+  document.querySelectorAll("[data-page]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.page === page);
+  });
+  if (!content) return;
+  content.textContent = "加载中...";
+
+  try {
+    if (page === "models") {
+      const body = await fetchJson("/api/config/models");
+      content.replaceChildren(...(body.profiles || []).map((profile) => manageCard(
+        profile.name,
+        (profile.config?.provider || "disabled") + " · " + (profile.config?.model || "deterministic") + (body.activeProfileId === profile.id ? " · active" : ""),
+      )));
+      if (!(body.profiles || []).length) content.textContent = "暂无模型 profile。右侧模型设置保存后会生成本地配置。";
+      return;
+    }
+    if (page === "skills") {
+      const body = await fetchJson("/api/skills");
+      content.replaceChildren(...(body.skills || []).map((skill) => manageCard(skill.name, (skill.capabilities || []).join(", "))));
+      return;
+    }
+    if (page === "mcp") {
+      const body = await fetchJson("/api/mcp/servers");
+      content.replaceChildren(...(body.servers || []).map((server) => manageCard(server.name, server.command + " " + (server.args || []).join(" "))));
+      if (!(body.servers || []).length) content.textContent = "暂无 MCP stdio server。可通过 API 或 .ego/config.json 添加。";
+      return;
+    }
+    if (page === "prompt") {
+      const body = await fetchJson("/api/config/system-prompt");
+      content.replaceChildren(
+        manageCard("默认 Prompt", body.summary || "default"),
+        manageCard("项目 Prompt", body.projectPrompt || "(none)"),
+        manageCard("最终注入", (body.finalPrompt || "").slice(0, 600)),
+      );
+      return;
+    }
+    if (page === "memory") {
+      content.replaceChildren(...(state.workbench?.memory?.recent || []).map((memory) => manageCard(memory.scope, memory.content)));
+      return;
+    }
+    if (page === "runs") {
+      content.replaceChildren(...(state.workbench?.recentRuns || []).map((run) => manageCard(run.runId, run.status + " · " + run.eventCount + " events")));
+      return;
+    }
+    content.textContent = "未知管理页。";
+  } catch (error) {
+    content.textContent = "管理页加载失败：" + formatError(error);
+  }
+}
+
+function manageCard(title, body) {
+  const card = document.createElement("div");
+  card.className = "manage-card";
+  const strong = document.createElement("strong");
+  strong.textContent = title;
+  const text = document.createElement("p");
+  text.textContent = body || "-";
+  card.append(strong, text);
+  return card;
+}
+
+async function fetchJson(path, options) {
+  const response = await fetch(path, options);
+  const body = await response.json();
+  if (!response.ok || body.ok === false) {
+    throw new Error(body.error || path + " failed");
+  }
+  return body;
+}
+
 function renderRuns(runs) {
   const list = byId("run-list");
   if (!list) return;
@@ -314,6 +457,74 @@ function renderMcp(mcp) {
   meta.textContent = mcp.capabilities.join(", ");
   status.append(code, meta);
   list.replaceChildren(status);
+}
+
+function renderMemory(memory) {
+  const list = byId("memory-list");
+  if (!list) return;
+  const items = (memory?.recent || []).slice(0, 3);
+  if (!items.length) {
+    list.innerHTML = '<span class="kernel-item">暂无记忆</span>';
+    return;
+  }
+  list.replaceChildren(...items.map((memoryItem) => {
+    const item = document.createElement("span");
+    item.className = "kernel-item";
+    item.textContent = "[" + memoryItem.scope + "] " + memoryItem.content;
+    item.title = memoryItem.id;
+    return item;
+  }));
+}
+
+function renderSkills(skills) {
+  const list = byId("skill-list");
+  if (!list) return;
+  list.replaceChildren(...(skills || []).slice(0, 5).map((skill) => {
+    const item = document.createElement("span");
+    item.className = "kernel-item";
+    item.textContent = skill.name + " · " + skill.status;
+    item.title = (skill.capabilities || []).join(", ");
+    return item;
+  }));
+}
+
+function renderSearch(search) {
+  const status = byId("search-status");
+  if (!status) return;
+  status.textContent = search ? search.tool + " · " + search.status : "web.search · offline";
+}
+
+function renderPlanPreview(planResult) {
+  const preview = byId("plan-preview");
+  const approve = byId("approve-plan-button");
+  if (!preview) return;
+
+  if (!planResult) {
+    preview.textContent = "Patch 模式会先生成可审批计划。";
+    state.activePlan = null;
+    if (approve) approve.disabled = true;
+    return;
+  }
+
+  state.activePlan = {
+    planId: planResult.planId,
+    status: planResult.status,
+  };
+  const steps = (planResult.plan || []).map((step, index) => (index + 1) + ". " + step).join("\n");
+  preview.textContent = [
+    "Plan " + planResult.planId,
+    "Mode: " + planResult.mode,
+    planResult.contextSummary || "",
+    steps,
+  ].filter(Boolean).join("\n\n");
+  if (approve) approve.disabled = planResult.status !== "draft_plan";
+}
+
+async function refreshHermesTimeline() {
+  const response = await fetch("/api/hermes/timeline");
+  if (!response.ok) return [];
+  const body = await response.json();
+  return body.events || [];
 }
 
 function renderModelSettings(model, options = {}) {
@@ -464,6 +675,40 @@ async function approvePendingPatch() {
   }
 }
 
+async function approveActivePlan() {
+  if (!state.activePlan) return;
+  const approve = byId("approve-plan-button");
+  if (approve) {
+    approve.disabled = true;
+    approve.textContent = "Generating";
+  }
+
+  try {
+    const response = await fetch("/agent/plans/" + encodeURIComponent(state.activePlan.planId) + "/approve", {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) {
+      throw new Error(result.error || "plan approve failed");
+    }
+    renderPlanPreview(null);
+    if (result.diff) {
+      renderDiffPreview(result);
+    }
+    renderChecks(result.checks || []);
+    appendMessage("assistant", "计划已审批，系统已进入 Patch 审批流。请在右侧检查 diff 后再 Approve。");
+    await refreshStatus();
+  } catch (error) {
+    appendMessage("assistant", "计划审批失败：" + formatError(error));
+    if (approve) approve.disabled = false;
+  } finally {
+    if (approve) {
+      approve.textContent = "Approve Plan";
+    }
+  }
+}
+
 function renderWorkbench(workbench) {
   state.workbench = workbench;
   byId("cwd-label").textContent = workbench.cwd;
@@ -492,6 +737,10 @@ function renderWorkbench(workbench) {
   renderRuns(workbench.recentRuns);
   renderCommands(workbench.commands);
   renderMcp(workbench.mcp);
+  renderMemory(workbench.memory);
+  renderSkills(workbench.skills);
+  renderSearch(workbench.search);
+  renderExecutionTimeline(workbench.hermes?.recentEvents || []);
   renderModelSettings(workbench.model);
 
   if (!state.activePatch) {
@@ -621,11 +870,33 @@ async function executeCommand(command) {
     await runSecurityFixture();
     return;
   }
+  const remote = await fetch("/api/commands/execute", {
+    method: "POST",
+    headers: {"content-type": "application/json"},
+    body: JSON.stringify({ command }),
+  }).then((response) => response.json().then((body) => ({ response, body }))).catch(() => null);
+  if (remote?.response.ok && remote.body.uiAction) {
+    const page = uiActionToPage(remote.body.uiAction);
+    if (page) {
+      await renderManagementPage(page);
+      appendMessage("assistant", remote.body.message || command + " 已执行。");
+      return;
+    }
+  }
   const reply = commandReply(command);
   if (reply) {
     appendMessage("user", command);
     appendMessage("assistant", reply);
   }
+}
+
+function uiActionToPage(action) {
+  if (action === "open-models") return "models";
+  if (action === "open-skills") return "skills";
+  if (action === "open-mcp") return "mcp";
+  if (action === "open-prompt") return "prompt";
+  if (action === "open-memory") return "memory";
+  return null;
 }
 
 function commandReply(goal) {
@@ -727,12 +998,13 @@ async function submitChatGoal(goal) {
 }
 
 async function submitPatchGoal(goal, runId) {
-  const response = await fetch("/agent/runs", {
+  const response = await fetch("/agent/plans", {
     method: "POST",
     headers: {"content-type": "application/json"},
     body: JSON.stringify({
       message: goal,
-      autoPropose: true,
+      mode: "coding",
+      sessionId: state.activeSessionId,
       ...(runId ? { runId } : {}),
     }),
   });
@@ -743,9 +1015,10 @@ async function submitPatchGoal(goal, runId) {
 
   const plan = result.plan?.length ? "\n\n计划：\n- " + result.plan.join("\n- ") : "";
   let statusLine = "";
-  if (result.status === "pending_approval") {
-    statusLine = "\n\n已生成候选 Patch，请在右侧审批栏确认 diff 后点击 Approve。";
-    renderDiffPreview(result);
+  if (result.status === "draft_plan") {
+    statusLine = "\n\n已生成待审批计划。请在右侧确认计划后点击 Approve Plan，再生成 diff。";
+    renderPlanPreview(result);
+    renderDiffPreview(null);
   } else if (result.status === "needs_model") {
     statusLine = "\n\n模型未配置，已保持只读，不创建待审批 Patch。";
     renderDiffPreview(null);
@@ -765,7 +1038,7 @@ function setMode(mode) {
   });
   const input = byId("goal-input");
   if (mode === "patch") {
-    input.placeholder = "描述你要修改的文件或功能，系统会生成 diff 并等待右侧审批...";
+    input.placeholder = "描述你要修改的文件或功能，系统会先生成计划，审批计划后再生成 diff...";
   } else if (mode === "security") {
     input.placeholder = "描述授权安全任务，或使用 /scan 运行受控 web_pentest 示例...";
   } else {
@@ -822,18 +1095,54 @@ byId("approve-button")?.addEventListener("click", () => {
     appendMessage("assistant", "审批失败：" + formatError(error));
   });
 });
+byId("approve-plan-button")?.addEventListener("click", () => {
+  approveActivePlan().catch((error) => {
+    appendMessage("assistant", "计划审批失败：" + formatError(error));
+  });
+});
 document.querySelectorAll(".mode-tab").forEach((button) => {
   button.addEventListener("click", () => setMode(button.dataset.mode || "chat"));
 });
 byId("goal-input")?.addEventListener("keydown", (event) => {
+  const palette = byId("slash-palette");
+  if (palette && !palette.hidden && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+    event.preventDefault();
+    const total = palette.querySelectorAll(".slash-command-option").length;
+    state.slashSelection = event.key === "ArrowDown"
+      ? Math.min(total - 1, state.slashSelection + 1)
+      : Math.max(0, state.slashSelection - 1);
+    openSlashPalette(byId("goal-input").value.slice(1));
+    return;
+  }
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
+    if (palette && !palette.hidden) {
+      const selected = palette.querySelectorAll(".slash-command-option")[state.slashSelection];
+      selected?.click();
+      return;
+    }
     byId("mission-form").requestSubmit();
   }
+});
+byId("goal-input")?.addEventListener("input", (event) => {
+  const value = event.currentTarget.value;
+  if (value.startsWith("/")) {
+    openSlashPalette(value.slice(1));
+  } else {
+    closeSlashPalette();
+  }
+});
+document.querySelectorAll("[data-page]").forEach((button) => {
+  button.addEventListener("click", () => {
+    renderManagementPage(button.dataset.page || "models").catch((error) => appendMessage("assistant", "管理页加载失败：" + formatError(error)));
+  });
 });
 ensureSession();
 setMode("chat");
 tickClock();
+loadCommandRegistry().then(() => renderManagementPage("models")).catch((error) => {
+  appendMessage("assistant", "命令注册表读取失败：" + formatError(error));
+});
 setInterval(tickClock, 1000);
 refreshStatus().catch((error) => {
   appendMessage("assistant", "状态读取失败：" + formatError(error));

@@ -22,9 +22,12 @@ Use a TypeScript-first stack aligned with terminal agent tools such as OpenCode,
 - Web package layout: `apps/ego-web/src/pages`, `components`, `styles`, `client`, and `assets`
 - Schemas: Zod
 - Storage: SQLite plus JSONL trajectories
-- Agent core: self-owned mission graph engine plus read-only assistant chat and a coding-agent turn runner for approved writes
+- Agent core: self-owned mission graph engine plus read-only assistant chat, Plan mode, and a coding-agent turn runner for approved writes
+- Hermes: `packages/hermes` is the internal event bus and runtime timeline for auditable agent decisions
+- Memory: `packages/memory` provides session/project/task memory, safe recall, and context compression
 - LLM access: `packages/llm` owns persistent config loading/saving, MiniMax M3 defaults, OpenAI-compatible gateways, and environment-variable overrides
-- MCP boundary: `packages/mcp` declares local capability boundaries before stdio/http MCP transports are implemented
+- Skills/plugins: `packages/tools` owns built-in skill registration, plugin manifest validation, permission declarations, and `web.search`
+- MCP boundary: `packages/mcp` declares local capability boundaries and includes stdio MCP client v1 for `tools/list` and `tools/call`
 - Workspace inspection: `packages/workspace` provides safe repository summary, text reads, file listing, and command suggestions
 - Tool execution: TypeScript orchestration with Docker sandbox and external security tools
 - Tests: Vitest, with Playwright reserved for future web console checks
@@ -34,8 +37,12 @@ Use a TypeScript-first stack aligned with terminal agent tools such as OpenCode,
 - The terminal command `ego` is the primary product entry and must remain interactive.
 - `ego serve` must expose a Web visualization of project progress, model status, recent runs, evidence, and reports.
 - `/chat` is a model-first, read-only assistant endpoint. It must never create pending edits.
-- Writable natural-language tasks must use `/agent/runs` with `autoPropose: true`.
+- Writable natural-language tasks should enter `/agent/plans` first and return `draft_plan`.
+- Approving a plan only authorizes Patch generation. It does not approve file writes.
+- Patch generation then uses `/agent/runs` with `autoPropose: true` or an explicit `WorkspaceEditPlan`.
 - Every workspace write must pass through model/generated `WorkspaceEditPlan`, workspace policy, diff preview, Web approval, apply, checks, and SQLite/trajectory audit.
+- Hermes events must be emitted for important runtime decisions such as messages, plan updates, approvals, tool calls, memory writes, and check completion.
+- Long-term memory must not store sensitive references such as `.env`, key files, `.git`, or secret-like paths.
 - Frontend code must stay in `apps/ego-web`; API code must not own page/component/style/client-script source.
 - TypeScript orchestrates tools; mature security tools run as controlled external processes.
 - Every agent action must be represented by an auditable trajectory event.
@@ -52,10 +59,17 @@ Planned public commands:
 ego
 ego serve
 curl -X POST http://127.0.0.1:4317/chat -H "content-type: application/json" -d "{\"message\":\"阅读项目状态并说明下一步\"}"
+curl -X POST http://127.0.0.1:4317/agent/plans -H "content-type: application/json" -d "{\"message\":\"update README quick start\",\"mode\":\"coding\"}"
+curl -X POST http://127.0.0.1:4317/agent/plans/<plan-id>/approve -H "content-type: application/json" -d "{}"
 curl -X POST http://127.0.0.1:4317/agent/runs -H "content-type: application/json" -d "{\"message\":\"update README quick start\",\"autoPropose\":true}"
 curl -X POST http://127.0.0.1:4317/agent/runs/<run-id>/approve -H "content-type: application/json" -d "{}"
 curl -X POST http://127.0.0.1:4317/api/config/model -H "content-type: application/json" -d "{\"provider\":\"openai-compatible\",\"baseUrl\":\"https://api.example.com\",\"apiKey\":\"sk-...\",\"model\":\"your-model\"}"
 curl -X POST http://127.0.0.1:4317/api/config/model/test
+curl http://127.0.0.1:4317/api/config/models
+curl http://127.0.0.1:4317/api/commands
+curl http://127.0.0.1:4317/api/config/system-prompt
+curl http://127.0.0.1:4317/api/mcp/servers
+curl http://127.0.0.1:4317/api/runtime/metrics
 ego config model --provider openai-compatible --base-url https://api.example.com --api-key sk-... --model your-model
 ego run --scenario web_pentest --task "..."
 ego run --scenario incident_response --input ./case.zip
@@ -123,6 +137,7 @@ Keep this file current when architecture, package layout, commands, testing stra
 Core docs to maintain:
 
 - `docs/architecture.md`
+- `docs/agent-kernel.md`
 - `docs/development.md`
 - `docs/user-guide.md`
 - `docs/testing.md`
@@ -145,21 +160,26 @@ Core docs to maintain:
 
 ## Current Milestone
 
-Current milestone makes the Web Workbench usable and dynamic on top of persistent LLM settings and the
-natural-language Patch approval loop:
+Current milestone is Agent Kernel v1: make the Web Workbench plan-aware and give the runtime durable
+memory, Hermes timeline, skills/plugins, MCP stdio v1, and controlled web search:
 
 - Root `README.md` and purple lotus logo asset are present.
 - `apps/ego-web` owns Dashboard pages/components/styles/client scripts.
-- `packages/workspace`, `packages/mcp`, and `packages/agent` are first-class workspace packages.
+- `packages/workspace`, `packages/mcp`, `packages/agent`, `packages/hermes`, and `packages/memory` are first-class workspace packages.
 - `packages/agent` can generate a model-backed `WorkspaceEditPlan` from natural language through `generateWorkspaceEditPlan`.
-- API exposes `/chat` for read-only model replies plus `/agent/runs`, `/agent/runs/:id/approve`, `/agent/runs/:id/diff`, and `/agent/runs/:id/checks` for approved writes.
-- API exposes `/api/config/model` and `/api/config/model/test` for local model settings and connectivity checks.
-- Web has three modes: `对话` calls `/chat`, `生成 Patch` calls `/agent/runs`, and `安全任务` runs controlled fixtures.
-- Web keeps Patch preview, affected files, Approve, and checks in the right-side approval panel.
+- API exposes `/chat` for read-only model replies.
+- API exposes `/agent/plans` and `/agent/plans/:id/approve` for plan-first write tasks.
+- API exposes `/agent/runs`, `/agent/runs/:id/approve`, `/agent/runs/:id/diff`, and `/agent/runs/:id/checks` for approved Patch writes.
+- API exposes `/api/memory`, `/api/hermes/timeline`, `/api/skills`, and `/api/mcp/tools` for kernel observability.
+- API exposes `/api/config/model`, `/api/config/model/test`, and profile routes under `/api/config/models` for local model settings and connectivity checks.
+- API exposes `/api/commands`, `/api/config/system-prompt`, `/api/mcp/servers`, `/api/runtime/metrics`, and `/chat/stream` for the productized Workbench shell.
+- Web has three modes: `对话` calls `/chat`, `生成 Patch` calls `/agent/plans` before Patch generation, and `安全任务` runs controlled fixtures.
+- Web keeps Plan preview, Patch preview, affected files, Approve, and checks in the right-side approval panel.
+- Web shows Agent Kernel status for memory, plans, skills, MCP, command palette, system prompt, runtime metrics, and search.
 - Web polls `/api/workbench`, ticks local time, supports local session switching, and makes quick commands executable.
 - Web includes a right-side model settings panel that writes `.ego/config.json`, validates disabled-provider conflicts, and tests connectivity.
 - CLI exposes `ego config model` for persistent provider/baseUrl/model/API key setup.
-- TUI keeps a lightweight status view and points users to `ego serve` for full diff approval.
+- TUI keeps a lightweight Agent Kernel status view and points users to `ego serve` for full Plan and Patch approval.
 - Model-unavailable fallback is `needs_model`: no pending edit, no diff, no file write.
 
 The vertical slice is complete when `pnpm build`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`, `pnpm test`, `pnpm smoke`, `ego --help`, `ego doctor`, `ego run`, `ego replay`, and `ego eval` pass against the controlled `web_pentest` fixture.

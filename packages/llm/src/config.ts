@@ -31,11 +31,33 @@ export const modelConfigSchema = z.object({
 export type ModelConfig = z.output<typeof modelConfigSchema>;
 
 const persistedModelConfigSchema = modelConfigSchema.partial();
+const modelProfileSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  config: persistedModelConfigSchema,
+});
 const egoConfigFileSchema = z.object({
   model: persistedModelConfigSchema.optional(),
+  modelProfiles: z.array(modelProfileSchema).default([]),
+  activeModelProfileId: z.string().min(1).optional(),
 });
 
 export type PersistedModelConfig = z.output<typeof persistedModelConfigSchema>;
+
+export type ModelProfile = z.output<typeof modelProfileSchema>;
+
+export type PublicModelProfile = Omit<ModelProfile, "config"> & {
+  config: Omit<PersistedModelConfig, "apiKey">;
+  apiKeyConfigured: boolean;
+  apiKeyPreview?: string;
+};
+
+export type ModelProfilesState = {
+  profiles: PublicModelProfile[];
+  activeProfile?: PublicModelProfile;
+  activeProfileId?: string;
+  presets: typeof modelProviderProfiles;
+};
 
 export type ModelConfigSource = "environment" | "workspace-local" | "workspace" | "none";
 
@@ -52,6 +74,16 @@ export type LoadModelConfigOptions = {
 
 export type SaveModelConfigInput = PersistedModelConfig & {
   workspaceRoot: string;
+};
+
+export type ModelProfileInput = {
+  workspaceRoot: string;
+  profile: ModelProfile;
+};
+
+export type ModelProfileIdInput = {
+  workspaceRoot: string;
+  id: string;
 };
 
 export type PublicModelConfig = Omit<ModelConfig, "apiKey"> & {
@@ -178,6 +210,106 @@ export async function saveModelConfig(input: SaveModelConfigInput): Promise<Load
   return loadModelConfigWithSource({ workspaceRoot: input.workspaceRoot, env: {} });
 }
 
+export async function listModelProfiles(
+  input: LoadModelConfigOptions,
+): Promise<ModelProfilesState> {
+  const options = normalizeLoadOptions(input);
+  const workspaceRoot = options.workspaceRoot;
+  if (!workspaceRoot) {
+    return { profiles: [], presets: modelProviderProfiles };
+  }
+
+  const fileConfig = await readEgoConfigObject(workspaceRoot);
+  const parsed = egoConfigFileSchema.parse(fileConfig.config);
+  const profiles =
+    parsed.modelProfiles.length > 0
+      ? parsed.modelProfiles
+      : parsed.model
+        ? [
+            {
+              id: "legacy-model",
+              name: parsed.model.model ?? parsed.model.provider ?? "Legacy model",
+              config: parsed.model,
+            },
+          ]
+        : [];
+  const activeProfileId =
+    parsed.activeModelProfileId ?? (profiles.length === 1 ? profiles[0]?.id : undefined);
+  const publicProfiles = profiles.map((profile) => toPublicModelProfile(profile));
+  const activeProfile = activeProfileId
+    ? publicProfiles.find((profile) => profile.id === activeProfileId)
+    : undefined;
+
+  return {
+    profiles: publicProfiles,
+    ...(activeProfileId ? { activeProfileId } : {}),
+    ...(activeProfile ? { activeProfile } : {}),
+    presets: modelProviderProfiles,
+  };
+}
+
+export async function saveModelProfile(input: ModelProfileInput): Promise<ModelProfilesState> {
+  const path = join(input.workspaceRoot, ".ego", "config.json");
+  await mkdir(join(input.workspaceRoot, ".ego"), { recursive: true });
+  const existing = await readJsonObject(path);
+  const parsed = egoConfigFileSchema.parse(existing);
+  const normalized = {
+    ...input.profile,
+    config: normalizePersistedModelConfig(input.profile.config),
+  };
+  validatePersistedModelConfig(normalized.config);
+  const withoutExisting = parsed.modelProfiles.filter((profile) => profile.id !== normalized.id);
+  const modelProfiles = [...withoutExisting, normalized];
+  const activeModelProfileId = parsed.activeModelProfileId ?? normalized.id;
+  const content = {
+    ...existing,
+    modelProfiles,
+    activeModelProfileId,
+    model:
+      activeModelProfileId === normalized.id
+        ? removeUndefined(normalized.config)
+        : (isObject(existing.model) ? existing.model : parsed.model),
+  };
+
+  await writeFile(path, `${JSON.stringify(content, null, 2)}\n`, "utf8");
+  return listModelProfiles({ workspaceRoot: input.workspaceRoot, env: {} });
+}
+
+export async function selectModelProfile(input: ModelProfileIdInput): Promise<LoadedModelConfig> {
+  const path = join(input.workspaceRoot, ".ego", "config.json");
+  const existing = await readJsonObject(path);
+  const parsed = egoConfigFileSchema.parse(existing);
+  const selected = parsed.modelProfiles.find((profile) => profile.id === input.id);
+  if (!selected) {
+    throw new ModelConfigValidationError(`model profile not found: ${input.id}`);
+  }
+
+  const content = {
+    ...existing,
+    modelProfiles: parsed.modelProfiles,
+    activeModelProfileId: selected.id,
+    model: removeUndefined(selected.config),
+  };
+  await writeFile(path, `${JSON.stringify(content, null, 2)}\n`, "utf8");
+  return loadModelConfigWithSource({ workspaceRoot: input.workspaceRoot, env: {} });
+}
+
+export async function deleteModelProfile(input: ModelProfileIdInput): Promise<ModelProfilesState> {
+  const path = join(input.workspaceRoot, ".ego", "config.json");
+  const existing = await readJsonObject(path);
+  const parsed = egoConfigFileSchema.parse(existing);
+  if (parsed.activeModelProfileId === input.id) {
+    throw new ModelConfigValidationError("cannot delete active model profile");
+  }
+
+  const content = {
+    ...existing,
+    modelProfiles: parsed.modelProfiles.filter((profile) => profile.id !== input.id),
+  };
+  await writeFile(path, `${JSON.stringify(content, null, 2)}\n`, "utf8");
+  return listModelProfiles({ workspaceRoot: input.workspaceRoot, env: {} });
+}
+
 export function toPublicModelConfig(loaded: LoadedModelConfig): PublicModelConfig {
   const { apiKey, ...config } = loaded.config;
   return {
@@ -186,6 +318,17 @@ export function toPublicModelConfig(loaded: LoadedModelConfig): PublicModelConfi
     ...(apiKey ? { apiKeyPreview: maskSecret(apiKey) } : {}),
     source: loaded.source,
     ...(loaded.path ? { sourcePath: loaded.path } : {}),
+  };
+}
+
+function toPublicModelProfile(profile: ModelProfile): PublicModelProfile {
+  const { apiKey, ...config } = profile.config;
+  return {
+    id: profile.id,
+    name: profile.name,
+    config,
+    apiKeyConfigured: Boolean(apiKey),
+    ...(apiKey ? { apiKeyPreview: maskSecret(apiKey) } : {}),
   };
 }
 
@@ -266,14 +409,26 @@ function readPersistedModelConfig(
     }
 
     const parsed = egoConfigFileSchema.parse(JSON.parse(readFileSync(candidate.path, "utf8")));
+    const activeProfile =
+      parsed.activeModelProfileId !== undefined
+        ? parsed.modelProfiles.find((profile) => profile.id === parsed.activeModelProfileId)
+        : undefined;
     return {
       source: candidate.source,
       path: candidate.path,
-      config: parsed.model ?? {},
+      config: activeProfile?.config ?? parsed.model ?? {},
     };
   }
 
   return undefined;
+}
+
+async function readEgoConfigObject(workspaceRoot: string): Promise<{
+  path: string;
+  config: Record<string, unknown>;
+}> {
+  const path = join(workspaceRoot, ".ego", "config.json");
+  return { path, config: await readJsonObject(path) };
 }
 
 async function readJsonObject(path: string): Promise<Record<string, unknown>> {

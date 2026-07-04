@@ -59,7 +59,7 @@ describe("model config", () => {
     const loaded = loadModelConfigWithSource({ workspaceRoot: root, env: {} });
 
     expect(loaded.source).toBe("workspace-local");
-    expect(loaded.path).toContain(".ego/config.json");
+    expect(loaded.path?.replaceAll("\\", "/")).toContain(".ego/config.json");
     expect(loaded.config.provider).toBe("openai-compatible");
     expect(loaded.config.model).toBe("persisted-model");
     expect(isModelConfigured(loaded.config)).toBe(true);

@@ -8,7 +8,7 @@
     "ego": "apps/ego-cli/dist/index.js"
   },
   "scripts": {
-    "build": "pnpm -r --sort build",
+    "build": "pnpm -r --sort --workspace-concurrency=1 build",
     "clean": "node scripts/clean.mjs",
     "dev": "tsx apps/ego-cli/src/index.ts",
     "lint": "eslint .",

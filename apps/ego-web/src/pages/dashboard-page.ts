@@ -1,6 +1,5 @@
 import { readWorkbenchState, type WorkbenchState } from "@ego-graph/workbench";
 import { renderDashboardJs } from "../client/dashboard-client.js";
-import { renderLotusLogo } from "../components/lotus-logo.js";
 import { renderDashboardCss } from "../styles/dashboard-style.js";
 
 export { renderDashboardCss, renderDashboardJs };
@@ -61,7 +60,7 @@ export function renderDashboardHtml(): string {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>EGO-Graph 可视化驾驶舱</title>
+    <title>EGO-Graph Agent Workbench</title>
     <link rel="icon" href="/assets/brand/ego-lotus.png" type="image/png" />
     <link rel="stylesheet" href="/assets/dashboard.css" />
   </head>
@@ -71,8 +70,8 @@ export function renderDashboardHtml(): string {
       <header class="topbar">
         <div class="window-dots" aria-hidden="true"><span></span><span></span><span></span></div>
         <div class="brand">
-          <span class="brand-orbit"></span>
-          <strong>挑战杯Agent TUI v0.1.0</strong>
+          <img class="brand-logo" src="/assets/brand/ego-lotus.png" alt="EGO-Graph" />
+          <strong>EGO-Graph Agent Workbench</strong>
           <span id="cwd-label">~/EGO-Graph</span>
         </div>
         <div class="runtime-strip">
@@ -99,20 +98,9 @@ export function renderDashboardHtml(): string {
         </aside>
 
         <section class="center-stage" id="mission-chat">
-          <div class="hero-lockup">
-            ${renderLotusLogo()}
-            <h1>EGO-Graph 可视化驾驶舱</h1>
-            <p>= 智能网络安全AI代理 · 发现 · 分析 · 响应 · 加固 =</p>
-          </div>
-
-          <section class="panel intro-panel">
-            <p>欢迎使用挑战杯Agent TUI</p>
-            <p>我可以帮助你进行安全分析、威胁检测、漏洞评估和事件响应。输入 /help 查看可用命令，或描述你的安全分析需求。</p>
-          </section>
-
-          <section class="panel console-panel">
+          <section class="panel console-panel agent-cockpit">
             <div class="panel-heading compact">
-              <h2>对话控制台</h2>
+              <h2>EGO-Graph Agent Workbench</h2>
               <div class="mode-tabs" role="tablist" aria-label="工作模式">
                 <button class="mode-tab active" type="button" data-mode="chat">对话</button>
                 <button class="mode-tab" type="button" data-mode="patch">生成 Patch</button>
@@ -120,11 +108,18 @@ export function renderDashboardHtml(): string {
               </div>
               <span id="run-count">0 runs</span>
             </div>
-            <div class="conversation" id="conversation">
-              <article class="message assistant">
-                <span>lotus</span>
-                <p>当前是对话模式：模型可用时我会调用 LLM 进行只读分析；需要改文件请切到“生成 Patch”，所有写入都会先进入右侧审批。</p>
-              </article>
+            <div class="agent-thread" id="agent-thread">
+              <div class="conversation" id="conversation">
+                <article class="message system">
+                  <span>system</span>
+                  <p>当前是对话模式：模型可用时调用 LLM 只读分析；需要改文件请切到“生成 Patch”，计划、diff、checks 都会进入右侧审批链。</p>
+                </article>
+              </div>
+            </div>
+            <div class="execution-timeline" id="execution-timeline" aria-label="执行过程">
+              <div class="timeline-row"><strong>理解任务</strong><span>等待输入</span></div>
+              <div class="timeline-row"><strong>读取上下文</strong><span>Workspace / Memory / MCP</span></div>
+              <div class="timeline-row"><strong>审批链</strong><span>Plan → Diff → Checks</span></div>
             </div>
           </section>
 
@@ -134,7 +129,20 @@ export function renderDashboardHtml(): string {
               <input id="run-id-input" name="runId" placeholder="会话标识可选" />
               <button type="submit">发送 (Enter)</button>
             </div>
+            <div class="slash-palette" id="slash-palette" hidden></div>
           </form>
+          <section class="panel manage-pages" id="manage-pages">
+            <div class="panel-heading compact"><h2>Manage</h2><span id="manage-page-label">Models</span></div>
+            <div class="manage-tabs">
+              <button type="button" data-page="models">Models</button>
+              <button type="button" data-page="skills">Skills</button>
+              <button type="button" data-page="mcp">MCP</button>
+              <button type="button" data-page="prompt">System Prompt</button>
+              <button type="button" data-page="memory">Memory</button>
+              <button type="button" data-page="runs">Runs</button>
+            </div>
+            <div class="manage-page" id="manage-page-content">选择 /model、/skills、/mcp 或 /prompt 查看管理页。</div>
+          </section>
         </section>
 
         <aside class="right-rail">
@@ -146,6 +154,14 @@ export function renderDashboardHtml(): string {
               <div><dt>范围</dt><dd id="context-scope">-</dd></div>
               <div><dt>优先级</dt><dd id="context-priority">-</dd></div>
             </dl>
+          </section>
+          <section class="panel">
+            <div class="panel-heading compact"><h2>Agent Kernel</h2><button class="ghost">⌄</button></div>
+            <div class="kernel-list">
+              <div class="kernel-group"><strong>Memory</strong><div id="memory-list"></div></div>
+              <div class="kernel-group"><strong>Skills</strong><div id="skill-list"></div></div>
+              <div class="kernel-group"><strong>Search</strong><small id="search-status">-</small></div>
+            </div>
           </section>
           <section class="panel model-settings-panel">
             <div class="panel-heading compact"><h2>模型设置</h2><span id="model-source">-</span></div>
@@ -183,6 +199,8 @@ export function renderDashboardHtml(): string {
             <div class="panel-heading compact"><h2>审批 / 执行</h2><button class="ghost">⌄</button></div>
             <div class="approval-list" id="approval-list"></div>
             <div class="approval-preview">
+              <div class="plan-preview" id="plan-preview">Patch 模式会先生成可审批计划。</div>
+              <button class="ghost approve-action" id="approve-plan-button" type="button" disabled>Approve Plan</button>
               <div class="approval-preview-heading">
                 <strong id="approval-preview-title">暂无待审批 Patch</strong>
                 <button class="ghost approve-action" id="approve-button" type="button" disabled>Approve</button>

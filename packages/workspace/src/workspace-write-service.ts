@@ -199,7 +199,9 @@ async function previewNextContent(
     }
     case "replace_text": {
       if (current === undefined) {
-        throw new WorkspaceEditPolicyError(`Cannot replace text in missing file: ${operation.path}`);
+        throw new WorkspaceEditPolicyError(
+          `Cannot replace text in missing file: ${operation.path}`,
+        );
       }
       if (!operation.oldText) {
         throw new WorkspaceEditPolicyError("replace_text requires non-empty oldText");

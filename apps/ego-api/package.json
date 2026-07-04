@@ -14,12 +14,16 @@
   "dependencies": {
     "@ego-graph/agent": "workspace:*",
     "@ego-graph/core": "workspace:*",
+    "@ego-graph/hermes": "workspace:*",
     "@ego-graph/llm": "workspace:*",
+    "@ego-graph/mcp": "workspace:*",
+    "@ego-graph/memory": "workspace:*",
     "@ego-graph/ego-web": "workspace:*",
     "@ego-graph/overlays": "workspace:*",
     "@ego-graph/report": "workspace:*",
     "@ego-graph/shared": "workspace:*",
     "@ego-graph/storage": "workspace:*",
+    "@ego-graph/tools": "workspace:*",
     "@ego-graph/workbench": "workspace:*",
     "@ego-graph/workspace": "workspace:*",
     "hono": "^4.6.16"

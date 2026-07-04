@@ -14,6 +14,7 @@ try {
       "--config.verifyDepsBeforeRun=false",
       "-r",
       "--sort",
+      "--workspace-concurrency=1",
       "build",
     ],
     {

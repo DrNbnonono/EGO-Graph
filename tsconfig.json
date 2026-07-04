@@ -2,6 +2,8 @@
   "files": [],
   "references": [
     { "path": "./packages/shared" },
+    { "path": "./packages/hermes" },
+    { "path": "./packages/memory" },
     { "path": "./packages/tools" },
     { "path": "./packages/llm" },
     { "path": "./packages/mcp" },

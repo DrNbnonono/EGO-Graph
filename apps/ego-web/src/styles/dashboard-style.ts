@@ -108,6 +108,13 @@ select {
   color: var(--lotus);
 }
 
+.brand-logo {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 10px rgba(195, 92, 255, 0.72));
+}
+
 .brand-orbit {
   width: 12px;
   height: 12px;
@@ -348,7 +355,17 @@ button.approval-item {
 }
 
 .console-panel {
-  min-height: 270px;
+  min-height: 420px;
+}
+
+.agent-cockpit {
+  display: grid;
+  grid-template-rows: auto minmax(260px, 1fr) auto;
+  min-height: min(66vh, 720px);
+}
+
+.agent-thread {
+  min-height: 0;
 }
 
 .mode-tabs {
@@ -378,7 +395,9 @@ button.approval-item {
 .conversation {
   display: grid;
   gap: 12px;
-  max-height: 310px;
+  max-height: none;
+  min-height: 0;
+  height: 100%;
   overflow: auto;
   padding: 14px;
 }
@@ -409,6 +428,37 @@ button.approval-item {
 
 .message.user p {
   border-color: rgba(109, 232, 255, 0.45);
+}
+
+.message.system p {
+  border-color: rgba(255, 209, 102, 0.32);
+  color: var(--muted);
+}
+
+.execution-timeline {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px 14px 14px;
+  border-top: 1px solid rgba(178, 94, 255, 0.18);
+}
+
+.timeline-row {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(178, 94, 255, 0.22);
+  border-radius: 6px;
+  background: rgba(5, 7, 15, 0.48);
+}
+
+.timeline-row span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .approve-action {
@@ -505,6 +555,7 @@ button.approval-item {
 }
 
 .composer {
+  position: relative;
   display: grid;
   gap: 10px;
   padding: 12px;
@@ -512,6 +563,87 @@ button.approval-item {
   border-radius: 8px;
   background: rgba(14, 9, 28, 0.9);
   box-shadow: 0 0 24px rgba(195, 92, 255, 0.16);
+}
+
+.slash-palette {
+  position: absolute;
+  right: 12px;
+  bottom: calc(100% + 8px);
+  left: 12px;
+  z-index: 5;
+  display: grid;
+  gap: 4px;
+  max-height: 280px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: rgba(6, 5, 14, 0.98);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.32);
+}
+
+.slash-palette[hidden] {
+  display: none;
+}
+
+.slash-command-option {
+  display: grid;
+  grid-template-columns: 120px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.slash-command-option.active,
+.slash-command-option:hover {
+  border-color: var(--line);
+  background: rgba(195, 92, 255, 0.12);
+}
+
+.manage-pages {
+  min-height: 180px;
+}
+
+.manage-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px 0;
+}
+
+.manage-tabs button {
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid rgba(178, 94, 255, 0.28);
+  border-radius: 6px;
+  background: rgba(5, 7, 15, 0.66);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.manage-tabs button.active {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.manage-page {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.manage-card {
+  padding: 9px 10px;
+  border: 1px solid rgba(178, 94, 255, 0.22);
+  border-radius: 6px;
+  background: rgba(5, 7, 15, 0.44);
 }
 
 textarea,
@@ -568,6 +700,45 @@ button:disabled {
   gap: 9px;
   margin: 0;
   padding: 12px 14px;
+}
+
+.kernel-list {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.kernel-group {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid rgba(178, 94, 255, 0.2);
+  border-radius: 6px;
+  background: rgba(5, 7, 15, 0.42);
+}
+
+.kernel-group small,
+.kernel-item {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.kernel-item {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.plan-preview {
+  min-height: 72px;
+  overflow-wrap: anywhere;
+  padding: 10px 12px;
+  border: 1px solid rgba(109, 232, 255, 0.28);
+  border-radius: 6px;
+  background: rgba(109, 232, 255, 0.06);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .context-list div {
@@ -671,6 +842,10 @@ dd {
   }
 
   .message {
+    grid-template-columns: 1fr;
+  }
+
+  .execution-timeline {
     grid-template-columns: 1fr;
   }
 
