@@ -307,7 +307,8 @@ describe("ego api server", () => {
   });
 
   it("exposes run events, markdown report, and event stream", async () => {
-    const app = createServer();
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-api-runs-home-"));
+    const app = createServer({ egoHome });
     await app.request("/runs", {
       method: "POST",
       body: JSON.stringify({ runId: "api-run-test-002" }),

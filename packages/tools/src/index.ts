@@ -4,3 +4,4 @@ export * from "./permission-policy.js";
 export * from "./fixture-tools.js";
 export * from "./skill-registry.js";
 export * from "./web-search-tool.js";
+export * from "./terminal-agent-tools.js";

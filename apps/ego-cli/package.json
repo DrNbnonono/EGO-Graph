@@ -20,6 +20,7 @@
     "@ego-graph/report": "workspace:*",
     "@ego-graph/shared": "workspace:*",
     "@ego-graph/storage": "workspace:*",
+    "@ego-graph/terminal-agent": "workspace:*",
     "@ego-graph/workbench": "workspace:*",
     "@hono/node-server": "^1.13.7",
     "commander": "^12.1.0",

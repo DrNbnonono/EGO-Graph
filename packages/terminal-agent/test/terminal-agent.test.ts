@@ -1,0 +1,173 @@
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { createTerminalAgentSession, type AgentRunEvent } from "../src/index.js";
+
+const fakeProvider = (content: string) => ({
+  name: "fake",
+  model: "fake-model",
+  async complete(): Promise<string> {
+    return content;
+  },
+});
+
+async function collect(iterable: AsyncIterable<AgentRunEvent>): Promise<AgentRunEvent[]> {
+  const events: AgentRunEvent[] = [];
+  for await (const event of iterable) {
+    events.push(event);
+  }
+  return events;
+}
+
+describe("terminal agent session", () => {
+  it("streams context, tools, evidence, reflection, and a pending plan in read-only mode", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-terminal-agent-readonly-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-terminal-agent-home-"));
+    await writeFile(join(root, "package.json"), '{"name":"fixture"}', "utf8");
+    await writeFile(join(root, "README.md"), "hello lotus\n", "utf8");
+    const session = createTerminalAgentSession({ workspaceRoot: root, egoHome });
+
+    const events = await collect(session.startTask("阅读 README 并提出计划"));
+
+    expect(events.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "run.started",
+        "context.loaded",
+        "tool.started",
+        "tool.completed",
+        "evidence.created",
+        "reflection.created",
+        "plan.proposed",
+      ]),
+    );
+    const state = session.getRunState(events[0]!.runId);
+    expect(state?.status).toBe("plan_pending");
+    expect(state?.plan?.[0]?.knownEvidence.length).toBeGreaterThan(0);
+  });
+
+  it("blocks plan approval without workspace-write permission", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-terminal-agent-block-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-terminal-agent-home-"));
+    await writeFile(join(root, "package.json"), '{"name":"fixture"}', "utf8");
+    await writeFile(join(root, "README.md"), "hello\n", "utf8");
+    const session = createTerminalAgentSession({ workspaceRoot: root, egoHome });
+    const started = await collect(session.startTask("把 README hello 改成 lotus"));
+
+    const approved = await collect(session.approvePlan(started[0]!.runId));
+
+    expect(approved.at(-1)?.type).toBe("run.blocked");
+    expect(approved.at(-1)?.message).toContain("workspace-write");
+    expect(await readFile(join(root, "README.md"), "utf8")).toBe("hello\n");
+  });
+
+  it("generates a diff after plan approval and applies it only after patch approval", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-terminal-agent-patch-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-terminal-agent-home-"));
+    await writeFile(join(root, "package.json"), '{"name":"fixture"}', "utf8");
+    await writeFile(join(root, "README.md"), "hello\n", "utf8");
+    const session = createTerminalAgentSession({
+      workspaceRoot: root,
+      egoHome,
+      permissionLevel: "shell-readonly",
+      modelProvider: fakeProvider(
+        JSON.stringify({
+          rationale: "README contains the requested text.",
+          editPlan: {
+            goal: "update readme",
+            operations: [
+              {
+                type: "replace_text",
+                path: "README.md",
+                oldText: "hello",
+                newText: "lotus",
+              },
+            ],
+          },
+        }),
+      ),
+      checkCommands: [{ name: "node-version", command: "node", args: ["--version"] }],
+    });
+    const started = await collect(session.startTask("把 README 里的 hello 改成 lotus"));
+    const runId = started[0]!.runId;
+
+    const planned = await collect(session.approvePlan(runId));
+    expect(planned.at(-1)?.type).toBe("patch.proposed");
+    expect(session.getRunState(runId)?.diff).toContain("+lotus");
+    expect(await readFile(join(root, "README.md"), "utf8")).toBe("hello\n");
+
+    const applied = await collect(session.approvePatch(runId));
+    expect(applied.map((event) => event.type)).toContain("check.completed");
+    expect(applied.at(-1)?.type).toBe("run.completed");
+    expect(await readFile(join(root, "README.md"), "utf8")).toBe("lotus\n");
+  });
+
+  it("uses a model-backed evidence-gap planner when a provider is configured", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-terminal-agent-model-plan-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-terminal-agent-home-"));
+    await writeFile(join(root, "package.json"), '{"name":"fixture"}', "utf8");
+    await writeFile(join(root, "README.md"), "hello\n", "utf8");
+    const session = createTerminalAgentSession({
+      workspaceRoot: root,
+      egoHome,
+      modelProvider: fakeProvider(
+        JSON.stringify({
+          plan: [
+            {
+              id: "model-context",
+              title: "模型生成上下文计划",
+              knownEvidence: ["README exists"],
+              missingEvidence: ["Need exact requested change"],
+              toolChoiceRationale: "Use workspace.read before proposing edits",
+              expectedResult: "Relevant context is available",
+              stopCondition: "Context is sufficient",
+              riskNote: "Read-only",
+            },
+            {
+              id: "model-patch",
+              title: "模型生成 Patch 计划",
+              knownEvidence: ["Context is available"],
+              missingEvidence: ["Need approval"],
+              toolChoiceRationale: "Use WorkspaceEditPlan after approval",
+              expectedResult: "Diff preview",
+              stopCondition: "Patch approved or rejected",
+              riskNote: "Requires workspace-write",
+            },
+          ],
+        }),
+      ),
+    });
+
+    const events = await collect(session.startTask("更新 README"));
+
+    expect(events.map((event) => event.type)).toContain("planner.model.used");
+    expect(session.getRunState(events[0]!.runId)?.plan?.[0]?.title).toBe("模型生成上下文计划");
+  });
+
+  it("blocks local security research tools until security-active is granted", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-terminal-agent-security-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-terminal-agent-home-"));
+    await writeFile(join(root, "package.json"), '{"dependencies":{"floating":"*"}}', "utf8");
+    await writeFile(join(root, "README.md"), "hello\n", "utf8");
+    const blocked = createTerminalAgentSession({ workspaceRoot: root, egoHome });
+    const blockedEvents = await collect(blocked.startTask("做一次依赖漏洞审计"));
+
+    expect(blockedEvents.some((event) => event.type === "tool.blocked")).toBe(true);
+
+    const allowed = createTerminalAgentSession({
+      workspaceRoot: root,
+      egoHome,
+      permissionLevel: "security-active",
+    });
+    const allowedEvents = await collect(allowed.startTask("做一次依赖漏洞审计"));
+
+    expect(
+      allowedEvents.some(
+        (event) =>
+          event.type === "tool.completed" &&
+          typeof event.payload.tool === "string" &&
+          event.payload.tool === "security.package_manifest_audit",
+      ),
+    ).toBe(true);
+  });
+});

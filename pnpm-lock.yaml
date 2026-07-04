@@ -113,6 +113,9 @@ importers:
       '@ego-graph/storage':
         specifier: workspace:*
         version: link:../../packages/storage
+      '@ego-graph/terminal-agent':
+        specifier: workspace:*
+        version: link:../../packages/terminal-agent
       '@ego-graph/workbench':
         specifier: workspace:*
         version: link:../../packages/workbench
@@ -220,6 +223,36 @@ importers:
       '@ego-graph/core':
         specifier: workspace:*
         version: link:../core
+
+  packages/terminal-agent:
+    dependencies:
+      '@ego-graph/agent':
+        specifier: workspace:*
+        version: link:../agent
+      '@ego-graph/core':
+        specifier: workspace:*
+        version: link:../core
+      '@ego-graph/hermes':
+        specifier: workspace:*
+        version: link:../hermes
+      '@ego-graph/llm':
+        specifier: workspace:*
+        version: link:../llm
+      '@ego-graph/memory':
+        specifier: workspace:*
+        version: link:../memory
+      '@ego-graph/storage':
+        specifier: workspace:*
+        version: link:../storage
+      '@ego-graph/tools':
+        specifier: workspace:*
+        version: link:../tools
+      '@ego-graph/workspace':
+        specifier: workspace:*
+        version: link:../workspace
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
 
   packages/tools:
     dependencies:

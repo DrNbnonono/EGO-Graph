@@ -12,6 +12,9 @@ describe("ego default TUI", () => {
     expect(result.stdout).toContain("紫莲花");
     expect(result.stdout).toContain("项目进展");
     expect(result.stdout).toContain("交互对话");
+    expect(result.stdout).toContain("Terminal run stream");
+    expect(result.stdout).toContain("权限等级");
+    expect(result.stdout).toContain("终端审批");
     expect(result.stdout).toContain("Web Workbench");
     expect(result.stdout).toContain("Agent Kernel");
     expect(result.stdout).toContain("SQLite");
