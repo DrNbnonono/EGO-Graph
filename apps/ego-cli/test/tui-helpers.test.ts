@@ -38,12 +38,12 @@ describe("TUI helpers", () => {
     );
     expect(getCommandPaletteMatches("/model")[0]).toMatchObject({
       name: "/model",
-      category: "model",
+      category: "Model",
     });
     expect(getCommandPaletteMatches("/model")[0]?.description).toContain("model");
   });
 
-  it("resolves a bare slash to the first palette command but keeps exact input otherwise", () => {
+  it("keeps a bare slash as palette input instead of auto executing a command", () => {
     const matches = getCommandPaletteMatches("/");
 
     expect(
@@ -51,7 +51,7 @@ describe("TUI helpers", () => {
         "/",
         matches.map((command) => command.name),
       ),
-    ).toBe("/help");
+    ).toBe("/");
     expect(resolvePaletteInput("/allow shell-readonly", [])).toBe("/allow shell-readonly");
   });
 

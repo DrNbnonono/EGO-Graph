@@ -28,7 +28,7 @@ describe("ego api server", () => {
     } else {
       process.env.EGO_HOME = previousEgoHome;
     }
-    await rm(testEgoHome, { recursive: true, force: true });
+    await rmTempDir(testEgoHome);
   });
 
   it("responds to health checks", async () => {
@@ -410,3 +410,10 @@ describe("ego api server", () => {
     expect(await readFile(join(workspaceRoot, "README.md"), "utf8")).toBe("lotus api\n");
   });
 });
+
+async function rmTempDir(path: string): Promise<void> {
+  if (process.platform === "win32") {
+    return;
+  }
+  await rm(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+}

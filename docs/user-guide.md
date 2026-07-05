@@ -1,15 +1,25 @@
 # EGO-Graph User Guide
 
-Start the terminal TUI. It opens a Chinese project cockpit with a small command dialog, project
-progress, and the Web dashboard entry:
+Start the terminal TUI. It opens a conversation-first terminal Agent surface with a welcome screen,
+model/permission/workspace status, and a fixed prompt at the bottom:
 
 ```bash
 ego
 ```
 
 The TUI is intentionally thin. It renders conversation, collapsed tool events, approvals, diffs,
-checks, memory commands, and replay. Agent state, tool execution, Patch approval, repair, memory,
-and MCP calls live in `packages/agent-harness`.
+checks, memory commands, history, and replay. Agent state, tool execution, Patch approval, repair,
+memory, and MCP calls live in `packages/agent-harness`.
+
+Terminal shortcuts:
+
+- Type natural language directly to chat with the Agent.
+- Type `/` to open the command palette. Use Tab or arrow keys to select, Enter to run, Esc to close.
+- Use Ctrl+A/Ctrl+E for Home/End, Ctrl+U to clear before cursor, Ctrl+K to clear after cursor, Ctrl+J for a new line.
+- Use Up/Down to browse prompt history. Use PageUp/PageDown to scroll conversation history.
+- Use `/history` to browse persisted runs, then `/replay 1` or `/switch 1` to open a run by number.
+- Use `/plan approve`, `/diff`, `/diff next`, `/patch approve`, and `/checks` for the approval flow.
+- Use `/debug` only when you need folded tool payloads and technical details.
 
 Start the browser visualization:
 

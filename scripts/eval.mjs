@@ -158,9 +158,25 @@ async function runHarnessEvalCase(testCase, harness) {
       failureReason: "",
     };
   } finally {
-    await rm(workspaceRoot, { recursive: true, force: true });
-    await rm(egoHome, { recursive: true, force: true });
+    await retryRm(workspaceRoot);
+    if (process.platform !== "win32") {
+      await retryRm(egoHome);
+    }
   }
+}
+
+async function retryRm(path) {
+  let lastError;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await rm(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)));
+    }
+  }
+  throw lastError;
 }
 
 async function seedEvalWorkspace(workspaceRoot) {

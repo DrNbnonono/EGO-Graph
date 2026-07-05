@@ -16,7 +16,7 @@ Use a TypeScript-first stack aligned with terminal agent tools such as OpenCode,
 - Language: TypeScript 5 strict mode
 - Workspace: pnpm monorepo
 - CLI: commander, exposing `ego`
-- TUI: Ink + React terminal cockpit with a Chinese dialog box
+- TUI: Ink + React conversation-first terminal Agent with welcome screen, fixed prompt input, slash command palette, history/replay browser, and Plan/Diff/Checks overlays
 - Web UI: Hono-served browser dashboard at `ego serve` / `http://127.0.0.1:4317`
 - API: Hono local service for runs, status, evidence, reports, and replay streams
 - Web package layout: `apps/ego-web/src/pages`, `components`, `styles`, `client`, and `assets`
@@ -35,7 +35,7 @@ Use a TypeScript-first stack aligned with terminal agent tools such as OpenCode,
 
 ## Architecture Invariants
 
-- The terminal command `ego` is the primary product entry and must remain interactive.
+- The terminal command `ego` is the primary product entry and must remain an interactive conversation-first Agent surface, not a dashboard.
 - `ego serve` must expose a Web visualization of project progress, model status, recent runs, evidence, and reports.
 - `/chat` is a model-first, read-only assistant endpoint. It must never create pending edits.
 - Writable natural-language tasks should enter `/agent/plans` first and return `draft_plan`.
@@ -50,6 +50,8 @@ Use a TypeScript-first stack aligned with terminal agent tools such as OpenCode,
 - Tool adapters must declare input schema, output schema, permissions, sandbox profile, parser, and evidence mapping.
 - New tool execution should use the Harness `ToolCall` protocol: schema validation, permission gate,
   approval gate, timeout, stdout/stderr truncation, output validation, failure event, and recovery hint.
+- TUI code must stay thin and modular under `apps/ego-cli/src/tui/`; it may render state and dispatch commands, but it must not own Agent Harness business logic.
+- TUI text rendering must use CJK/display-width helpers instead of raw JS `slice()` when truncating visible UI strings.
 - Scenario-specific behavior belongs in overlays, not in the shared core.
 - The first strong scenario should be `web_pentest`, followed by `incident_response`, `vulnerability_research`, and `reverse_engineering`.
 - The system must be useful in authorized, controlled environments and must reject actions outside declared scope.
@@ -140,6 +142,7 @@ Keep this file current when architecture, package layout, commands, testing stra
 
 Core docs to maintain:
 
+- `docs/tui-productization-gap-analysis.md`
 - `docs/architecture.md`
 - `docs/agent-kernel.md`
 - `docs/development.md`
@@ -189,7 +192,8 @@ memory, Hermes timeline, skills/plugins, MCP stdio v1, and controlled web search
 - Web polls `/api/workbench`, ticks local time, supports local session switching, and makes quick commands executable.
 - Web includes a right-side model settings panel that writes `.ego/config.json`, validates disabled-provider conflicts, and tests connectivity.
 - CLI exposes `ego config model` for persistent provider/baseUrl/model/API key setup.
-- TUI keeps a conversation-first Agent Kernel view, multi-file diff browsing, slash command palette, MCP discovery, and approval shortcuts while still pointing users to `ego serve` for full management pages.
+- TUI is now split under `apps/ego-cli/src/tui/`: `app.tsx`, `conversation-view.tsx`, `prompt-input.tsx`, `command-palette.ts`, `history-browser.tsx`, `diff-view.tsx`, `plan-view.tsx`, `checks-view.tsx`, `debug-view.tsx`, `layout.tsx`, `cjk.ts`, `text-wrap.ts`, and support modules.
+- TUI keeps a conversation-first Agent Kernel view, welcome screen, fixed prompt input, overlay slash command palette, persisted history/replay browsing, multi-file diff browsing, MCP discovery, and approval shortcuts while still pointing users to `ego serve` for full management pages.
 - Model-unavailable fallback is `needs_model`: no pending edit, no diff, no file write.
 - Active public SRC/vulnerability scanning and exploit automation remain disabled by default. Security tools require explicit authorization scope, permission elevation, approval, sandbox/audit, and controlled targets.
 
