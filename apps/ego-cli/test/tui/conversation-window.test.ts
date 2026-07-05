@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createConversationWindow } from "../../src/tui/conversation-view.js";
+import {
+  createConversationWindow,
+  preserveScrollOffsetOnAppend,
+} from "../../src/tui/conversation-view.js";
 
 describe("conversation window", () => {
   const events = Array.from({ length: 30 }, (_, index) => ({
@@ -25,5 +28,14 @@ describe("conversation window", () => {
     expect(window.maxScroll).toBeGreaterThan(0);
     expect(window.scrollOffset).toBe(window.maxScroll);
     expect(window.visibleLines.length).toBeGreaterThan(0);
+  });
+
+  it("preserves a reviewed viewport when new output arrives", () => {
+    expect(
+      preserveScrollOffsetOnAppend({ currentOffset: 12, previousTotal: 40, nextTotal: 45 }),
+    ).toBe(17);
+    expect(
+      preserveScrollOffsetOnAppend({ currentOffset: 0, previousTotal: 40, nextTotal: 45 }),
+    ).toBe(0);
   });
 });

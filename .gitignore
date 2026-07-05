@@ -38,3 +38,4 @@ docker/*.tar
 *.tsbuildinfo
 output/playwright
 .playwright-cli/
+opencode/

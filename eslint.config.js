@@ -17,7 +17,7 @@ export default [
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    ignores: ["**/dist/**", "node_modules/**", "coverage/**"],
+    ignores: ["**/dist/**", "node_modules/**", "coverage/**", "opencode/**"],
   },
   {
     files: ["**/*.ts", "**/*.tsx"],

@@ -42,17 +42,17 @@ export function createWelcomeModel({
   return {
     title: "EGO-Graph v0.1.0",
     logo: [
-      "             ▄",
-      "           ▄███▄",
-      "         ▄███████▄",
-      "     ▄█▄  █████  ▄█▄",
-      "   ▄████▄ █████ ▄████▄",
-      " ▄███████▄█████▄███████▄",
-      "  ▀███████████████████▀",
-      "    ▀███████████████▀",
-      "      ▀███████████▀",
-      "         ▀█████▀",
-      "           ▀█▀",
+      "              ▄█▄",
+      "          ▄▄  ███  ▄▄",
+      "       ▄████▄█████▄████▄",
+      "     ▄███████████████████▄",
+      "      ▀█████████████████▀",
+      "   ▄▄▄  ▀███████████▀  ▄▄▄",
+      " ▄██████▄▄ ▀█████▀ ▄▄██████▄",
+      "  ▀████████▄▄ ▀ ▄▄████████▀",
+      "     ▀████████▄████████▀",
+      "        ▀███████████▀",
+      "            ▀███▀",
     ],
     identityLine: `${modelLabel} • API Usage Billing • EGO-Graph Organization`,
     workspaceLine: `Workspace: ${cwd}`,
@@ -116,7 +116,7 @@ export function WelcomeScreen({
         <Text color="magentaBright"> {model.title} </Text>
         <Box flexDirection={wide ? "row" : "column"}>
           <Box flexDirection="column" width={leftWidth} paddingRight={2}>
-            <Text color="white">{"Welcome back!".padStart(Math.floor(leftWidth / 2) + 6)}</Text>
+            <Text color="white">{centerLine("Welcome back!", leftWidth - 2)}</Text>
             {model.logo.map((line) => (
               <Text key={line} color="magentaBright">
                 {centerLine(line, leftWidth - 2)}
@@ -191,7 +191,7 @@ export function WelcomeScreen({
         <Text> </Text>
         <Text>你好！我是 EGO-Graph，一个面向网络安全场景的智能体（Agent）。</Text>
         <Text>我专注于帮助你理解任务目标、分析证据、调度合适的工具并生成清晰可靠的报告。</Text>
-        <Text>核心能力： 任务理解 · 证据分析 · 工具编排 · 报告生成</Text>
+        <Text>核心能力：任务理解 · 证据分析 · 工具编排 · 报告生成</Text>
         <Text>如需开始，请尝试 /init 初始化工作区，或 /scan 启动安全扫描。</Text>
         <Text color="gray">ⓘ hook output: UserPromptSubmit · completed in 182ms</Text>
         <Text color="gray">{"─".repeat(Math.min(92, Math.max(20, width - 4)))}</Text>

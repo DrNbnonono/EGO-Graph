@@ -1,7 +1,7 @@
 import type { AgentRunEvent } from "@ego-graph/agent-harness";
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
-import { renderEventLines } from "./tui-events.js";
+import { renderConversationLines } from "./tui-events.js";
 
 export type ConversationWindowInput = {
   events: AgentRunEvent[];
@@ -24,14 +24,27 @@ export function isUserPromptLine(line: string): boolean {
   return line.startsWith("❯ ");
 }
 
+export function preserveScrollOffsetOnAppend({
+  currentOffset,
+  previousTotal,
+  nextTotal,
+}: {
+  currentOffset: number;
+  previousTotal: number;
+  nextTotal: number;
+}): number {
+  if (currentOffset <= 0 || nextTotal <= previousTotal) {
+    return currentOffset;
+  }
+  return currentOffset + (nextTotal - previousTotal);
+}
+
 export function createConversationWindow(input: ConversationWindowInput): ConversationWindow {
-  const rendered = input.events.flatMap((event) =>
-    renderEventLines(event, {
-      width: input.width - 2,
-      debug: input.debug,
-      thinkingExpanded: input.thinkingExpanded,
-    }),
-  );
+  const rendered = renderConversationLines(input.events, {
+    width: input.width - 2,
+    debug: input.debug,
+    thinkingExpanded: input.thinkingExpanded,
+  });
   const allLines = input.replayMode ? ["read-only replay mode", ...rendered] : rendered;
   const visibleCount = Math.max(4, input.height - 1);
   const maxScroll = Math.max(0, allLines.length - visibleCount);
@@ -88,7 +101,7 @@ export function ConversationView({
       {window.maxScroll > 0 ? (
         <Text color="gray">
           {window.scrollOffset > 0
-            ? `Scrolled ${window.scrollOffset}/${window.maxScroll} · wheel/PageDown returns`
+            ? `Viewing earlier output ${window.scrollOffset}/${window.maxScroll} · wheel/PageDown returns`
             : "Wheel/PageUp to review earlier output"}
         </Text>
       ) : null}

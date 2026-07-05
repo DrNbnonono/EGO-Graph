@@ -10,6 +10,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactElement,
   type SetStateAction,
@@ -24,7 +25,11 @@ import {
 } from "./command-palette.js";
 import { CommandPaletteView } from "./command-palette-view.js";
 import { ChecksView } from "./checks-view.js";
-import { ConversationView } from "./conversation-view.js";
+import {
+  ConversationView,
+  createConversationWindow,
+  preserveScrollOffsetOnAppend,
+} from "./conversation-view.js";
 import { DebugView } from "./debug-view.js";
 import { DiffView, resolveDiffFileIndex, splitDiffByFile } from "./diff-view.js";
 import {
@@ -83,6 +88,7 @@ export function EgoTui(): ReactElement {
   const [replayMode, setReplayMode] = useState(false);
   const [sidePanelRequested, setSidePanelRequested] = useState(false);
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
+  const previousConversationLineCount = useRef(0);
   const layout = chooseTuiLayout(terminalWidth, sidePanelRequested);
   const showStartup = overlayMode === "none" && events.length === 0;
   const showStatusLine = !showStartup;
@@ -124,6 +130,41 @@ export function EgoTui(): ReactElement {
       setPalette((previous) => closeCommandPalette(previous));
     }
   }, [prompt.value]);
+
+  useEffect(() => {
+    if (overlayMode !== "none" || showStartup) {
+      previousConversationLineCount.current = 0;
+      return;
+    }
+    const nextTotal = createConversationWindow({
+      events,
+      width: layout.conversationWidth,
+      height: bodyHeight,
+      scrollOffset: 0,
+      debug: false,
+      thinkingExpanded,
+      replayMode,
+    }).totalLines;
+    const previousTotal = previousConversationLineCount.current;
+    if (previousTotal > 0 && nextTotal > previousTotal) {
+      setScrollOffset((previous) =>
+        preserveScrollOffsetOnAppend({
+          currentOffset: previous,
+          previousTotal,
+          nextTotal,
+        }),
+      );
+    }
+    previousConversationLineCount.current = nextTotal;
+  }, [
+    bodyHeight,
+    events,
+    layout.conversationWidth,
+    overlayMode,
+    replayMode,
+    showStartup,
+    thinkingExpanded,
+  ]);
 
   const handleSubmit = useCallback((): void => {
     if (busy) {

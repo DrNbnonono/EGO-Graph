@@ -8,16 +8,25 @@ export type RenderEventOptions = {
   thinkingExpanded: boolean;
 };
 
+export function renderConversationLines(
+  events: AgentRunEvent[],
+  options: RenderEventOptions,
+): string[] {
+  const normalized = coalesceAssistantDeltas(events);
+  return normalized.flatMap((event) => renderEventLines(event, options));
+}
+
 export function renderEventLines(event: AgentRunEvent, options: RenderEventOptions): string[] {
   const width = Math.max(24, options.width);
   if (event.type === "user.message") {
     return wrapDisplay(`❯ ${event.message}`, width);
   }
-  if (event.type === "assistant.message" || event.type === "assistant.completed") {
+  if (
+    event.type === "assistant.message" ||
+    event.type === "assistant.completed" ||
+    event.type === "assistant.delta"
+  ) {
     return renderAssistantMessage(event.message, width);
-  }
-  if (event.type === "assistant.delta") {
-    return wrapDisplay(`✻ ${event.message}`, width);
   }
   if (event.type.includes("plan")) {
     return wrapDisplay(`plan ${event.message}`, width);
@@ -49,10 +58,55 @@ export function renderEventLines(event: AgentRunEvent, options: RenderEventOptio
   return base;
 }
 
+function coalesceAssistantDeltas(events: AgentRunEvent[]): AgentRunEvent[] {
+  const normalized: AgentRunEvent[] = [];
+  let pending: AgentRunEvent | undefined;
+
+  const flushPending = (): void => {
+    if (pending) {
+      normalized.push(pending);
+      pending = undefined;
+    }
+  };
+
+  for (const event of events) {
+    if (event.type === "assistant.delta") {
+      if (pending?.type === "assistant.delta" && pending.runId === event.runId) {
+        pending = { ...event, message: `${pending.message}${event.message}` };
+      } else {
+        flushPending();
+        pending = { ...event };
+      }
+      continue;
+    }
+
+    if (
+      pending &&
+      event.runId === pending.runId &&
+      (event.type === "assistant.completed" || event.type === "assistant.message")
+    ) {
+      pending = undefined;
+      normalized.push(event);
+      continue;
+    }
+
+    flushPending();
+    normalized.push(event);
+  }
+
+  flushPending();
+  return normalized;
+}
+
 function renderAssistantMessage(message: string, width: number): string[] {
   const lines: string[] = ["●"];
   for (const sourceLine of message.split(/\r?\n/u)) {
-    lines.push(...wrapDisplay(renderMarkdownLine(sourceLine), width));
+    const rendered = renderMarkdownLine(sourceLine);
+    if (rendered.length === 0) {
+      lines.push("");
+    } else {
+      lines.push(...wrapDisplay(rendered, width));
+    }
   }
   return lines;
 }
@@ -64,7 +118,13 @@ function renderMarkdownLine(line: string): string {
   if (/^```/u.test(line)) {
     return line.replace(/^```/u, "code ");
   }
-  return line;
+  if (/^\s*---+\s*$/u.test(line)) {
+    return "─".repeat(24);
+  }
+  return line
+    .replace(/\*\*([^*]+)\*\*/gu, "$1")
+    .replace(/__([^_]+)__/gu, "$1")
+    .replace(/`([^`]+)`/gu, "$1");
 }
 
 function isFoldedEvent(type: AgentRunEvent["type"]): boolean {
