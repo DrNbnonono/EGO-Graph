@@ -25,4 +25,19 @@ describe("terminal input normalization", () => {
     expect(normalizeTerminalInput("\x1b[<64;20;12M")).toEqual([{ type: "scroll", delta: 5 }]);
     expect(normalizeTerminalInput("\x1b[<65;20;12M")).toEqual([{ type: "scroll", delta: -5 }]);
   });
+
+  it("ignores SGR mouse clicks instead of treating them as Escape", () => {
+    expect(normalizeTerminalInput("\x1b[<0;20;12M")).toEqual([]);
+    expect(normalizeTerminalInput("\x1b[<0;20;12m")).toEqual([]);
+  });
+
+  it("extracts wheel events from mixed terminal input chunks", () => {
+    expect(normalizeTerminalInput("\x1b[<0;20;12M\x1b[<64;20;12M")).toEqual([
+      { type: "scroll", delta: 5 },
+    ]);
+  });
+
+  it("ignores legacy X10 mouse clicks instead of treating them as Escape", () => {
+    expect(normalizeTerminalInput("\x1b[M !!")).toEqual([]);
+  });
 });

@@ -15,7 +15,8 @@ describe("welcome screen model", () => {
     });
 
     expect(model.title).toBe("EGO-Graph v0.1.0");
-    expect(model.logo.join("\n")).toContain("紫莲花");
+    expect(model.logo.join("\n")).toContain("█████");
+    expect(model.logo.join("\n")).not.toContain("\\");
     expect(model.identityLine).toBe("lotus-sec-7b • API Usage Billing • EGO-Graph Organization");
     expect(model.workspaceLine).toContain("Workspace:");
     expect(model.tips.map((tip) => tip.command)).toEqual([

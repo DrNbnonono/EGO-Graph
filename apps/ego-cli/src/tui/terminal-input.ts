@@ -19,44 +19,53 @@ export type TerminalInputAction =
 const mouseTrackingOn = "\x1b[?1000h\x1b[?1006h";
 const mouseTrackingOff = "\x1b[?1000l\x1b[?1006l";
 const escapeCharacter = String.fromCharCode(27);
-const sgrMousePattern = new RegExp(`^${escapeCharacter}\\[<(?<button>\\d+);\\d+;\\d+[mM]$`, "u");
+const sgrMousePattern = new RegExp(`^${escapeCharacter}\\[<(?<button>\\d+);\\d+;\\d+[mM]`, "u");
 
 export function normalizeTerminalInput(raw: string): TerminalInputAction[] {
-  const mouseWheel = parseMouseWheel(raw);
-  if (mouseWheel === "up") {
-    return [{ type: "scroll", delta: 5 }];
-  }
-  if (mouseWheel === "down") {
-    return [{ type: "scroll", delta: -5 }];
-  }
-
   const direct = directTerminalAction(raw);
   if (direct) {
     return [direct];
   }
 
   const actions: TerminalInputAction[] = [];
-  for (const char of Array.from(raw)) {
+  let index = 0;
+  while (index < raw.length) {
+    const mouseEvent = readSgrMouseEvent(raw.slice(index));
+    if (mouseEvent) {
+      appendMouseAction(actions, mouseEvent.wheel);
+      index += mouseEvent.length;
+      continue;
+    }
+
+    const legacyMouseEvent = readX10MouseEvent(raw.slice(index));
+    if (legacyMouseEvent) {
+      appendMouseAction(actions, legacyMouseEvent.wheel);
+      index += legacyMouseEvent.length;
+      continue;
+    }
+
+    const escapeAction = readEscapeAction(raw.slice(index));
+    if (escapeAction) {
+      actions.push(escapeAction.action);
+      index += escapeAction.length;
+      continue;
+    }
+
+    const char = Array.from(raw.slice(index))[0] ?? "";
     const action = directTerminalAction(char);
     if (action) {
       actions.push(action);
     } else if (!isControlCharacter(char)) {
       actions.push({ type: "prompt-edit", edit: "insert", text: char });
     }
+    index += char.length;
   }
   return actions;
 }
 
 export function parseMouseWheel(raw: string): "up" | "down" | null {
-  const match = sgrMousePattern.exec(raw);
-  const button = match?.groups?.button;
-  if (button === "64") {
-    return "up";
-  }
-  if (button === "65") {
-    return "down";
-  }
-  return null;
+  const event = readSgrMouseEvent(raw);
+  return event && event.length === raw.length ? event.wheel : null;
 }
 
 export function useTerminalInput(onAction: (action: TerminalInputAction) => void): void {
@@ -152,6 +161,62 @@ function directTerminalAction(raw: string): TerminalInputAction | null {
       return { type: "prompt-edit", edit: "move-end" };
     default:
       return null;
+  }
+}
+
+function readEscapeAction(raw: string): { action: TerminalInputAction; length: number } | null {
+  const sequences = [
+    "\x1b[3~",
+    "\x1b[5~",
+    "\x1b[6~",
+    "\x1b[1~",
+    "\x1b[4~",
+    "\x1b[A",
+    "\x1b[B",
+    "\x1b[C",
+    "\x1b[D",
+    "\x1b[H",
+    "\x1b[F",
+  ];
+  for (const sequence of sequences) {
+    if (raw.startsWith(sequence)) {
+      const action = directTerminalAction(sequence);
+      return action ? { action, length: sequence.length } : null;
+    }
+  }
+  return null;
+}
+
+function readSgrMouseEvent(raw: string): {
+  length: number;
+  wheel: "up" | "down" | null;
+} | null {
+  const match = sgrMousePattern.exec(raw);
+  if (!match) {
+    return null;
+  }
+  const button = match.groups?.button;
+  const wheel = button === "64" ? "up" : button === "65" ? "down" : null;
+  return { length: match[0].length, wheel };
+}
+
+function readX10MouseEvent(raw: string): {
+  length: number;
+  wheel: "up" | "down" | null;
+} | null {
+  if (!raw.startsWith("\x1b[M") || raw.length < 6) {
+    return null;
+  }
+  const button = (raw.codePointAt(3) ?? 32) - 32;
+  const wheel = button === 64 ? "up" : button === 65 ? "down" : null;
+  return { length: 6, wheel };
+}
+
+function appendMouseAction(actions: TerminalInputAction[], wheel: "up" | "down" | null): void {
+  if (wheel === "up") {
+    actions.push({ type: "scroll", delta: 5 });
+  } else if (wheel === "down") {
+    actions.push({ type: "scroll", delta: -5 });
   }
 }
 

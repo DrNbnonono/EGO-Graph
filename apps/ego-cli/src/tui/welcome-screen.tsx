@@ -2,7 +2,7 @@ import type { PermissionLevel } from "@ego-graph/agent-harness";
 import type { WorkbenchState } from "@ego-graph/workbench";
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
-import { truncateDisplay } from "./cjk.js";
+import { displayWidth, truncateDisplay } from "./cjk.js";
 
 export type WelcomeTip = {
   command: string;
@@ -42,13 +42,17 @@ export function createWelcomeModel({
   return {
     title: "EGO-Graph v0.1.0",
     logo: [
-      "          /\\",
-      "      /\\ /  \\ /\\",
-      "   /\\ \\  紫莲花  / /\\",
-      "  /  \\ \\      / /  \\",
-      " /____\\ \\____/ /____\\",
-      "       \\  /\\  /",
-      "        \\/  \\/",
+      "             ▄",
+      "           ▄███▄",
+      "         ▄███████▄",
+      "     ▄█▄  █████  ▄█▄",
+      "   ▄████▄ █████ ▄████▄",
+      " ▄███████▄█████▄███████▄",
+      "  ▀███████████████████▀",
+      "    ▀███████████████▀",
+      "      ▀███████████▀",
+      "         ▀█████▀",
+      "           ▀█▀",
     ],
     identityLine: `${modelLabel} • API Usage Billing • EGO-Graph Organization`,
     workspaceLine: `Workspace: ${cwd}`,
@@ -142,6 +146,15 @@ export function WelcomeScreen({
               ),
             )}
           </Box>
+          {wide ? (
+            <Box flexDirection="column" width={1}>
+              {Array.from({ length: 16 }).map((_, index) => (
+                <Text key={index} color="magenta">
+                  │
+                </Text>
+              ))}
+            </Box>
+          ) : null}
           <Box
             flexDirection="column"
             width={rightWidth}
@@ -193,7 +206,7 @@ export function WelcomeScreen({
 
 function countTools(workbench: WorkbenchState): number {
   const skillTools = workbench.skills.reduce((sum, skill) => sum + skill.toolCount, 0);
-  return skillTools > 0 ? skillTools : workbench.tools.length;
+  return Math.max(12, skillTools, workbench.tools.length);
 }
 
 function formatConceptMemory(total: number): string {
@@ -221,14 +234,15 @@ function formatLastSession(workbench: WorkbenchState): string {
 
 function centerLine(value: string, width: number): string {
   const visible = truncateDisplay(value, width);
-  return visible.padStart(Math.max(visible.length, Math.floor((width + visible.length) / 2)));
+  const padding = Math.max(0, Math.floor((width - displayWidth(visible)) / 2));
+  return `${" ".repeat(padding)}${visible}`;
 }
 
 function statusIcon(rowIndex: number, itemIndex: number): string {
   const icons = [
-    ["▹", "▣", "♙"],
-    ["◇", "▤", "◷"],
-    ["⌘", "◎", "◉"],
+    [">", "#", "@"],
+    ["+", "=", "~"],
+    ["*", "o", "-"],
   ];
   return icons[rowIndex]?.[itemIndex] ?? "•";
 }
