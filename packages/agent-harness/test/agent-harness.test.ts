@@ -1,7 +1,9 @@
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ToolRegistry, type ToolDefinition } from "@ego-graph/tools";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { createTerminalAgentSession, type AgentRunEvent } from "../src/index.js";
 
 const fakeProvider = (content: string) => ({
@@ -32,6 +34,28 @@ async function collect(iterable: AsyncIterable<AgentRunEvent>): Promise<AgentRun
 }
 
 describe("terminal agent session", () => {
+  it("routes terminal tool failures through executeToolCall semantics", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-terminal-agent-tool-failure-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-terminal-agent-home-"));
+    await writeFile(join(root, "package.json"), '{"name":"fixture"}', "utf8");
+    const registry = createThrowingGrepRegistry();
+    const session = createTerminalAgentSession({
+      workspaceRoot: root,
+      egoHome,
+      modelProvider: null,
+      toolRegistry: registry,
+    });
+
+    const events = await collect(session.startTask("read the project and build a plan"));
+    const grepEvents = events.filter((event) => readPayloadToolName(event) === "workspace.grep");
+
+    expect(grepEvents.map((event) => event.type)).toContain("tool.failed");
+    expect(grepEvents.map((event) => event.type)).not.toContain("tool.completed");
+    expect(grepEvents.find((event) => event.type === "tool.failed")?.payload.debug).toMatchObject({
+      error: "grep exploded",
+    });
+  });
+
   it("answers normal chat turns without forcing plan approval", async () => {
     const root = await mkdtemp(join(tmpdir(), "ego-terminal-agent-chat-"));
     const egoHome = await mkdtemp(join(tmpdir(), "ego-terminal-agent-home-"));
@@ -454,3 +478,72 @@ process.stdin.on("data", (chunk) => {
     expect(JSON.stringify(called.map((event) => event.payload))).toContain("echo:ok");
   });
 });
+
+function readPayloadToolName(event: AgentRunEvent): string | undefined {
+  const tool = event.payload.tool;
+  if (typeof tool === "string") {
+    return tool;
+  }
+  if (tool && typeof tool === "object" && "name" in tool) {
+    return String(tool.name);
+  }
+  return undefined;
+}
+
+function createThrowingGrepRegistry(): ToolRegistry {
+  const registry = new ToolRegistry();
+  registry.register(
+    createFixtureTool("workspace.list", z.object({}).passthrough(), {
+      files: ["package.json"],
+      findings: ["Listed fixture files."],
+    }),
+  );
+  registry.register(
+    createFixtureTool(
+      "workspace.grep",
+      z.object({ query: z.string(), limit: z.number().optional() }),
+      { findings: [] },
+      async () => {
+        throw new Error("grep exploded");
+      },
+    ),
+  );
+  registry.register(
+    createFixtureTool("workspace.read", z.object({}).passthrough(), {
+      path: "package.json",
+      content: '{"name":"fixture"}',
+      truncated: false,
+      findings: ["Read package.json."],
+    }),
+  );
+  registry.register(
+    createFixtureTool("evidence.write", z.object({}).passthrough(), {
+      summary: "fixture evidence",
+      source: "terminal-agent",
+      raw: {},
+      findings: ["fixture evidence"],
+    }),
+  );
+  return registry;
+}
+
+function createFixtureTool<InputSchema extends z.ZodTypeAny>(
+  name: string,
+  inputSchema: InputSchema,
+  output: Record<string, unknown>,
+  execute?: () => Promise<Record<string, unknown>>,
+): ToolDefinition<InputSchema, z.ZodObject<{ findings: z.ZodArray<z.ZodString> }, "passthrough">> {
+  const outputSchema = z.object({ findings: z.array(z.string()) }).passthrough();
+  return {
+    name,
+    description: `${name} fixture`,
+    inputSchema,
+    outputSchema,
+    permission: { scope: "file", risk: "low", requiresSandbox: false },
+    riskLevel: "low",
+    sandboxProfile: "none",
+    async execute() {
+      return execute ? await execute() : output;
+    },
+  };
+}

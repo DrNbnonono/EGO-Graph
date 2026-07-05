@@ -36,5 +36,15 @@ export { routeTerminalMessage, type PlannerDecision, type PlannerRiskLevel } fro
 export * from "./memory-bridge.js";
 export * from "./mcp-bridge.js";
 export { patchApprovalFlow, requiresPatchApproval } from "./patch-harness.js";
+export {
+  hydratePendingRunsFromStore,
+  replayRunFromStore,
+  type HydratedPendingRun,
+} from "./persistence.js";
 export { truncateCheckOutput, type HarnessCheckResult } from "./check-runner.js";
 export { canAttemptRepair, maxRepairAttempts } from "./repair-loop.js";
+export {
+  executeHarnessToolStep,
+  summarizeHarnessTool,
+  type ExecuteHarnessToolStepInput,
+} from "./tool-flow.js";

@@ -43,6 +43,7 @@ export type ExecuteToolCallInput<
 > = {
   tool: ToolDefinition<InputSchema, OutputSchema>;
   input: unknown;
+  call?: ToolCallProtocol;
   workspaceRoot: string;
   permissionLevel: PermissionLevel;
   approvalGranted?: boolean;
@@ -71,7 +72,7 @@ export async function executeToolCall<
   InputSchema extends ZodTypeAny,
   OutputSchema extends ZodTypeAny,
 >(input: ExecuteToolCallInput<InputSchema, OutputSchema>): Promise<ToolExecutorResult> {
-  const call = createToolCall(input.tool, input.input);
+  const call = input.call ?? createToolCall(input.tool, input.input);
   const createdAt = new Date().toISOString();
   const basePayload = {
     tool: call,

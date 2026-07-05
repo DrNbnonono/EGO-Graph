@@ -27,43 +27,73 @@ type TuiRunSession = {
   updatedAt: string;
 };
 
-const commandPalette = [
-  "/help",
-  "/model",
-  "/models",
-  "/status",
-  "/permissions",
-  "/allow workspace-write",
-  "/allow shell-readonly",
-  "/allow network-low",
-  "/allow security-active",
-  "/plan",
-  "/plan approve",
-  "/plan reject",
-  "/patch",
-  "/diff",
-  "/patch approve",
-  "/patch reject",
-  "/checks",
-  "/scan",
-  "/debug",
-  "/memory",
-  "/memory compact",
-  "/skills",
-  "/mcp",
-  "/prompt",
-  "/compact",
-  "/sessions",
-  "/new",
-  "/replay ",
-  "/clear",
+type CommandManifest = {
+  name: string;
+  category: "help" | "model" | "permission" | "approval" | "diff" | "memory" | "mcp" | "session";
+  description: string;
+};
+
+const commandPalette: CommandManifest[] = [
+  { name: "/help", category: "help", description: "Show terminal Agent commands." },
+  { name: "/model", category: "model", description: "Open model status and selector guidance." },
+  { name: "/models", category: "model", description: "List and manage model profiles." },
+  { name: "/status", category: "session", description: "Show current workbench status." },
+  { name: "/permissions", category: "permission", description: "Show active permission level." },
+  { name: "/allow workspace-write", category: "permission", description: "Allow patch proposal." },
+  {
+    name: "/allow shell-readonly",
+    category: "permission",
+    description: "Allow checks and readonly shell.",
+  },
+  {
+    name: "/allow network-low",
+    category: "permission",
+    description: "Allow low-risk network tools.",
+  },
+  {
+    name: "/allow security-active",
+    category: "permission",
+    description: "Allow approved security/MCP tools.",
+  },
+  { name: "/plan", category: "approval", description: "Show pending plan." },
+  { name: "/plan approve", category: "approval", description: "Approve the current plan." },
+  { name: "/plan reject", category: "approval", description: "Reject the current plan." },
+  { name: "/patch", category: "diff", description: "Show pending patch diff." },
+  { name: "/diff", category: "diff", description: "Show pending patch diff." },
+  { name: "/diff next", category: "diff", description: "Move to the next changed file." },
+  { name: "/diff prev", category: "diff", description: "Move to the previous changed file." },
+  { name: "/diff first", category: "diff", description: "Jump to the first changed file." },
+  { name: "/diff last", category: "diff", description: "Jump to the last changed file." },
+  {
+    name: "/patch approve",
+    category: "approval",
+    description: "Apply the approved patch and run checks.",
+  },
+  { name: "/patch reject", category: "approval", description: "Reject the pending patch." },
+  { name: "/checks", category: "approval", description: "Show latest check output." },
+  {
+    name: "/scan",
+    category: "permission",
+    description: "Explain authorized security-scan requirements.",
+  },
+  { name: "/debug", category: "session", description: "Show folded tool/debug details." },
+  { name: "/memory", category: "memory", description: "Recall project memory." },
+  { name: "/memory compact", category: "memory", description: "Compact active memory." },
+  { name: "/skills", category: "session", description: "Show skill status guidance." },
+  { name: "/mcp", category: "mcp", description: "Discover configured MCP tools." },
+  { name: "/prompt", category: "session", description: "Show system prompt guidance." },
+  { name: "/compact", category: "memory", description: "Compact memory context." },
+  { name: "/sessions", category: "session", description: "List recent runs." },
+  { name: "/new", category: "session", description: "Start a clean local session." },
+  { name: "/replay ", category: "session", description: "Replay a persisted run by id." },
+  { name: "/clear", category: "session", description: "Clear the current conversation." },
 ];
 
-export function getCommandPaletteMatches(input: string): Array<{ name: string }> {
+export function getCommandPaletteMatches(input: string): CommandManifest[] {
   const trimmed = input.trim();
   return commandPalette
-    .filter((command) => trimmed === "/" || command.startsWith(trimmed))
-    .map((name) => ({ name }));
+    .filter((command) => trimmed === "/" || command.name.startsWith(trimmed))
+    .slice(0, 12);
 }
 
 export function EgoTui(): ReactElement {
@@ -90,7 +120,7 @@ export function EgoTui(): ReactElement {
     session.getPermissionLevel(),
   );
   const paletteMatches = input.startsWith("/")
-    ? commandPalette.filter((command) => command.startsWith(input) || input === "/")
+    ? commandPalette.filter((command) => command.name.startsWith(input) || input === "/")
     : [];
 
   useEffect(() => {
@@ -144,7 +174,10 @@ export function EgoTui(): ReactElement {
     }
 
     if (key.return) {
-      const submitted = resolvePaletteInput(input, paletteMatches);
+      const submitted = resolvePaletteInput(
+        input,
+        paletteMatches.map((command) => command.name),
+      );
       if (!submitted) {
         return;
       }
@@ -384,6 +417,13 @@ async function submitInput(input: {
     input.session.setPermissionLevel(requested);
     input.setPermissionLevel(requested);
     input.setEvents((previous) => [...previous, localEvent(`权限等级已切换为 ${requested}`)]);
+    return;
+  }
+  if (normalized.startsWith("/diff ") && input.activeRunId) {
+    const activeRun = input.session.getRunState(input.activeRunId);
+    const fileCount = activeRun?.diff ? splitDiffByFile(activeRun.diff).length : 0;
+    input.setDiffFileIndex((previous) => resolveDiffFileIndex(normalized, previous, fileCount));
+    input.setDetailMode("diff");
     return;
   }
   if (normalized === "/diff" || normalized === "/patch") {
@@ -678,7 +718,7 @@ function InputBar({
 }: {
   input: string;
   busy: boolean;
-  paletteMatches: string[];
+  paletteMatches: CommandManifest[];
 }): ReactElement {
   return (
     <Box borderStyle="single" borderColor="gray" paddingX={1} flexDirection="column">
@@ -686,7 +726,10 @@ function InputBar({
         <Text color="yellow">
           {paletteMatches
             .slice(0, 5)
-            .map((command, index) => `${index === 0 ? ">" : ""}${command}`)
+            .map(
+              (command, index) =>
+                `${index === 0 ? ">" : ""}${command.name} [${command.category}] ${command.description}`,
+            )
             .join("  ")}
         </Text>
       ) : (
@@ -795,7 +838,7 @@ function CommandDetail({ runSessions }: { runSessions: TuiRunSession[] }): React
     <Box flexDirection="column">
       <Text color="yellow">常用命令</Text>
       {commandPalette.slice(0, 7).map((command) => (
-        <Text key={command}>{truncate(command, 34)}</Text>
+        <Text key={command.name}>{truncate(`${command.name} - ${command.description}`, 34)}</Text>
       ))}
       <Text color="yellow">最近会话</Text>
       {runSessions.length === 0 ? (
@@ -921,6 +964,25 @@ export function resolvePaletteInput(input: string, matches: string[]): string {
     return matches[0];
   }
   return trimmed;
+}
+
+export function resolveDiffFileIndex(command: string, current: number, fileCount: number): number {
+  const maxIndex = Math.max(0, fileCount - 1);
+  const normalized = command.trim().toLowerCase();
+  if (normalized === "/diff next") {
+    return Math.min(current + 1, maxIndex);
+  }
+  if (normalized === "/diff prev") {
+    return Math.max(current - 1, 0);
+  }
+  if (normalized === "/diff first") {
+    return 0;
+  }
+  if (normalized === "/diff last") {
+    return maxIndex;
+  }
+  const page = Number(normalized.replace("/diff", "").trim());
+  return Number.isInteger(page) && page > 0 ? Math.min(page - 1, maxIndex) : current;
 }
 
 function updateRunSessions(

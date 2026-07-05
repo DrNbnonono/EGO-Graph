@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { getCommandPaletteMatches, resolvePaletteInput, splitDiffByFile } from "../src/tui.js";
+import {
+  getCommandPaletteMatches,
+  resolveDiffFileIndex,
+  resolvePaletteInput,
+  splitDiffByFile,
+} from "../src/tui.js";
 
 describe("TUI helpers", () => {
   it("splits a unified diff into independent file pages", () => {
@@ -31,6 +36,11 @@ describe("TUI helpers", () => {
     expect(getCommandPaletteMatches("/pa").map((command) => command.name)).toContain(
       "/patch approve",
     );
+    expect(getCommandPaletteMatches("/model")[0]).toMatchObject({
+      name: "/model",
+      category: "model",
+    });
+    expect(getCommandPaletteMatches("/model")[0]?.description).toContain("model");
   });
 
   it("resolves a bare slash to the first palette command but keeps exact input otherwise", () => {
@@ -43,5 +53,15 @@ describe("TUI helpers", () => {
       ),
     ).toBe("/help");
     expect(resolvePaletteInput("/allow shell-readonly", [])).toBe("/allow shell-readonly");
+  });
+
+  it("resolves diff navigation commands without overflowing file bounds", () => {
+    expect(resolveDiffFileIndex("/diff next", 0, 3)).toBe(1);
+    expect(resolveDiffFileIndex("/diff next", 2, 3)).toBe(2);
+    expect(resolveDiffFileIndex("/diff prev", 0, 3)).toBe(0);
+    expect(resolveDiffFileIndex("/diff prev", 2, 3)).toBe(1);
+    expect(resolveDiffFileIndex("/diff first", 2, 3)).toBe(0);
+    expect(resolveDiffFileIndex("/diff last", 0, 3)).toBe(2);
+    expect(resolveDiffFileIndex("/diff 2", 0, 3)).toBe(1);
   });
 });

@@ -26,8 +26,6 @@ import {
   sqlitePath,
   SqliteEgoStore,
   type AgentCheckRecord,
-  type AgentEditRecord,
-  type AgentPlanRecord,
   type MemoryRecord,
 } from "@ego-graph/storage";
 import {
@@ -42,9 +40,16 @@ import {
   type WorkspaceEditPlan,
 } from "@ego-graph/workspace";
 import { z, type ZodTypeAny } from "zod";
+import {
+  hasPermission,
+  requiredPermissionForTool,
+  type PermissionLevel as HarnessPermissionLevel,
+} from "./safety-policy.js";
+import { hydratePendingRunsFromStore, replayRunFromStore } from "./persistence.js";
+import { executeHarnessToolStep } from "./tool-flow.js";
+import type { ToolCallProtocol } from "./tool-executor.js";
 
-export type PermissionLevel =
-  "read-only" | "workspace-write" | "shell-readonly" | "network-low" | "security-active";
+export type PermissionLevel = HarnessPermissionLevel;
 
 export type AgentRunEventType =
   | "user.message"
@@ -114,14 +119,7 @@ export type AgentHarnessPhase =
   | "complete"
   | "blocked";
 
-export type TerminalToolCall = {
-  id: string;
-  name: string;
-  input: Record<string, unknown>;
-  permissionRequired: PermissionLevel;
-  riskLevel: string;
-  timeoutMs: number;
-};
+export type TerminalToolCall = ToolCallProtocol;
 
 export type EvidenceGapStep = {
   id: string;
@@ -152,6 +150,7 @@ export type TerminalAgentSessionOptions = {
   permissionLevel?: PermissionLevel;
   modelProvider?: ChatModelProvider | null;
   checkCommands?: AgentCheckCommand[];
+  toolRegistry?: ReturnType<typeof createTerminalAgentToolRegistry>;
 };
 
 export type TerminalAgentSession = {
@@ -205,21 +204,13 @@ export type TerminalIntent = "chat" | "project_analysis" | "code_change" | "secu
 
 const maxRepairAttempts = 2;
 
-const permissionRank: Record<PermissionLevel, number> = {
-  "read-only": 0,
-  "workspace-write": 1,
-  "shell-readonly": 2,
-  "network-low": 3,
-  "security-active": 4,
-};
-
 export function createTerminalAgentSession(
   options: TerminalAgentSessionOptions,
 ): TerminalAgentSession {
   const workspaceRoot = options.workspaceRoot;
   const egoHome = options.egoHome ?? defaultEgoHome();
   const store = new SqliteEgoStore(sqlitePath(egoHome));
-  const toolRegistry = createTerminalAgentToolRegistry();
+  const toolRegistry = options.toolRegistry ?? createTerminalAgentToolRegistry();
   const mcpPool = createMcpClientPool();
   const pendingRuns = new Map<string, PendingRun>();
   const plannerProvider = resolvePlannerProvider(options);
@@ -301,18 +292,7 @@ export function createTerminalAgentSession(
       return streamRejectPatch({ runId, store, pendingRuns });
     },
     async replayRun(runId) {
-      const events = await store.listHermesEvents({ runId, limit: 200 });
-      return events
-        .slice()
-        .reverse()
-        .map((event) => ({
-          type: normalizeEventType(event.type),
-          runId,
-          sessionId: event.sessionId,
-          message: readString(event.payload.message, event.type),
-          createdAt: event.createdAt,
-          payload: event.payload,
-        }));
+      return replayRunFromStore(store, runId);
     },
     recallMemory(query) {
       return recallMemoryEvents({ store, query });
@@ -560,15 +540,16 @@ async function* streamStartTask(input: {
   }
 
   for (const request of buildReadOnlyToolRequests(input.message, summary)) {
-    yield* executeToolStep({
+    yield* executeHarnessToolStep({
       runId,
       sessionId,
-      store: input.store,
       workspaceRoot: input.workspaceRoot,
       toolRegistry: input.toolRegistry,
       permissionLevel: input.getPermissionLevel(),
       toolName: request.toolName,
       toolInput: request.input,
+      emit: (event) => emit(input.store, event),
+      emitEvidence: (event) => emitEvidence(input.store, event),
     });
   }
 
@@ -1081,112 +1062,6 @@ async function proposeRepairAfterFailedChecks(input: {
   ];
 }
 
-async function* executeToolStep(input: {
-  runId: string;
-  sessionId: string;
-  store: SqliteEgoStore;
-  workspaceRoot: string;
-  toolRegistry: ReturnType<typeof createTerminalAgentToolRegistry>;
-  permissionLevel: PermissionLevel;
-  toolName: string;
-  toolInput: Record<string, unknown>;
-}): AsyncIterable<AgentRunEvent> {
-  const tool = input.toolRegistry.get(input.toolName);
-  const toolCall = createTerminalToolCall(tool, input.toolInput);
-  yield await emit(input.store, {
-    type: "tool.requested",
-    runId: input.runId,
-    sessionId: input.sessionId,
-    message: `Tool requested: ${tool.name}`,
-    payload: { tool: summarizeTool(tool), toolCall },
-  });
-
-  const decision = checkTerminalPermission(tool, input.permissionLevel);
-  if (!decision.allowed) {
-    yield await emit(input.store, {
-      type: "tool.blocked",
-      runId: input.runId,
-      sessionId: input.sessionId,
-      message: decision.reason,
-      payload: { tool: tool.name, toolCall, permissionLevel: input.permissionLevel },
-    });
-    return;
-  }
-
-  yield await emit(input.store, {
-    type: "tool.started",
-    runId: input.runId,
-    sessionId: input.sessionId,
-    message: `Started ${tool.name}`,
-    payload: { tool: tool.name, toolCall },
-  });
-  let output: Record<string, unknown>;
-  try {
-    const parsedInput = tool.inputSchema.parse(input.toolInput);
-    const rawOutput = await tool.execute(parsedInput, { workspaceRoot: input.workspaceRoot });
-    output = sanitizeToolOutput(tool.outputSchema.parse(rawOutput) as Record<string, unknown>);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    output = {
-      status: "failed",
-      findings: [`${tool.name} failed: ${message}`],
-      recoveryHint: buildToolRecoveryHint(tool.name, message),
-    };
-    yield await emit(input.store, {
-      type: "tool.completed",
-      runId: input.runId,
-      sessionId: input.sessionId,
-      message: `Failed ${tool.name}`,
-      payload: { tool: tool.name, toolCall, output },
-    });
-    yield await emit(input.store, {
-      type: "reflection.created",
-      runId: input.runId,
-      sessionId: input.sessionId,
-      message: `Reflection: ${tool.name} failed; try a smaller input, lower-risk tool, or inspect manually.`,
-      payload: { tool: tool.name, toolCall, recoveryHint: output.recoveryHint },
-    });
-    return;
-  }
-  yield await emit(input.store, {
-    type: "tool.completed",
-    runId: input.runId,
-    sessionId: input.sessionId,
-    message: `Completed ${tool.name}`,
-    payload: { tool: tool.name, toolCall, output },
-  });
-
-  const findings = Array.isArray(output.findings) ? output.findings.map(String) : [];
-  yield await emit(input.store, {
-    type: "observation.created",
-    runId: input.runId,
-    sessionId: input.sessionId,
-    message: findings[0] ?? `Observed ${tool.name} output.`,
-    payload: { tool: tool.name, findings, output },
-  });
-
-  const candidates =
-    tool.evidenceMapper?.(output as z.output<ZodTypeAny>) ??
-    findings.map((summary) => ({ summary, raw: output }));
-  for (const candidate of candidates) {
-    yield await emitEvidence(input.store, {
-      runId: input.runId,
-      sessionId: input.sessionId,
-      toolName: tool.name,
-      candidate,
-      output,
-    });
-  }
-
-  yield await emit(input.store, {
-    type: "reflection.created",
-    runId: input.runId,
-    sessionId: input.sessionId,
-    message: `Reflection: ${tool.name} reduced the evidence gap with ${findings.length} finding(s).`,
-    payload: { tool: tool.name, findingsCount: findings.length },
-  });
-}
-
 async function emit(
   store: SqliteEgoStore,
   input: {
@@ -1516,19 +1391,6 @@ function checkTerminalPermission(
   };
 }
 
-function requiredPermissionForTool(tool: ToolDefinition<ZodTypeAny, ZodTypeAny>): PermissionLevel {
-  if (tool.name.startsWith("check.") || tool.name === "shell.readonly") {
-    return "shell-readonly";
-  }
-  if ((tool.riskLevel ?? tool.permission.risk) === "high" || tool.requiresApproval) {
-    return "security-active";
-  }
-  if (tool.permission.scope === "network") {
-    return "network-low";
-  }
-  return "read-only";
-}
-
 function resolvePlannerProvider(
   options: TerminalAgentSessionOptions,
 ): ChatModelProvider | null | undefined {
@@ -1542,10 +1404,6 @@ function resolvePlannerProvider(
   }
 }
 
-function hasPermission(current: PermissionLevel, required: PermissionLevel): boolean {
-  return permissionRank[current] >= permissionRank[required];
-}
-
 async function recallStoreMemories(
   store: SqliteEgoStore,
   query: string,
@@ -1553,69 +1411,6 @@ async function recallStoreMemories(
   const stored = await store.listMemories({ limit: 100 });
   const service = createMemoryService(stored.map(storageMemoryToRuntimeMemory));
   return service.recall({ query, limit: 6 });
-}
-
-async function hydratePendingRunsFromStore(input: {
-  store: SqliteEgoStore;
-  pendingRuns: Map<string, PendingRun>;
-}): Promise<void> {
-  const [draftPlans, pendingEdits] = await Promise.all([
-    input.store.listAgentPlans({ status: "draft", limit: 50 }),
-    input.store.listPendingAgentEdits(),
-  ]);
-
-  for (const plan of draftPlans) {
-    if (plan.runId && !input.pendingRuns.has(plan.runId)) {
-      input.pendingRuns.set(plan.runId, hydratePlanRun(plan));
-    }
-  }
-
-  for (const edit of pendingEdits) {
-    const run = await input.store.getAgentRun(edit.runId);
-    const checks = await input.store.listAgentChecks(edit.runId);
-    const editPlan = readWorkspaceEditPlan(edit);
-    input.pendingRuns.set(edit.runId, {
-      runId: edit.runId,
-      sessionId: `hydrated-${edit.runId}`,
-      message: run?.message ?? readString(edit.plan.goal, "Hydrated pending patch"),
-      status: "patch_pending",
-      phase: "diff_preview",
-      diff: edit.diff,
-      files: edit.files,
-      checks,
-      repairAttempts: 0,
-      ...(editPlan ? { editPlan } : {}),
-      approvalId: `approval-${edit.previewId}`,
-    });
-  }
-}
-
-function hydratePlanRun(plan: AgentPlanRecord): PendingRun {
-  return {
-    runId: plan.runId ?? plan.planId,
-    sessionId: plan.sessionId,
-    message: plan.message,
-    status: "plan_pending",
-    phase: "approval",
-    plan: plan.plan.map((item, index) => ({
-      id: `hydrated-${index + 1}`,
-      title: item.split(":")[0] || `Step ${index + 1}`,
-      knownEvidence: ["Hydrated from SQLite draft plan."],
-      missingEvidence: ["Open the run or approve/reject the hydrated plan."],
-      toolChoiceRationale: item,
-      expectedResult: "Continue the persisted Agent Harness workflow.",
-      stopCondition: "Plan approved or rejected.",
-      riskNote: "Hydrated state; no new tool call executed.",
-    })),
-  };
-}
-
-function readWorkspaceEditPlan(edit: AgentEditRecord): WorkspaceEditPlan | undefined {
-  const plan = edit.plan as unknown;
-  if (!plan || typeof plan !== "object" || !("operations" in plan)) {
-    return undefined;
-  }
-  return plan as WorkspaceEditPlan;
 }
 
 async function registerMcpRuntimeTools(
@@ -1694,15 +1489,16 @@ async function* streamMcpToolCall(input: {
     payload: { tool: input.name, args: input.args },
   });
 
-  yield* executeToolStep({
+  yield* executeHarnessToolStep({
     runId,
     sessionId,
-    store: input.store,
     workspaceRoot: input.workspaceRoot,
     toolRegistry: registry,
     permissionLevel: input.getPermissionLevel(),
     toolName: input.name,
     toolInput: { arguments: input.args },
+    emit: (event) => emit(input.store, event),
+    emitEvidence: (event) => emitEvidence(input.store, event),
   });
 
   yield await emit(input.store, {
@@ -1841,20 +1637,6 @@ function summarizeTool(tool: ToolDefinition<ZodTypeAny, ZodTypeAny>): Record<str
     requiresApproval: Boolean(tool.requiresApproval),
     sandboxProfile: tool.sandboxProfile ?? (tool.permission.requiresSandbox ? "docker" : "none"),
     timeoutMs: tool.timeoutMs,
-  };
-}
-
-function createTerminalToolCall(
-  tool: ToolDefinition<ZodTypeAny, ZodTypeAny>,
-  toolInput: Record<string, unknown>,
-): TerminalToolCall {
-  return {
-    id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    name: tool.name,
-    input: toolInput,
-    permissionRequired: requiredPermissionForTool(tool),
-    riskLevel: tool.riskLevel ?? tool.permission.risk,
-    timeoutMs: tool.timeoutMs ?? 30_000,
   };
 }
 
@@ -2031,49 +1813,6 @@ function buildFinalSummary(checks: Array<{ status: string; command: string }>): 
   return `Patch applied. Checks passed ${passed}/${checks.length}: ${checks
     .map((check) => `${check.command}=${check.status}`)
     .join(", ")}`;
-}
-
-function normalizeEventType(type: string): AgentRunEventType {
-  const known: AgentRunEventType[] = [
-    "user.message",
-    "assistant.message",
-    "run.started",
-    "context.loaded",
-    "memory.recalled",
-    "model.failed",
-    "planner.fallback",
-    "planner.model.used",
-    "plan.proposed",
-    "plan.approved",
-    "plan.rejected",
-    "tool.requested",
-    "tool.started",
-    "tool.completed",
-    "tool.blocked",
-    "observation.created",
-    "evidence.created",
-    "reflection.created",
-    "patch.proposed",
-    "patch.approved",
-    "patch.rejected",
-    "patch.applied",
-    "check.started",
-    "check.completed",
-    "repair.proposed",
-    "repair.skipped",
-    "memory.written",
-    "memory.compacted",
-    "memory.archived",
-    "memory.forgotten",
-    "mcp.tools.discovered",
-    "mcp.call.proposed",
-    "mcp.call.completed",
-    "run.completed",
-    "run.blocked",
-  ];
-  return known.includes(type as AgentRunEventType)
-    ? (type as AgentRunEventType)
-    : "reflection.created";
 }
 
 function readString(value: unknown, fallback: string): string {

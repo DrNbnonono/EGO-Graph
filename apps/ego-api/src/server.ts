@@ -489,40 +489,82 @@ export function createServer(options: CreateServerOptions = {}): Hono {
     }
 
     const sessionId = body.sessionId ?? "web-chat";
-    const turn = await runAssistantChatTurn({
-      message,
-      workspaceRoot,
-      ...(options.modelProvider !== undefined ? { modelProvider: options.modelProvider } : {}),
-    });
-    const lines = [
-      {
-        type: "agent.event",
-        event: "message.received",
-        sessionId,
-        message,
-      },
-      {
-        type: "agent.event",
-        event: "model.completed",
-        sessionId,
-        model: turn.model,
-      },
-      {
-        type: "model.delta",
-        sessionId,
-        delta: turn.reply,
-      },
-      {
-        type: "assistant.final",
-        sessionId,
-        status: turn.status,
-        message: turn.reply,
-        model: turn.model,
-      },
-    ];
+    const provider =
+      options.modelProvider !== undefined
+        ? options.modelProvider
+        : createChatModelProvider(loadModelConfig({ workspaceRoot }));
 
-    return context.text(lines.map((line) => JSON.stringify(line)).join("\n") + "\n", 200, {
-      "content-type": "application/x-ndjson; charset=utf-8",
+    if (!provider?.streamComplete) {
+      const turn = await runAssistantChatTurn({
+        message,
+        workspaceRoot,
+        ...(options.modelProvider !== undefined ? { modelProvider: options.modelProvider } : {}),
+      });
+      const lines = [
+        { type: "agent.event", event: "message.received", sessionId, message },
+        { type: "agent.event", event: "model.completed", sessionId, model: turn.model },
+        { type: "model.delta", sessionId, delta: turn.reply },
+        {
+          type: "assistant.final",
+          sessionId,
+          status: turn.status,
+          message: turn.reply,
+          model: turn.model,
+        },
+      ];
+      return context.text(lines.map((line) => JSON.stringify(line)).join("\n") + "\n", 200, {
+        "content-type": "application/x-ndjson; charset=utf-8",
+      });
+    }
+
+    const systemPrompt = await loadAgentSystemPrompt({ workspaceRoot });
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const encoder = new TextEncoder();
+        let reply = "";
+        const write = (line: Record<string, unknown>) => {
+          controller.enqueue(encoder.encode(`${JSON.stringify(line)}\n`));
+        };
+
+        try {
+          write({ type: "agent.event", event: "message.received", sessionId, message });
+          for await (const delta of provider.streamComplete!({
+            messages: [
+              { role: "system", content: systemPrompt.finalPrompt },
+              { role: "user", content: message },
+            ],
+          })) {
+            reply += delta;
+            write({ type: "model.delta", sessionId, delta });
+          }
+          write({
+            type: "agent.event",
+            event: "model.completed",
+            sessionId,
+            model: provider.model,
+          });
+          write({
+            type: "assistant.final",
+            sessionId,
+            status: "answered",
+            message: reply,
+            model: provider.model,
+          });
+        } catch (error) {
+          write({
+            type: "error",
+            sessionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        } finally {
+          controller.close();
+        }
+      },
+    });
+
+    return new Response(stream, {
+      status: 200,
+      headers: { "content-type": "application/x-ndjson; charset=utf-8" },
     });
   });
 

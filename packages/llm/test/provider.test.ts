@@ -98,4 +98,123 @@ describe("chat model provider", () => {
     expect(body.system).toBe("Return JSON only.");
     expect(body.messages).toEqual([{ role: "user", content: "decide" }]);
   });
+
+  it("streams OpenAI-compatible token deltas from SSE responses", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(
+          createSseStream([
+            'data: {"choices":[{"delta":{"content":"Hel"}}]}',
+            'data: {"choices":[{"delta":{"content":"lo"}}]}',
+            "data: [DONE]",
+          ]),
+          { status: 200 },
+        ),
+      );
+    const provider = createChatModelProvider({
+      provider: "openai-compatible",
+      baseUrl: "https://gateway.example.test",
+      chatPath: "/compatible/chat",
+      apiKey: "test-key",
+      model: "test-model",
+      headers: {},
+      timeoutMs: 1000,
+      maxTokens: 4096,
+      wireApi: "openai-chat-completions",
+    });
+
+    if (!provider?.streamComplete) {
+      throw new Error("expected configured streaming provider");
+    }
+
+    const chunks: string[] = [];
+    for await (const chunk of provider.streamComplete({
+      messages: [{ role: "user", content: "say hello" }],
+    })) {
+      chunks.push(chunk);
+    }
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as { stream?: boolean };
+
+    expect(chunks).toEqual(["Hel", "lo"]);
+    expect(body.stream).toBe(true);
+  });
+
+  it("returns structured model tool calls from OpenAI-compatible responses", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: "I will read the file.",
+                tool_calls: [
+                  {
+                    id: "call-readme",
+                    type: "function",
+                    function: {
+                      name: "workspace.read",
+                      arguments: '{"path":"README.md"}',
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    const provider = createChatModelProvider({
+      provider: "openai-compatible",
+      baseUrl: "https://gateway.example.test",
+      chatPath: "/compatible/chat",
+      apiKey: "test-key",
+      model: "test-model",
+      headers: {},
+      timeoutMs: 1000,
+      maxTokens: 4096,
+      wireApi: "openai-chat-completions",
+    });
+
+    if (!provider?.completeStructured) {
+      throw new Error("expected structured completion provider");
+    }
+
+    const result = await provider.completeStructured({
+      messages: [{ role: "user", content: "read README" }],
+      tools: [
+        {
+          name: "workspace.read",
+          description: "Read a workspace file.",
+          inputSchema: {
+            type: "object",
+            properties: { path: { type: "string" } },
+            required: ["path"],
+          },
+        },
+      ],
+      toolChoice: "auto",
+    });
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as {
+      tools?: unknown[];
+      tool_choice?: string;
+    };
+
+    expect(body.tools).toHaveLength(1);
+    expect(body.tool_choice).toBe("auto");
+    expect(result.content).toBe("I will read the file.");
+    expect(result.toolCalls).toEqual([
+      { id: "call-readme", name: "workspace.read", arguments: { path: "README.md" } },
+    ]);
+  });
 });
+
+function createSseStream(lines: string[]): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(`${lines.join("\n\n")}\n\n`));
+      controller.close();
+    },
+  });
+}
