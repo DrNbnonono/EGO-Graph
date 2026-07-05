@@ -364,6 +364,12 @@ describe("terminal agent session", () => {
     expect(session.getRunState(runId)?.status).toBe("patch_pending");
     expect(session.getRunState(runId)?.repairAttempts).toBe(1);
     expect(session.getRunState(runId)?.diff).toContain("+lotus fixed");
+    expect(events.find((event) => event.type === "repair.proposed")?.payload).toMatchObject({
+      failureLocalization: expect.objectContaining({
+        failedCommands: expect.any(Array),
+        likelyFiles: expect.any(Array),
+      }),
+    });
     expect(await readFile(join(root, "README.md"), "utf8")).toBe("lotus\n");
   });
 

@@ -44,6 +44,11 @@ export {
 export { truncateCheckOutput, type HarnessCheckResult } from "./check-runner.js";
 export { canAttemptRepair, maxRepairAttempts } from "./repair-loop.js";
 export {
+  localizeCheckFailure,
+  renderFailureLocalizationForPrompt,
+  type FailureLocalization,
+} from "./failure-localization.js";
+export {
   executeHarnessToolStep,
   summarizeHarnessTool,
   type ExecuteHarnessToolStepInput,

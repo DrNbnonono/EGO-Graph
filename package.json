@@ -14,6 +14,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "eval": "node scripts/eval.mjs",
+    "eval:smoke": "node scripts/eval.mjs --smoke",
     "smoke": "node scripts/smoke.mjs",
     "test": "vitest run",
     "typecheck": "tsc -b",

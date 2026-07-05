@@ -1,7 +1,7 @@
-import {
+import type {
   createTerminalAgentToolRegistry,
-  type ToolDefinition,
-  type ToolEvidenceCandidate,
+  ToolDefinition,
+  ToolEvidenceCandidate,
 } from "@ego-graph/tools";
 import { type ZodTypeAny, type z } from "zod";
 import type { AgentRunEvent, AgentRunEventType, PermissionLevel } from "./session.js";

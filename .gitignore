@@ -30,6 +30,7 @@ Thumbs.db
 .ego/
 trajectories/*.jsonl
 storage/*.sqlite
+reports/
 
 # 沙箱/构建
 docker/*.tar

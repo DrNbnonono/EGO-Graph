@@ -1,0 +1,10 @@
+{"id":"memory-001","category":"memory_recall","input":"记住我偏好终端优先，然后说明当前偏好","expected":{"intent":"chat","finalStatus":"complete"}}
+{"id":"memory-002","category":"memory_recall","input":"回忆上次失败的 typecheck 原因","expected":{"intent":"chat","finalStatus":"complete"}}
+{"id":"memory-003","category":"memory_recall","input":"总结最近 run 的决策","expected":{"intent":"chat","finalStatus":"complete"}}
+{"id":"memory-004","category":"memory_recall","input":"compact memory for project facts","expected":{"intent":"chat","finalStatus":"complete"}}
+{"id":"memory-005","category":"memory_recall","input":"forget stale memory about old dashboard","expected":{"intent":"chat","finalStatus":"complete"}}
+{"id":"memory-006","category":"memory_recall","input":"archive completed run summary","expected":{"intent":"chat","finalStatus":"complete"}}
+{"id":"memory-007","category":"memory_recall","input":"读取用户偏好并回答","expected":{"intent":"chat","finalStatus":"complete"}}
+{"id":"memory-008","category":"memory_recall","input":"回忆 security scope 设置","expected":{"intent":"chat","finalStatus":"complete"}}
+{"id":"memory-009","category":"memory_recall","input":"总结 tool result memory","expected":{"intent":"chat","finalStatus":"complete"}}
+{"id":"memory-010","category":"memory_recall","input":"说明哪些内容不能写入 memory","expected":{"intent":"chat","finalStatus":"complete"}}

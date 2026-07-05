@@ -3,6 +3,7 @@ import {
   loadAgentSystemPrompt,
   runAssistantChatTurn,
   runCodingAgentTurn,
+  streamAssistantChatTurn,
   type AgentCheckCommand,
 } from "@ego-graph/agent";
 import { createTrajectoryEvent, type TrajectoryEvent } from "@ego-graph/core";
@@ -34,17 +35,20 @@ import {
   type ToolEvidenceCandidate,
 } from "@ego-graph/tools";
 import {
+  createContextForTask,
   createWorkspaceContextPack,
   type ProjectSummary,
+  type TaskContext,
   type WorkspaceContextPack,
   type WorkspaceEditPlan,
 } from "@ego-graph/workspace";
 import { z, type ZodTypeAny } from "zod";
+import { hasPermission, type PermissionLevel as HarnessPermissionLevel } from "./safety-policy.js";
+import { runAgentLoop } from "./agent-loop.js";
 import {
-  hasPermission,
-  requiredPermissionForTool,
-  type PermissionLevel as HarnessPermissionLevel,
-} from "./safety-policy.js";
+  localizeCheckFailure,
+  renderFailureLocalizationForPrompt,
+} from "./failure-localization.js";
 import { hydratePendingRunsFromStore, replayRunFromStore } from "./persistence.js";
 import { executeHarnessToolStep } from "./tool-flow.js";
 import type { ToolCallProtocol } from "./tool-executor.js";
@@ -62,6 +66,10 @@ export type AgentRunEventType =
   | "model.failed"
   | "planner.fallback"
   | "planner.model.used"
+  | "planner.decision"
+  | "loop.step.started"
+  | "loop.step.completed"
+  | "loop.stopped"
   | "plan.proposed"
   | "plan.approved"
   | "plan.rejected"
@@ -246,8 +254,10 @@ export function createTerminalAgentSession(
         message,
         workspaceRoot,
         store,
+        toolRegistry,
         pendingRuns,
         intent,
+        plannerProvider,
         modelProvider: options.modelProvider,
         getPermissionLevel: () => permissionLevel,
       });
@@ -329,8 +339,10 @@ async function* streamChatTurn(input: {
   message: string;
   workspaceRoot: string;
   store: SqliteEgoStore;
+  toolRegistry: ReturnType<typeof createTerminalAgentToolRegistry>;
   pendingRuns: Map<string, PendingRun>;
   intent: TerminalIntent;
+  plannerProvider: ChatModelProvider | null | undefined;
   modelProvider: TerminalAgentSessionOptions["modelProvider"];
   getPermissionLevel(): PermissionLevel;
 }): AsyncIterable<AgentRunEvent> {
@@ -386,15 +398,49 @@ async function* streamChatTurn(input: {
         recentEventsSummary: contextPack.recentEventsSummary,
       },
     });
+
+    yield* runAgentLoop({
+      runId,
+      sessionId,
+      message: input.message,
+      intent: input.intent,
+      workspaceRoot: input.workspaceRoot,
+      permissionLevel: input.getPermissionLevel(),
+      toolRegistry: input.toolRegistry,
+      ...(input.plannerProvider !== undefined ? { modelProvider: input.plannerProvider } : {}),
+      emit: (event) => emit(input.store, event),
+      emitEvidence: (event) => emitEvidence(input.store, event),
+    });
   }
 
   try {
-    const turn = await runAssistantChatTurn({
+    let finalTurn: Awaited<ReturnType<typeof runAssistantChatTurn>> | undefined;
+    for await (const event of streamAssistantChatTurn({
       message: input.message,
       workspaceRoot: input.workspaceRoot,
       memoryHints: memoryHits.map((memory) => `[${memory.scope}] ${memory.content}`),
       ...(input.modelProvider !== undefined ? { modelProvider: input.modelProvider } : {}),
-    });
+    })) {
+      if (event.type === "delta") {
+        yield await emit(input.store, {
+          type: "assistant.delta",
+          runId,
+          sessionId,
+          message: event.content,
+          payload: { modelStreaming: true },
+        });
+      } else {
+        finalTurn = event.turn;
+      }
+    }
+    const turn =
+      finalTurn ??
+      (await runAssistantChatTurn({
+        message: input.message,
+        workspaceRoot: input.workspaceRoot,
+        memoryHints: memoryHits.map((memory) => `[${memory.scope}] ${memory.content}`),
+        ...(input.modelProvider !== undefined ? { modelProvider: input.modelProvider } : {}),
+      }));
     const reply =
       turn.status === "needs_model"
         ? buildLocalAssistantFallback(input.message, input.intent, turn.observations)
@@ -427,6 +473,19 @@ async function* streamChatTurn(input: {
         suggestedCommands: turn.suggestedCommands,
       },
     });
+    if (turn.model.configured && turn.status === "answered") {
+      yield await emit(input.store, {
+        type: "assistant.completed",
+        runId,
+        sessionId,
+        message: reply,
+        payload: {
+          status: turn.status,
+          model: turn.model,
+          suggestedCommands: turn.suggestedCommands,
+        },
+      });
+    }
   } catch (error) {
     const debug = error instanceof Error ? error.message : String(error);
     input.pendingRuns.set(runId, {
@@ -493,6 +552,13 @@ async function* streamStartTask(input: {
   });
   const summary = contextPack.summary;
   const files = contextPack.selectedFiles.map((file) => file.path);
+  const taskContext = await createContextForTask({
+    workspaceRoot: input.workspaceRoot,
+    goal: input.message,
+    intent: "terminal-agent",
+    recentEvents: await readRecentEventMessages(input.store),
+    tokenBudget: 8_000,
+  });
   yield await emit(input.store, {
     type: "context.loaded",
     runId,
@@ -509,6 +575,12 @@ async function* streamStartTask(input: {
       })),
       recentEventsSummary: contextPack.recentEventsSummary,
       budget: contextPack.budget,
+      taskContext: {
+        selectedFiles: taskContext.selectedFiles.map((file) => file.path),
+        relevantTests: taskContext.relevantTests,
+        symbols: taskContext.selectedSymbols.slice(0, 20),
+        budget: taskContext.budget,
+      },
     },
   });
 
@@ -539,7 +611,39 @@ async function* streamStartTask(input: {
     });
   }
 
-  for (const request of buildReadOnlyToolRequests(input.message, summary)) {
+  const classifiedIntent = classifyTerminalIntent(input.message);
+  const loopIntent = classifiedIntent === "chat" ? "project_analysis" : classifiedIntent;
+
+  yield* runAgentLoop({
+    runId,
+    sessionId,
+    message: input.message,
+    intent: loopIntent,
+    workspaceRoot: input.workspaceRoot,
+    permissionLevel: input.getPermissionLevel(),
+    toolRegistry: input.toolRegistry,
+    ...(input.plannerProvider !== undefined ? { modelProvider: input.plannerProvider } : {}),
+    securityScope: memoryHits.find((memory) => memory.kind === "security_scope") ?? null,
+    emit: (event) => emit(input.store, event),
+    emitEvidence: (event) => emitEvidence(input.store, event),
+  });
+
+  if (loopIntent === "security_task") {
+    const hasSecurityScope = memoryHits.some((memory) => memory.kind === "security_scope");
+    if (!hasSecurityScope) {
+      input.pendingRuns.set(runId, {
+        runId,
+        sessionId,
+        message: input.message,
+        status: "blocked",
+        phase: "blocked",
+        contextPack,
+      });
+      return;
+    }
+  }
+
+  for (const request of buildLegacyReadOnlyToolRequests()) {
     yield* executeHarnessToolStep({
       runId,
       sessionId,
@@ -561,6 +665,7 @@ async function* streamStartTask(input: {
       message: input.message,
       summary,
       files,
+      taskContext,
       memories: memoryHits,
       tools: input.toolRegistry.list().map(summarizeTool),
     });
@@ -967,10 +1072,19 @@ async function proposeRepairAfterFailedChecks(input: {
   }
 
   pending.phase = "repair";
+  const localization = await localizeCheckFailure({
+    workspaceRoot: input.workspaceRoot,
+    goal: pending.message,
+    changedFiles: pending.files ?? [],
+    failedChecks: input.failedChecks,
+  });
   const repairMessage = [
     pending.message,
     "",
     "Checks failed after applying the previous patch. Generate a minimal repair WorkspaceEditPlan.",
+    renderFailureLocalizationForPrompt(localization),
+    "",
+    "Raw check summaries:",
     ...summarizeChecks(input.failedChecks).map((check) => `- ${check}`),
   ].join("\n");
   const turn = await runCodingAgentTurn({
@@ -999,6 +1113,7 @@ async function proposeRepairAfterFailedChecks(input: {
           status: turn.status,
           assistantMessage: turn.assistantMessage,
           failedChecks: summarizeChecks(input.failedChecks),
+          failureLocalization: localization,
         },
       }),
     ];
@@ -1049,6 +1164,7 @@ async function proposeRepairAfterFailedChecks(input: {
       payload: {
         approvalId,
         failedChecks: summarizeChecks(input.failedChecks),
+        failureLocalization: localization,
         repairAttempts: pending.repairAttempts,
       },
     }),
@@ -1161,6 +1277,11 @@ function mapTrajectoryType(type: AgentRunEventType): TrajectoryEvent["type"] | u
       return "model.failed";
     case "planner.fallback":
       return "planner.fallback";
+    case "planner.decision":
+    case "loop.step.started":
+    case "loop.step.completed":
+    case "loop.stopped":
+      return "decision.made";
     case "patch.proposed":
       return "agent.edit.proposed";
     case "patch.approved":
@@ -1200,48 +1321,13 @@ async function persistTrajectoryEvents(
   }
 }
 
-function buildReadOnlyToolRequests(
-  message: string,
-  summary: ProjectSummary,
-): Array<{
+function buildLegacyReadOnlyToolRequests(): Array<{
   toolName: string;
   input: Record<string, unknown>;
 }> {
-  const query = selectSearchQuery(message);
-  const requests: Array<{
-    toolName: string;
-    input: Record<string, unknown>;
-  }> = [
-    { toolName: "workspace.list", input: { limit: 80, maxDepth: 4 } },
-    { toolName: "workspace.grep", input: { query, limit: 20 } },
-  ];
-  const readTarget = summary.importantFiles.includes("README.md")
-    ? "README.md"
-    : summary.importantFiles[0];
-  if (readTarget) {
-    requests.push({ toolName: "workspace.read", input: { path: readTarget, maxBytes: 20_000 } });
-  }
-  requests.push({
-    toolName: "evidence.write",
-    input: {
-      summary: `Terminal agent gathered initial context for: ${message}`,
-      source: "terminal-agent",
-      raw: { query },
-    },
-  });
-  if (isSecurityResearchRequest(message)) {
-    requests.push({
-      toolName: "security.package_manifest_audit",
-      input: { manifestPath: "package.json", includeDevDependencies: true },
-    });
-    if (/semgrep|静态|sast|源码|source|漏洞|vuln/i.test(message)) {
-      requests.push({
-        toolName: "security.semgrep_scan",
-        input: { path: ".", config: "p/typescript", timeoutMs: 60_000 },
-      });
-    }
-  }
-  return requests;
+  // The dynamic Agent Loop now owns bounded read-only evidence gathering. Keep
+  // this compatibility hook as an empty extension point for older callers.
+  return [];
 }
 
 async function generateEvidenceGapPlan(input: {
@@ -1250,6 +1336,7 @@ async function generateEvidenceGapPlan(input: {
   message: string;
   summary: ProjectSummary;
   files: string[];
+  taskContext: TaskContext;
   memories: RuntimeMemoryRecord[];
   tools: Array<Record<string, unknown>>;
 }): Promise<
@@ -1299,6 +1386,17 @@ async function generateEvidenceGapPlan(input: {
               packages: input.summary.packages,
               importantFiles: input.summary.importantFiles,
               sampledFiles: input.files.slice(0, 40),
+              selectedContextFiles: input.taskContext.selectedFiles.map((file) => file.path),
+              relevantTests: input.taskContext.relevantTests,
+              selectedSymbols: input.taskContext.selectedSymbols
+                .slice(0, 40)
+                .map((symbol) => `${symbol.kind}:${symbol.name}@${symbol.file}:${symbol.line}`),
+              snippets: input.taskContext.snippets.map((snippet) => ({
+                path: snippet.path,
+                lines: `${snippet.startLine}-${snippet.endLine}`,
+                reason: snippet.reason,
+                content: snippet.content.slice(0, 2_000),
+              })),
             },
             memories: input.memories.map((memory) => ({
               scope: memory.scope,
@@ -1375,20 +1473,6 @@ function buildEvidenceGapPlan(
       riskNote: "需要 shell-readonly 或更高权限；默认检查命令为 pnpm typecheck。",
     },
   ];
-}
-
-function checkTerminalPermission(
-  tool: ToolDefinition<ZodTypeAny, ZodTypeAny>,
-  level: PermissionLevel,
-): { allowed: true; reason: string } | { allowed: false; reason: string } {
-  const required = requiredPermissionForTool(tool);
-  if (hasPermission(level, required)) {
-    return { allowed: true, reason: `${tool.name} allowed by ${level}` };
-  }
-  return {
-    allowed: false,
-    reason: `${tool.name} requires ${required}; current permission is ${level}. Use /allow ${required}.`,
-  };
 }
 
 function resolvePlannerProvider(
@@ -1640,15 +1724,6 @@ function summarizeTool(tool: ToolDefinition<ZodTypeAny, ZodTypeAny>): Record<str
   };
 }
 
-function sanitizeToolOutput(output: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(output).map(([key, value]) => [
-      key,
-      typeof value === "string" ? truncateToolText(value) : value,
-    ]),
-  );
-}
-
 function truncateToolText(value: string, maxChars = 12_000): string {
   if (value.length <= maxChars) {
     return value;
@@ -1658,16 +1733,6 @@ function truncateToolText(value: string, maxChars = 12_000): string {
   return `${value.slice(0, head)}\n[...truncated ${value.length - head - tail} chars...]\n${value.slice(
     value.length - tail,
   )}`;
-}
-
-function buildToolRecoveryHint(toolName: string, message: string): string {
-  if (/permission|requires|allow/i.test(message)) {
-    return `Check permission level before calling ${toolName}.`;
-  }
-  if (/timeout/i.test(message)) {
-    return `Retry ${toolName} with a narrower path, lower limit, or shorter command.`;
-  }
-  return `Inspect the tool input and retry ${toolName} with a smaller, read-only scope.`;
 }
 
 function summarizeChecks(checks: AgentCheckRecord[]): string[] {
@@ -1743,7 +1808,7 @@ export function classifyTerminalIntent(message: string): TerminalIntent {
   }
 
   if (
-    /渗透|攻击|漏洞利用|扫描公网|nmap|端口扫描|靶场|ctf|exploit|pentest|scan target/.test(
+    /渗透|攻击|漏洞利用|扫描公网|nmap|端口扫描|靶场|ctf|exploit|pentest|scan target|漏洞审计|依赖漏洞|安全审计|semgrep|sast/.test(
       normalized,
     )
   ) {
@@ -1788,17 +1853,6 @@ function buildLocalAssistantFallback(
     "当前模型未配置完整，所以这次使用本地降级回答；我仍然可以帮你查看项目结构、生成待审批计划，或提示如何配置模型。",
     `你刚才的问题是：${message}`,
   ].join("\n");
-}
-
-function selectSearchQuery(message: string): string {
-  const normalized = message.match(/README|readme/i) ? "README" : message.slice(0, 32).trim();
-  return normalized.length > 0 ? normalized : "EGO-Graph";
-}
-
-function isSecurityResearchRequest(message: string): boolean {
-  return /src|漏洞|vuln|vulnerability|semgrep|sast|安全审计|源码审计|依赖|dependency/i.test(
-    message,
-  );
 }
 
 function formatEvidenceGapStep(step: EvidenceGapStep): string {

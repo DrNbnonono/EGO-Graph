@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "../src/server.js";
@@ -13,6 +13,24 @@ const fakeProvider = (content: string) => ({
 });
 
 describe("ego api server", () => {
+  let testEgoHome: string;
+  let previousEgoHome: string | undefined;
+
+  beforeAll(async () => {
+    previousEgoHome = process.env.EGO_HOME;
+    testEgoHome = await mkdtemp(join(tmpdir(), "ego-api-home-"));
+    process.env.EGO_HOME = testEgoHome;
+  });
+
+  afterAll(async () => {
+    if (previousEgoHome === undefined) {
+      delete process.env.EGO_HOME;
+    } else {
+      process.env.EGO_HOME = previousEgoHome;
+    }
+    await rm(testEgoHome, { recursive: true, force: true });
+  });
+
   it("responds to health checks", async () => {
     const app = createServer();
     const response = await app.request("/health");

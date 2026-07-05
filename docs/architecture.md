@@ -1,5 +1,34 @@
 # EGO-Graph Architecture
 
+## Productization Kernel
+
+The current Codex-like kernel is centered on `@ego-graph/agent-harness`.
+The Harness owns session state, run state, event streaming, context loading,
+permission gates, tool calls, Patch/Diff approval, checks, repair proposals,
+memory events, replay, and SQLite/Hermes audit writes. TUI and API callers
+should remain thin adapters over this Harness.
+
+The dynamic loop follows `Plan -> Act -> Observe -> Reflect -> Replan -> Stop`
+with bounded defaults: 8 steps, 5 tool calls, 2 repairs, and 10 minutes. Chat
+stays direct; project analysis runs bounded read-only tools; code changes must
+pass plan and patch approval; active security tasks require an explicit
+SecurityScope.
+
+Workspace context is selected by the Repo Index and Context Engine: file
+metadata, lightweight symbols, dependency hints, likely tests, recent events,
+memory hits, and token budget. Secret-like files, `.git`, `.ego`,
+`node_modules`, and build outputs are excluded from summaries and prompts.
+
+Patch operations are mediated by the Patch Engine: path policy, denied paths,
+file size checks, exact-match validation, conflict detection, diff preview,
+approval, apply snapshot, checks, repair, and rollback proposal.
+
+Security tooling is split into `@ego-graph/security-tools`. It exposes
+SecurityScope and low-risk local fixture / CTF / API-doc tools. Public scanning,
+bruteforce, exploit automation, credential access, DDoS, and destructive
+payloads remain out of scope unless future authorized tooling adds explicit
+scope, risk, sandbox, approval, and audit handling.
+
 EGO-Graph means Evidence-Guided Orchestration Graph. The system converts an authorized security task into a typed `TaskSpec`, creates a `MissionGraph`, executes scenario tools through a deny-by-default policy, stores JSONL trajectory events, indexes them in SQLite, and renders reports/replay views.
 
 The first delivery slice uses the `web_pentest` overlay and the controlled fixture at `scenarios/web_pentest/basic`. The shared core stays scenario-neutral; overlays provide tools, prompts, report sections, and default targets.

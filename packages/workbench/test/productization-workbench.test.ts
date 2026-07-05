@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   createRuntimeMetricsSampler,
   getBuiltinCommands,
@@ -6,6 +9,24 @@ import {
 } from "../src/index.js";
 
 describe("productized workbench state", () => {
+  let testEgoHome: string;
+  let previousEgoHome: string | undefined;
+
+  beforeAll(async () => {
+    previousEgoHome = process.env.EGO_HOME;
+    testEgoHome = await mkdtemp(join(tmpdir(), "ego-workbench-home-"));
+    process.env.EGO_HOME = testEgoHome;
+  });
+
+  afterAll(async () => {
+    if (previousEgoHome === undefined) {
+      delete process.env.EGO_HOME;
+    } else {
+      process.env.EGO_HOME = previousEgoHome;
+    }
+    await rm(testEgoHome, { recursive: true, force: true });
+  });
+
   it("reports process CPU from sampled deltas instead of a static load average", () => {
     let usage = { user: 1_000, system: 1_000 };
     let now = 1_000_000_000n;

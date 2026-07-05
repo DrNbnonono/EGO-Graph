@@ -1,0 +1,10 @@
+{"id":"analysis-001","category":"repo_analysis","input":"分析项目结构","expected":{"intent":"project_analysis","finalStatus":"complete"}}
+{"id":"analysis-002","category":"repo_analysis","input":"总结 packages/agent-harness 的职责","expected":{"intent":"project_analysis","finalStatus":"complete"}}
+{"id":"analysis-003","category":"repo_analysis","input":"explain the architecture of the workspace package","expected":{"intent":"project_analysis","finalStatus":"complete"}}
+{"id":"analysis-004","category":"repo_analysis","input":"阅读项目并说明 CLI 调用链","expected":{"intent":"project_analysis","finalStatus":"complete"}}
+{"id":"analysis-005","category":"repo_analysis","input":"分析 Memory v2 设计","expected":{"intent":"project_analysis","finalStatus":"complete"}}
+{"id":"analysis-006","category":"repo_analysis","input":"分析工具协议和权限模型","expected":{"intent":"project_analysis","finalStatus":"complete"}}
+{"id":"analysis-007","category":"repo_analysis","input":"总结 Web Workbench 当前实现","expected":{"intent":"project_analysis","finalStatus":"complete"}}
+{"id":"analysis-008","category":"repo_analysis","input":"analyze test coverage gaps","expected":{"intent":"project_analysis","finalStatus":"complete"}}
+{"id":"analysis-009","category":"repo_analysis","input":"解释 SQLite audit chain","expected":{"intent":"project_analysis","finalStatus":"complete"}}
+{"id":"analysis-010","category":"repo_analysis","input":"分析 README 与 docs 的一致性","expected":{"intent":"project_analysis","finalStatus":"complete"}}

@@ -1,6 +1,11 @@
 import { createChatModelProvider, loadModelConfig, type ChatModelProvider } from "@ego-graph/llm";
 import { loadMcpConfig, type McpManifest } from "@ego-graph/mcp";
-import { createWorkspaceService, type ProjectSummary } from "@ego-graph/workspace";
+import {
+  createContextForTask,
+  createWorkspaceService,
+  type ProjectSummary,
+  type TaskContext,
+} from "@ego-graph/workspace";
 import { loadAgentSystemPrompt } from "./system-prompt.js";
 
 export type AssistantChatStatus = "answered" | "needs_model" | "failed";
@@ -31,12 +36,22 @@ export type AssistantChatTurn = {
   };
 };
 
+export type AssistantChatStreamEvent =
+  { type: "delta"; content: string } | { type: "final"; turn: AssistantChatTurn };
+
 export async function runAssistantChatTurn(input: AssistantChatInput): Promise<AssistantChatTurn> {
   const workspace = createWorkspaceService(input.workspaceRoot);
-  const [summary, files, mcpConfig] = await Promise.all([
+  const [summary, files, mcpConfig, taskContext] = await Promise.all([
     workspace.summarizeProject(),
     workspace.listFiles({ limit: 80, maxDepth: 3 }),
     loadMcpConfig(input.workspaceRoot),
+    createContextForTask({
+      workspaceRoot: input.workspaceRoot,
+      goal: input.message,
+      intent: "assistant-chat",
+      memoryHits: input.memoryHints ?? [],
+      tokenBudget: 6_000,
+    }),
   ]);
   const provider = resolveModelProvider(input);
   const suggestedCommands = workspace.suggestCommands(input.message);
@@ -93,8 +108,7 @@ export async function runAssistantChatTurn(input: AssistantChatInput): Promise<A
             `readme=${summary.hasReadme ? "present" : "missing"}`,
             `importantFiles=${summary.importantFiles.join(", ") || "(none)"}`,
             "",
-            "Visible files:",
-            files.slice(0, 60).join("\n") || "(none)",
+            renderTaskContextForPrompt(taskContext),
             "",
             "Memory hints:",
             memoryHints.length > 0
@@ -140,6 +154,103 @@ export async function runAssistantChatTurn(input: AssistantChatInput): Promise<A
   }
 }
 
+export async function* streamAssistantChatTurn(
+  input: AssistantChatInput,
+): AsyncIterable<AssistantChatStreamEvent> {
+  const workspace = createWorkspaceService(input.workspaceRoot);
+  const [summary, files, mcpConfig, taskContext] = await Promise.all([
+    workspace.summarizeProject(),
+    workspace.listFiles({ limit: 80, maxDepth: 3 }),
+    loadMcpConfig(input.workspaceRoot),
+    createContextForTask({
+      workspaceRoot: input.workspaceRoot,
+      goal: input.message,
+      intent: "assistant-chat",
+      memoryHits: input.memoryHints ?? [],
+      tokenBudget: 6_000,
+    }),
+  ]);
+  const provider = resolveModelProvider(input);
+  const suggestedCommands = workspace.suggestCommands(input.message);
+  const observations = buildChatObservations(summary, files);
+  const memoryHints = input.memoryHints ?? [];
+  const systemPrompt = await loadAgentSystemPrompt({
+    workspaceRoot: input.workspaceRoot,
+    memoryHints,
+    skills: ["workspace", "shell-readonly", "web-search", "ctf-basic"],
+    mcpTools: mcpConfig.manifest.servers.map((server) => `mcp.${server.name}`),
+  });
+
+  if (!provider?.streamComplete) {
+    yield { type: "final", turn: await runAssistantChatTurn(input) };
+    return;
+  }
+
+  try {
+    let reply = "";
+    const request = {
+      temperature: 0.2,
+      maxTokens: 1600,
+      messages: [
+        { role: "system" as const, content: systemPrompt.finalPrompt },
+        {
+          role: "user" as const,
+          content: [
+            `User message:\n${input.message}`,
+            "",
+            "Workspace summary:",
+            `apps=${summary.apps.join(", ") || "(none)"}`,
+            `packages=${summary.packages.join(", ") || "(none)"}`,
+            `readme=${summary.hasReadme ? "present" : "missing"}`,
+            `importantFiles=${summary.importantFiles.join(", ") || "(none)"}`,
+            "",
+            renderTaskContextForPrompt(taskContext),
+            "",
+            "Memory hints:",
+            memoryHints.length > 0
+              ? memoryHints.map((memory) => `- ${memory}`).join("\n")
+              : "(none)",
+          ].join("\n"),
+        },
+      ],
+    };
+    for await (const chunk of provider.streamComplete(request)) {
+      reply += chunk;
+      yield { type: "delta", content: chunk };
+    }
+    yield {
+      type: "final",
+      turn: {
+        mode: "assistant-chat",
+        status: "answered",
+        reply,
+        assistantMessage: reply,
+        model: { provider: provider.name, name: provider.model, configured: true },
+        observations,
+        suggestedCommands,
+        mcp: mcpConfig.manifest,
+        trace: { workspace: summary, inspectedFiles: files },
+      },
+    };
+  } catch (error) {
+    const reply = `模型调用失败：${error instanceof Error ? error.message : String(error)}`;
+    yield {
+      type: "final",
+      turn: {
+        mode: "assistant-chat",
+        status: "failed",
+        reply,
+        assistantMessage: reply,
+        model: { provider: provider.name, name: provider.model, configured: true },
+        observations,
+        suggestedCommands,
+        mcp: mcpConfig.manifest,
+        trace: { workspace: summary, inspectedFiles: files },
+      },
+    };
+  }
+}
+
 function resolveModelProvider(input: AssistantChatInput): ChatModelProvider | undefined {
   if (input.modelProvider === null) {
     return undefined;
@@ -162,4 +273,28 @@ function buildChatObservations(summary: ProjectSummary, files: string[]): string
     `关键文件：${summary.importantFiles.slice(0, 6).join(", ") || "未发现"}`,
     `文件样本：${files.slice(0, 8).join(", ") || "未发现"}`,
   ];
+}
+
+function renderTaskContextForPrompt(context: TaskContext): string {
+  return [
+    "Selected context pack:",
+    `files=${context.selectedFiles.map((file) => `${file.path}(${file.kind})`).join(", ") || "(none)"}`,
+    `symbols=${
+      context.selectedSymbols
+        .slice(0, 24)
+        .map((symbol) => `${symbol.name}@${symbol.file}:${symbol.line}`)
+        .join(", ") || "(none)"
+    }`,
+    `likelyTests=${context.relevantTests.join(", ") || "(none)"}`,
+    `budget=${context.budget.estimatedTokens}/${context.budget.requestedTokens}`,
+    "Context selection notes:",
+    context.explanation.map((item) => `- ${item}`).join("\n"),
+    "Snippets:",
+    context.snippets
+      .map(
+        (snippet) =>
+          `--- ${snippet.path} lines ${snippet.startLine}-${snippet.endLine} (${snippet.reason}) ---\n${snippet.content}`,
+      )
+      .join("\n\n") || "(none)",
+  ].join("\n");
 }

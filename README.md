@@ -4,6 +4,17 @@
 
 EGO-Graph means **Evidence-Guided Orchestration Graph**. It is a TypeScript-first autonomous-agent project for the XH-202609 challenge: a general cybersecurity intelligent agent with autonomous decision-making capability.
 
+The product direction is a Codex-like terminal security engineering agent:
+terminal-first, evidence-grounded, policy-gated, and replayable. The main loop
+is owned by `@ego-graph/agent-harness`: session/run state, event stream, context
+selection, tools, permissions, patch approval, checks, repair proposals, memory,
+and replay. TUI/API surfaces are thin adapters over that Harness.
+
+Datasets under `datasets/evals` are evaluation inputs and expected behaviors,
+not application source code. The productization suite contains 60 lightweight
+cases across chat, repo analysis, code change, repair, memory, security fixture,
+and safety denial behavior.
+
 The project direction is now:
 
 ```text

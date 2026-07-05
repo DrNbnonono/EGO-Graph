@@ -1,6 +1,9 @@
-import { basename } from "node:path";
 import { generateJson, type ChatModelProvider } from "@ego-graph/llm";
-import { createWorkspaceService, type WorkspaceEditPlan } from "@ego-graph/workspace";
+import {
+  createContextForTask,
+  type TaskContext,
+  type WorkspaceEditPlan,
+} from "@ego-graph/workspace";
 import { z } from "zod";
 import { loadAgentSystemPrompt } from "./system-prompt.js";
 
@@ -60,10 +63,13 @@ export type GenerateWorkspaceEditPlanResult =
 export async function generateWorkspaceEditPlan(
   input: GenerateWorkspaceEditPlanInput,
 ): Promise<GenerateWorkspaceEditPlanResult> {
-  const workspace = createWorkspaceService(input.workspaceRoot);
-  const files = await workspace.listFiles({ limit: 80, maxDepth: 4 });
-  const selectedFiles = selectEditContextFiles(input.message, files);
-  const context = await readContextSnippets(workspace, selectedFiles);
+  const context = await createContextForTask({
+    workspaceRoot: input.workspaceRoot,
+    goal: input.message,
+    intent: "code_change",
+    tokenBudget: 10_000,
+  });
+  const selectedFiles = context.selectedFiles.map((file) => file.path);
 
   if (!input.provider) {
     return {
@@ -98,15 +104,9 @@ export async function generateWorkspaceEditPlan(
         },
         {
           role: "user",
-          content: [
-            `User task:\n${input.message}`,
-            "",
-            "Workspace files:",
-            files.slice(0, 80).join("\n") || "(none)",
-            "",
-            "Relevant file excerpts:",
-            context || "(no text context available)",
-          ].join("\n"),
+          content: [`User task:\n${input.message}`, "", renderEditContextForPrompt(context)].join(
+            "\n",
+          ),
         },
       ],
     });
@@ -126,37 +126,26 @@ export async function generateWorkspaceEditPlan(
   }
 }
 
-function selectEditContextFiles(message: string, files: string[]): string[] {
-  const normalizedMessage = message.toLowerCase();
-  const preferred = ["README.md", "package.json", "docs/architecture.md"];
-  const matches = files.filter((file) => {
-    const normalized = file.toLowerCase();
-    const fileName = basename(file).toLowerCase();
-    return normalizedMessage.includes(normalized) || normalizedMessage.includes(fileName);
-  });
-
-  return [...new Set([...matches, ...preferred.filter((file) => files.includes(file))])].slice(
-    0,
-    6,
-  );
-}
-
-async function readContextSnippets(
-  workspace: ReturnType<typeof createWorkspaceService>,
-  files: string[],
-): Promise<string> {
-  const snippets: string[] = [];
-
-  for (const file of files) {
-    try {
-      const content = await workspace.readTextFile(file);
-      snippets.push(`--- ${file} ---\n${content.slice(0, 4_000)}`);
-    } catch (error) {
-      snippets.push(
-        `--- ${file} ---\n[read failed: ${error instanceof Error ? error.message : String(error)}]`,
-      );
-    }
-  }
-
-  return snippets.join("\n\n").slice(0, 18_000);
+function renderEditContextForPrompt(context: TaskContext): string {
+  return [
+    "Repo context selected by EGO-Graph Context Engine:",
+    `selectedFiles=${context.selectedFiles.map((file) => file.path).join(", ") || "(none)"}`,
+    `relevantTests=${context.relevantTests.join(", ") || "(none)"}`,
+    `symbols=${
+      context.selectedSymbols
+        .slice(0, 32)
+        .map((symbol) => `${symbol.kind}:${symbol.name}@${symbol.file}:${symbol.line}`)
+        .join(", ") || "(none)"
+    }`,
+    `budget=${context.budget.estimatedTokens}/${context.budget.requestedTokens}`,
+    "Selection rationale:",
+    context.explanation.map((item) => `- ${item}`).join("\n"),
+    "Relevant snippets:",
+    context.snippets
+      .map(
+        (snippet) =>
+          `--- ${snippet.path} lines ${snippet.startLine}-${snippet.endLine} ---\n${snippet.content}`,
+      )
+      .join("\n\n") || "(none)",
+  ].join("\n");
 }

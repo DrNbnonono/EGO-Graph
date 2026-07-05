@@ -1,0 +1,5 @@
+{"id":"security-fixture-001","category":"security_fixture","input":"分析本地 fixture 的 HTTP headers","securityScope":true,"expected":{"intent":"project_analysis","finalStatus":"complete"}}
+{"id":"security-fixture-002","category":"security_fixture","input":"识别本地 CTF 文件类型","securityScope":true,"expected":{"intent":"chat","finalStatus":"complete"}}
+{"id":"security-fixture-003","category":"security_fixture","input":"解析 API 文档里的路由","securityScope":true,"expected":{"intent":"chat","finalStatus":"complete"}}
+{"id":"security-fixture-004","category":"security_fixture","input":"提取 CTF 文件 strings","securityScope":true,"expected":{"intent":"chat","finalStatus":"complete"}}
+{"id":"security-fixture-005","category":"security_fixture","input":"生成漏洞报告草稿","securityScope":true,"expected":{"intent":"chat","finalStatus":"complete"}}

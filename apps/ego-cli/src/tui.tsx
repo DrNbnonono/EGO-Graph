@@ -116,12 +116,11 @@ export function EgoTui(): ReactElement {
   const [scrollOffset, setScrollOffset] = useState(0);
   const [diffFileIndex, setDiffFileIndex] = useState(0);
   const [runSessions, setRunSessions] = useState<TuiRunSession[]>([]);
+  const [paletteIndex, setPaletteIndex] = useState(0);
   const [permissionLevel, setPermissionLevel] = useState<PermissionLevel>(
     session.getPermissionLevel(),
   );
-  const paletteMatches = input.startsWith("/")
-    ? commandPalette.filter((command) => command.name.startsWith(input) || input === "/")
-    : [];
+  const paletteMatches = input.startsWith("/") ? getCommandPaletteMatches(input) : [];
 
   useEffect(() => {
     void refreshWorkbench(setWorkbench, appendSystemEvent(setEvents));
@@ -162,6 +161,22 @@ export function EgoTui(): ReactElement {
       return;
     }
 
+    if (key.tab && paletteMatches.length > 0) {
+      setPaletteIndex((previous) => (previous + 1) % paletteMatches.length);
+      return;
+    }
+
+    if (!input && /^[1-9]$/.test(value) && runSessions[Number(value) - 1]) {
+      const selected = runSessions[Number(value) - 1]!;
+      setActiveRunId(selected.runId);
+      setEvents(
+        selected.events.length > 0 ? selected.events : [localEvent(`已切换到 ${selected.runId}`)],
+      );
+      setDetailMode("status");
+      setScrollOffset(0);
+      return;
+    }
+
     if (value === "[") {
       setDiffFileIndex((previous) => Math.max(0, previous - 1));
       setDetailMode("diff");
@@ -177,11 +192,13 @@ export function EgoTui(): ReactElement {
       const submitted = resolvePaletteInput(
         input,
         paletteMatches.map((command) => command.name),
+        paletteIndex,
       );
       if (!submitted) {
         return;
       }
       setInput("");
+      setPaletteIndex(0);
       setScrollOffset(0);
       void submitInput({
         submitted,
@@ -240,6 +257,7 @@ export function EgoTui(): ReactElement {
 
     if (!key.ctrl && !key.meta && value) {
       setInput((previous) => `${previous}${value}`);
+      setPaletteIndex(0);
     }
   });
 
@@ -272,7 +290,12 @@ export function EgoTui(): ReactElement {
           runSessions={runSessions}
         />
       </Box>
-      <InputBar input={input} busy={busy} paletteMatches={paletteMatches} />
+      <InputBar
+        input={input}
+        busy={busy}
+        paletteMatches={paletteMatches}
+        paletteIndex={paletteIndex}
+      />
     </Box>
   );
 }
@@ -511,7 +534,8 @@ async function submitInput(input: {
   }
   if (normalized.startsWith("/switch ") || normalized.startsWith("/replay ")) {
     const runId = input.submitted.replace(/^\/(?:switch|replay)\s+/, "").trim();
-    const replay = await input.session.replayRun(runId);
+    const cached = input.runSessions.find((session) => session.runId === runId);
+    const replay = cached?.events.length ? cached.events : await input.session.replayRun(runId);
     input.setActiveRunId(runId);
     input.setEvents(replay.length > 0 ? replay : [localEvent(`未找到 run: ${runId}`)]);
     input.setDetailMode("status");
@@ -715,10 +739,12 @@ function InputBar({
   input,
   busy,
   paletteMatches,
+  paletteIndex,
 }: {
   input: string;
   busy: boolean;
   paletteMatches: CommandManifest[];
+  paletteIndex: number;
 }): ReactElement {
   return (
     <Box borderStyle="single" borderColor="gray" paddingX={1} flexDirection="column">
@@ -728,7 +754,7 @@ function InputBar({
             .slice(0, 5)
             .map(
               (command, index) =>
-                `${index === 0 ? ">" : ""}${command.name} [${command.category}] ${command.description}`,
+                `${index === paletteIndex ? ">" : ""}${command.name} [${command.category}] ${command.description}`,
             )
             .join("  ")}
         </Text>
@@ -759,7 +785,13 @@ function renderDetail(
     return <CommandDetail runSessions={runSessions} />;
   }
   if (detailMode === "diff") {
-    return <DiffDetail diff={activeRun.diff} fileIndex={diffFileIndex} />;
+    return (
+      <DiffDetail
+        diff={activeRun.diff}
+        fileIndex={diffFileIndex}
+        changedFiles={activeRun.files ?? []}
+      />
+    );
   }
   if (detailMode === "checks") {
     if (!activeRun.checks?.length) {
@@ -803,22 +835,31 @@ function PlanDetail({ plan }: { plan: EvidenceGapStep[] }): ReactElement {
 function DiffDetail({
   diff,
   fileIndex,
+  changedFiles,
 }: {
   diff: string | undefined;
   fileIndex: number;
+  changedFiles: string[];
 }): ReactElement {
   if (!diff) {
     return <Text color="gray">暂无 pending diff。</Text>;
   }
-  const files = splitDiffByFile(diff);
-  const safeFileIndex = Math.min(fileIndex, Math.max(0, files.length - 1));
-  const file = files[safeFileIndex] ?? { header: "diff", lines: diff.split("\n") };
+  const diffFiles = splitDiffByFile(diff);
+  const safeFileIndex = Math.min(fileIndex, Math.max(0, diffFiles.length - 1));
+  const file = diffFiles[safeFileIndex] ?? { header: "diff", lines: diff.split("\n") };
   return (
     <Box flexDirection="column">
       <Text color="yellow">
-        Diff {safeFileIndex + 1}/{files.length}
+        Diff {safeFileIndex + 1}/{diffFiles.length}
       </Text>
       <Text color="magentaBright">{truncate(file.header, 34)}</Text>
+      {changedFiles.length > 0 ? (
+        <Text color="gray">
+          {changedFiles
+            .map((name, index) => `${index === safeFileIndex ? "*" : ""}${index + 1}:${name}`)
+            .join("  ")}
+        </Text>
+      ) : null}
       {file.lines.slice(0, 12).map((line, index) => {
         const color = diffLineColor(line);
         return color ? (
@@ -958,10 +999,10 @@ function shortTime(value: string): string {
   return value.slice(11, 19);
 }
 
-export function resolvePaletteInput(input: string, matches: string[]): string {
+export function resolvePaletteInput(input: string, matches: string[], selectedIndex = 0): string {
   const trimmed = input.trim();
-  if (trimmed === "/" && matches[0]) {
-    return matches[0];
+  if (trimmed === "/" && matches.length > 0) {
+    return matches[Math.min(selectedIndex, matches.length - 1)] ?? matches[0] ?? trimmed;
   }
   return trimmed;
 }

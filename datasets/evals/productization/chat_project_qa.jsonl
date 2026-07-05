@@ -1,0 +1,10 @@
+{"id":"chat-001","category":"chat_project_qa","input":"你好","expected":{"intent":"chat","finalStatus":"complete"}}
+{"id":"chat-002","category":"chat_project_qa","input":"你是什么？","expected":{"intent":"chat","finalStatus":"complete"}}
+{"id":"chat-003","category":"chat_project_qa","input":"如何启动这个项目？","expected":{"intent":"chat","finalStatus":"complete"}}
+{"id":"chat-004","category":"chat_project_qa","input":"TUI 和 Web 有什么区别？","expected":{"intent":"chat","finalStatus":"complete"}}
+{"id":"chat-005","category":"chat_project_qa","input":"LLM 配置保存在哪里？","expected":{"intent":"chat","finalStatus":"complete"}}
+{"id":"chat-006","category":"chat_project_qa","input":"权限等级是什么意思？","expected":{"intent":"chat","finalStatus":"complete"}}
+{"id":"chat-007","category":"chat_project_qa","input":"请说明 evidence board 的作用","expected":{"intent":"chat","finalStatus":"complete"}}
+{"id":"chat-008","category":"chat_project_qa","input":"怎么查看 replay？","expected":{"intent":"chat","finalStatus":"complete"}}
+{"id":"chat-009","category":"chat_project_qa","input":"MCP 目前支持到什么程度？","expected":{"intent":"chat","finalStatus":"complete"}}
+{"id":"chat-010","category":"chat_project_qa","input":"Memory v2 会保存什么？","expected":{"intent":"chat","finalStatus":"complete"}}

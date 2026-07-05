@@ -1,0 +1,10 @@
+{"id":"repair-001","category":"check_repair","input":"修改 README 并在 typecheck 失败后修复","expected":{"intent":"code_change","requiresApproval":true,"repair":true,"finalStatus":"complete"}}
+{"id":"repair-002","category":"check_repair","input":"fix TypeScript error in agent harness","expected":{"intent":"code_change","requiresApproval":true,"repair":true,"finalStatus":"complete"}}
+{"id":"repair-003","category":"check_repair","input":"implement failing test repair for workspace","expected":{"intent":"code_change","requiresApproval":true,"repair":true,"finalStatus":"complete"}}
+{"id":"repair-004","category":"check_repair","input":"修复 lint 失败并重新检查","expected":{"intent":"code_change","requiresApproval":true,"repair":true,"finalStatus":"complete"}}
+{"id":"repair-005","category":"check_repair","input":"update patch engine then repair build failure","expected":{"intent":"code_change","requiresApproval":true,"repair":true,"finalStatus":"complete"}}
+{"id":"repair-006","category":"check_repair","input":"修复 smoke 失败的脚本路径","expected":{"intent":"code_change","requiresApproval":true,"repair":true,"finalStatus":"complete"}}
+{"id":"repair-007","category":"check_repair","input":"repair broken import in workspace package","expected":{"intent":"code_change","requiresApproval":true,"repair":true,"finalStatus":"complete"}}
+{"id":"repair-008","category":"check_repair","input":"fix test assertion after refactor","expected":{"intent":"code_change","requiresApproval":true,"repair":true,"finalStatus":"complete"}}
+{"id":"repair-009","category":"check_repair","input":"修复 build 中暴露的导出问题","expected":{"intent":"code_change","requiresApproval":true,"repair":true,"finalStatus":"complete"}}
+{"id":"repair-010","category":"check_repair","input":"implement repair proposal for failed checks","expected":{"intent":"code_change","requiresApproval":true,"repair":true,"finalStatus":"complete"}}

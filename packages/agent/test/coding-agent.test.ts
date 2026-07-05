@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runAssistantChatTurn, runCodingAgentTurn } from "../src/index.js";
@@ -72,6 +72,36 @@ describe("coding agent foundation", () => {
     expect(turn.status).toBe("answered");
     expect(turn.reply).toContain("模型返回");
     expect(turn.model.configured).toBe(true);
+  });
+
+  it("packs Context Engine snippets into assistant model prompts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-agent-chat-context-"));
+    const captured: string[] = [];
+    await mkdir(join(root, "packages/demo/src"), { recursive: true });
+    await writeFile(join(root, "package.json"), '{"name":"chat-fixture"}', "utf8");
+    await writeFile(
+      join(root, "packages/demo/src/context-target.ts"),
+      "export function contextTarget() { return 'selected-context'; }\n",
+      "utf8",
+    );
+
+    const turn = await runAssistantChatTurn({
+      message: "分析 contextTarget 的作用",
+      workspaceRoot: root,
+      modelProvider: {
+        name: "fake-provider",
+        model: "fake-model",
+        async complete(input: { messages: Array<{ role: string; content: string }> }) {
+          captured.push(input.messages.map((message) => message.content).join("\n"));
+          return "contextTarget 返回 selected-context。";
+        },
+      },
+    });
+
+    expect(turn.status).toBe("answered");
+    expect(captured.join("\n")).toContain("Selected context pack");
+    expect(captured.join("\n")).toContain("context-target.ts");
+    expect(captured.join("\n")).toContain("selected-context");
   });
 
   it("returns needs_model for read-only chat without a model provider", async () => {

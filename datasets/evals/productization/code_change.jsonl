@@ -1,0 +1,10 @@
+{"id":"change-001","category":"code_change","input":"修改 README 的 Quick Start，补充 ego serve","expected":{"intent":"code_change","requiresApproval":true,"finalStatus":"complete"}}
+{"id":"change-002","category":"code_change","input":"fix a typo in docs/user-guide.md","expected":{"intent":"code_change","requiresApproval":true,"finalStatus":"complete"}}
+{"id":"change-003","category":"code_change","input":"实现一个小的 helper 函数并添加测试","expected":{"intent":"code_change","requiresApproval":true,"finalStatus":"complete"}}
+{"id":"change-004","category":"code_change","input":"update architecture docs for Harness","expected":{"intent":"code_change","requiresApproval":true,"finalStatus":"complete"}}
+{"id":"change-005","category":"code_change","input":"新增 eval 文档说明","expected":{"intent":"code_change","requiresApproval":true,"finalStatus":"complete"}}
+{"id":"change-006","category":"code_change","input":"refactor session helper naming","expected":{"intent":"code_change","requiresApproval":true,"finalStatus":"complete"}}
+{"id":"change-007","category":"code_change","input":"create a demo script placeholder","expected":{"intent":"code_change","requiresApproval":true,"finalStatus":"complete"}}
+{"id":"change-008","category":"code_change","input":"implement context selection unit test","expected":{"intent":"code_change","requiresApproval":true,"finalStatus":"complete"}}
+{"id":"change-009","category":"code_change","input":"write a patch to improve CLI help text","expected":{"intent":"code_change","requiresApproval":true,"finalStatus":"complete"}}
+{"id":"change-010","category":"code_change","input":"删除过期说明中的错误句子","expected":{"intent":"code_change","requiresApproval":true,"finalStatus":"complete"}}
