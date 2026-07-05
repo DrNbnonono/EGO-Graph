@@ -21,7 +21,7 @@ http://127.0.0.1:4317
 
 The Web dashboard shows project progress, model status, storage paths, recent runs, terminal
 commands, and a dialog-style mission form for controlled `web_pentest` runs. It also shows the
-Agent Kernel status: recent memories, draft plans, built-in skills, MCP stdio status, web search,
+Agent Kernel status: recent memories, draft plans, built-in skills, MCP stdio/http status, web search,
 pending approvals, and checks.
 
 Web modes:
@@ -63,6 +63,9 @@ Runtime API endpoints:
 - `GET /api/hermes/timeline`
 - `GET /api/skills`
 - `GET /api/mcp/tools`
+- `GET /api/mcp/servers`
+- `POST /api/mcp/servers`
+- `POST /api/mcp/servers/:name/test`
 - `POST /chat`
 - `POST /agent/plans`
 - `POST /agent/plans/:id/approve`
@@ -87,6 +90,35 @@ export MINIMAX_API_KEY=sk-cp-...
 The `minimax` profile defaults to the domestic Anthropic-compatible endpoint
 `https://api.minimaxi.com/anthropic`, Messages path `/v1/messages`, and model `MiniMax-M3`.
 You can also set `EGO_MODEL_API_KEY` instead of `MINIMAX_API_KEY`.
+
+MCP servers can be local stdio processes or Streamable HTTP endpoints. HTTP bearer tokens are stored
+locally and are not echoed by public status APIs:
+
+```json
+{
+  "mcpServers": {
+    "docs": {
+      "transport": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+        "accessToken": "token",
+        "scopes": ["tools.read"]
+      },
+      "toolPolicies": {
+        "docs.search": {
+          "scope": "network",
+          "risk": "low",
+          "requiresApproval": false
+        }
+      },
+      "enabled": true
+    }
+  }
+}
+```
+
+Unknown MCP tools remain approval-gated. Active public scanning or exploitation still requires
+explicit authorization scope and is not enabled by default.
 
 Advanced overrides:
 

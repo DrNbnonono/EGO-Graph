@@ -166,7 +166,7 @@ export type WorkbenchState = {
   mcp: {
     status: string;
     source: string;
-    transport: "stdio-v1";
+    transport: "stdio" | "http" | "mixed" | "none";
     capabilities: string[];
     servers: unknown[];
     notes: string[];
@@ -331,7 +331,7 @@ export async function readWorkbenchState(input: ReadWorkbenchStateInput): Promis
       mcp: {
         status: mcp.status,
         source: mcpConfig.source,
-        transport: "stdio-v1",
+        transport: summarizeMcpTransport(mcpConfig.servers),
         capabilities: mcp.capabilities,
         servers: mcp.servers,
         notes: mcp.notes,
@@ -407,6 +407,21 @@ export async function readWorkbenchState(input: ReadWorkbenchStateInput): Promis
   } finally {
     store.close();
   }
+}
+
+function summarizeMcpTransport(
+  servers: Array<{ enabled: boolean; transport: "stdio" | "http" }>,
+): "stdio" | "http" | "mixed" | "none" {
+  const transports = new Set(
+    servers.filter((server) => server.enabled).map((server) => server.transport),
+  );
+  if (transports.size === 0) {
+    return "none";
+  }
+  if (transports.size > 1) {
+    return "mixed";
+  }
+  return transports.has("http") ? "http" : "stdio";
 }
 
 function buildSessions(runs: RunIndexRecord[]): WorkbenchSession[] {

@@ -54,7 +54,7 @@ proposal. The Patch still needs explicit diff approval before files are written.
 - `packages/memory`: Memory v2 records, scope/kind-aware recall, compact/archive/forget, sensitive reference filtering, and context compression.
 - `packages/agent`: assistant chat, plan drafting, model-backed edit-plan generation, and coding-agent turns.
 - `packages/tools`: tool registry, permission policy, built-in skills, plugin manifest validation, and `web.search`.
-- `packages/mcp`: MCP config loading, tool registry boundary, and stdio client v1.
+- `packages/mcp`: MCP config loading, tool registry boundary, stdio client, Streamable HTTP client, OAuth metadata discovery, client pool, and per-tool permission mapping.
 - `packages/storage`: SQLite persistence for Hermes events, memories, plans, approvals, edits, checks, and runs.
 - `packages/workspace`: repository map, relevance-ranked context pack, safe reads, policy-gated edit preview, and writes.
 - `packages/workbench`: shared state contract for Web and TUI observability.
@@ -137,13 +137,21 @@ must not register tools or permissions.
 
 ## MCP
 
-MCP support currently includes stdio client v1:
+MCP support includes stdio and Streamable HTTP clients:
 
+- `initialize`
 - `tools/list`
 - `tools/call`
+- HTTP bearer-token headers
+- protected-resource metadata discovery for OAuth-capable servers
+- long-lived client pooling per server descriptor
+- per-tool policy overrides for scope, risk, approval, sandbox profile, timeout, and scenarios
 
-MCP tools still go through the existing permission policy and audit path. HTTP transport, remote
-auth, and advanced server lifecycle management are future work.
+Every MCP tool is converted into an EGO-Graph `ToolDefinition` before it can run. Unknown remote
+tools default to medium risk with human approval. Tool annotations are ignored unless a server is
+explicitly configured with `trustToolAnnotations`.
+
+Full interactive OAuth browser/device authorization and HTTP MCP subscriptions are future work.
 
 ## Web Search
 
@@ -160,6 +168,10 @@ The terminal TUI is the primary Codex-like surface. It shows:
 - `/debug` for technical details
 - `/allow` permission changes
 - `/plan approve`, `/diff`, `/patch approve`, `/checks`
+- `/mcp` MCP tool discovery
+- `/skills` skill management guidance
+- `/prompt` system prompt location
+- `/model` model management guidance
 - `/memory` recall/compact/archive/forget
 - `/replay <runId>` from persisted Hermes events
 
@@ -186,3 +198,6 @@ Both surfaces use the same SQLite/Hermes/trajectory audit chain.
 - New tools must declare permissions and risk level before registration.
 - New CTF overlays should reuse memory, Hermes, skills, MCP/search, and the existing evidence model.
 - Tests should cover both the allowed path and the denied path for new tools or write flows.
+- Active public SRC/vulnerability scanning and exploitation automation must not be enabled by
+  default. It requires explicit authorization scope, permission elevation, approval, sandbox/audit,
+  and a controlled target definition.

@@ -30,7 +30,8 @@ Implemented:
 - Session/project/task memory with safe recall, overwrite/forget-friendly records, and context summaries.
 - Plan-first coding flow: `/agent/plans` drafts an approvable plan before any Patch proposal is generated.
 - Skills/plugin registry with built-in `workspace`, `shell-readonly`, `web-search`, and `ctf-basic` skills.
-- MCP config loading plus stdio MCP client v1 for `tools/list` and `tools/call` behind the tool boundary.
+- MCP config loading plus stdio and Streamable HTTP MCP clients for `tools/list` and `tools/call` behind the tool boundary.
+- MCP HTTP/OAuth foundation with bearer-token headers, protected-resource metadata discovery, long-lived client pooling, and per-tool permission policy overrides.
 - Controlled `web.search` tool with result normalization, source URLs, and in-memory caching.
 - Persistent LLM settings through Web, CLI, `.ego/config.json`, `ego.config.json`, or environment variables.
 - Dynamic Web Workbench modes: read-only chat, plan-approved Patch generation, and controlled security tasks.
@@ -50,9 +51,10 @@ In progress:
 
 Not complete yet:
 
-- Full MCP HTTP/remote-auth transport runtime.
+- Full OAuth browser/device authorization flow for remote MCP servers.
 - Semantic/vector memory and cross-session compaction tuned for very long projects.
 - Fully autonomous CTF completion across unknown targets.
+- Active public SRC/vulnerability scanning and exploitation automation. EGO-Graph keeps this behind explicit authorization scope and does not enable unauthorized public attack actions by default.
 
 ## Quick Start
 
@@ -81,6 +83,9 @@ In the TUI:
 /patch approve                # applies, checks, and may propose repair
 /checks
 /memory compact
+/mcp                          # discover configured MCP tools
+/skills                       # show skill management guidance
+/prompt                       # show system prompt location
 /replay <runId>
 ```
 
@@ -129,7 +134,7 @@ The Web Workbench has three modes:
 - **生成 Patch** calls `/agent/plans` first. After the plan is approved, EGO-Graph calls the existing Patch runner and shows the generated diff in the right-side approval panel. Files are not changed until the Patch approval is clicked.
 - **安全任务** uses controlled local scenario entry points such as the bundled `web_pentest` fixture.
 
-The right-side Agent Kernel panel shows recent memories, draft plans, built-in skills, MCP stdio status, and the `web.search` tool state.
+The right-side Agent Kernel panel shows recent memories, draft plans, built-in skills, MCP stdio/http status, and the `web.search` tool state.
 The compact Codex-like center stream shows user, assistant, tool, approval, and check events without exposing hidden chain-of-thought.
 Typing `/` opens the command palette. Built-in commands include `/model`, `/models`, `/plan`, `/patch`, `/skills`, `/mcp`,
 `/prompt`, `/memory`, `/status`, and `/clear`.
@@ -183,7 +188,8 @@ The same Workbench exposes:
 - `GET /api/runtime/metrics` for process CPU/RSS and system memory.
 - `GET /api/commands` and `POST /api/commands/execute` for slash commands.
 - `GET /api/config/system-prompt` and `PUT /api/config/system-prompt` for the project prompt saved under `.ego/system-prompt.md`.
-- `GET /api/mcp/servers`, `POST /api/mcp/servers`, `DELETE /api/mcp/servers/:name`, and `POST /api/mcp/servers/:name/test` for stdio MCP configuration.
+- `GET /api/mcp/servers`, `POST /api/mcp/servers`, `DELETE /api/mcp/servers/:name`, and `POST /api/mcp/servers/:name/test` for stdio or Streamable HTTP MCP configuration.
+- `GET /api/mcp/tools` and `POST /api/mcp/tools/call` for policy-gated MCP tool discovery/calls.
 
 MiniMax M3 still works through environment variables:
 
@@ -221,7 +227,7 @@ packages/
   workbench   Shared TUI/Web state model
   hermes      Internal event bus and runtime timeline
   memory      Session/project/task memory and context compression
-  mcp         MCP config, manifest, adapter boundary, and stdio client v1
+  mcp         MCP config, manifest, stdio/http clients, OAuth metadata, and client pool
   core        Mission graph, task specs, trajectories, runner
   llm         Persistent LLM config plus MiniMax M3 and compatible model providers
   tools       Local tool registry, skill/plugin registry, web.search, and permission policy
@@ -238,7 +244,7 @@ packages/
   kernel.
 - **System architecture and engineering:** separated CLI/API/Web/agent/workspace/MCP packages.
 - **Decision explainability and robustness:** Hermes timeline, mission graph, trajectories, evidence, memory summaries, reports.
-- **Tool calling and collaboration:** tool registry, skills/plugins, workspace tools, MCP stdio boundary, web.search, security overlays.
+- **Tool calling and collaboration:** tool registry, skills/plugins, workspace tools, MCP stdio/http boundary, web.search, security overlays.
 - **Human-in-the-loop product form:** terminal-first purple-lotus workbench, mirrored Web view, approvals, replay, and reports.
 - **Innovation and added value:** coding-agent core extended with CTF/security overlays.
 

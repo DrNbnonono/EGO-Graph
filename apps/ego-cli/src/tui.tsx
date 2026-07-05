@@ -29,26 +29,42 @@ type TuiRunSession = {
 
 const commandPalette = [
   "/help",
+  "/model",
+  "/models",
   "/status",
   "/permissions",
   "/allow workspace-write",
   "/allow shell-readonly",
   "/allow network-low",
   "/allow security-active",
+  "/plan",
   "/plan approve",
   "/plan reject",
+  "/patch",
   "/diff",
   "/patch approve",
   "/patch reject",
   "/checks",
+  "/scan",
   "/debug",
   "/memory",
   "/memory compact",
+  "/skills",
+  "/mcp",
+  "/prompt",
+  "/compact",
   "/sessions",
   "/new",
   "/replay ",
   "/clear",
 ];
+
+export function getCommandPaletteMatches(input: string): Array<{ name: string }> {
+  const trimmed = input.trim();
+  return commandPalette
+    .filter((command) => trimmed === "/" || command.startsWith(trimmed))
+    .map((name) => ({ name }));
+}
 
 export function EgoTui(): ReactElement {
   const { exit } = useApp();
@@ -270,6 +286,61 @@ async function submitInput(input: {
     input.setDetailMode("status");
     return;
   }
+  if (normalized === "/model" || normalized === "/models") {
+    input.setEvents((previous) => [
+      ...previous,
+      localEvent(
+        [
+          `当前权限: ${input.session.getPermissionLevel()}；模型管理面板可通过 ego serve 打开。`,
+          "终端内模型切换后续会接入完整 selector；当前请使用 Web Workbench 的 Models 页面管理 profile。",
+        ].join("\n"),
+      ),
+    ]);
+    input.setDetailMode("status");
+    return;
+  }
+  if (normalized === "/skills") {
+    input.setEvents((previous) => [
+      ...previous,
+      localEvent(
+        "Skills 状态请查看右侧 Skills 计数；完整启用/禁用管理在 ego serve 的 Skills 页面。",
+      ),
+    ]);
+    input.setDetailMode("status");
+    return;
+  }
+  if (normalized === "/mcp") {
+    const mcpEvents = await input.session.discoverMcpTools();
+    input.setEvents((previous) => [...previous, ...mcpEvents].slice(-160));
+    input.setDetailMode("debug");
+    await refreshWorkbench(input.setWorkbench, appendSystemEvent(input.setEvents));
+    return;
+  }
+  if (normalized === "/prompt") {
+    input.setEvents((previous) => [
+      ...previous,
+      localEvent("System Prompt 位于 .ego/system-prompt.md；完整预览和编辑请打开 ego serve。"),
+    ]);
+    input.setDetailMode("status");
+    return;
+  }
+  if (normalized === "/compact") {
+    const compacted = await input.session.compactMemory();
+    input.setEvents((previous) => [...previous, ...compacted].slice(-160));
+    input.setDetailMode("debug");
+    await refreshWorkbench(input.setWorkbench, appendSystemEvent(input.setEvents));
+    return;
+  }
+  if (normalized === "/scan") {
+    input.setEvents((previous) => [
+      ...previous,
+      localEvent(
+        "安全扫描需要先说明授权目标、范围、风险等级和允许动作；当前不提供未授权公网扫描或漏洞利用自动化。",
+      ),
+    ]);
+    input.setDetailMode("status");
+    return;
+  }
   if (normalized === "/debug") {
     input.setDetailMode("debug");
     return;
@@ -315,7 +386,7 @@ async function submitInput(input: {
     input.setEvents((previous) => [...previous, localEvent(`权限等级已切换为 ${requested}`)]);
     return;
   }
-  if (normalized === "/diff") {
+  if (normalized === "/diff" || normalized === "/patch") {
     input.setDetailMode("diff");
     return;
   }
@@ -844,7 +915,7 @@ function shortTime(value: string): string {
   return value.slice(11, 19);
 }
 
-function resolvePaletteInput(input: string, matches: string[]): string {
+export function resolvePaletteInput(input: string, matches: string[]): string {
   const trimmed = input.trim();
   if (trimmed === "/" && matches[0]) {
     return matches[0];
@@ -879,7 +950,7 @@ function readSessionTitle(event: AgentRunEvent): string {
   return event.message.slice(0, 30);
 }
 
-function splitDiffByFile(diff: string): Array<{ header: string; lines: string[] }> {
+export function splitDiffByFile(diff: string): Array<{ header: string; lines: string[] }> {
   const lines = diff.split("\n");
   const files: Array<{ header: string; lines: string[] }> = [];
   let current: { header: string; lines: string[] } | undefined;

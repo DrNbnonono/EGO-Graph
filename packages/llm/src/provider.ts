@@ -186,14 +186,14 @@ function splitAnthropicMessages(messages: ChatMessage[]): {
 
 function extractJsonObject(content: string): string {
   const trimmed = content.trim();
-  if (trimmed.startsWith("{")) {
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
     return trimmed;
   }
 
-  const match = trimmed.match(/```(?:json)?\s*(?<json>\{[\s\S]*\})\s*```/);
+  const match = trimmed.match(/```(?:json)?\s*(?<json>(?:\{[\s\S]*\}|\[[\s\S]*]))\s*```/);
   if (match?.groups?.json) {
     return match.groups.json;
   }
 
-  throw new Error("Model response did not contain a JSON object");
+  throw new Error("Model response did not contain a JSON object or array");
 }

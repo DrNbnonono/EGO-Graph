@@ -13,7 +13,13 @@ import {
   loadModelConfig,
   type ChatModelProvider,
 } from "@ego-graph/llm";
-import { listMcpRuntimeTools, loadMcpConfig, type McpConfig } from "@ego-graph/mcp";
+import {
+  createMcpClientPool,
+  listMcpRuntimeTools,
+  loadMcpConfig,
+  type McpClientPool,
+  type McpConfig,
+} from "@ego-graph/mcp";
 import { createMemoryService, type MemoryRecord as RuntimeMemoryRecord } from "@ego-graph/memory";
 import {
   defaultEgoHome,
@@ -31,7 +37,6 @@ import {
 } from "@ego-graph/tools";
 import {
   createWorkspaceContextPack,
-  createWorkspaceService,
   type ProjectSummary,
   type WorkspaceContextPack,
   type WorkspaceEditPlan,
@@ -194,6 +199,7 @@ export function createTerminalAgentSession(
   const egoHome = options.egoHome ?? defaultEgoHome();
   const store = new SqliteEgoStore(sqlitePath(egoHome));
   const toolRegistry = createTerminalAgentToolRegistry();
+  const mcpPool = createMcpClientPool();
   const pendingRuns = new Map<string, PendingRun>();
   const plannerProvider = resolvePlannerProvider(options);
   let permissionLevel = options.permissionLevel ?? "read-only";
@@ -217,6 +223,7 @@ export function createTerminalAgentSession(
           workspaceRoot,
           store,
           toolRegistry,
+          mcpPool,
           pendingRuns,
           plannerProvider,
           getPermissionLevel: () => permissionLevel,
@@ -239,6 +246,7 @@ export function createTerminalAgentSession(
         workspaceRoot,
         store,
         toolRegistry,
+        mcpPool,
         pendingRuns,
         plannerProvider,
         getPermissionLevel: () => permissionLevel,
@@ -298,7 +306,7 @@ export function createTerminalAgentSession(
       return forgetMemoryEvents({ store, id });
     },
     discoverMcpTools() {
-      return discoverMcpToolEvents({ store, workspaceRoot });
+      return discoverMcpToolEvents({ store, workspaceRoot, mcpPool });
     },
     callMcpTool(name, args) {
       return streamMcpToolCall({
@@ -306,6 +314,7 @@ export function createTerminalAgentSession(
         args: args ?? {},
         workspaceRoot,
         store,
+        mcpPool,
         getPermissionLevel: () => permissionLevel,
       });
     },
@@ -441,6 +450,7 @@ async function* streamStartTask(input: {
   workspaceRoot: string;
   store: SqliteEgoStore;
   toolRegistry: ReturnType<typeof createTerminalAgentToolRegistry>;
+  mcpPool: McpClientPool;
   pendingRuns: Map<string, PendingRun>;
   plannerProvider: ChatModelProvider | null | undefined;
   getPermissionLevel(): PermissionLevel;
@@ -510,7 +520,11 @@ async function* streamStartTask(input: {
     payload: { memories: memoryHits.map((memory) => memory.content).slice(0, 5) },
   });
 
-  const mcpDiscovery = await registerMcpRuntimeTools(input.toolRegistry, input.workspaceRoot);
+  const mcpDiscovery = await registerMcpRuntimeTools(
+    input.toolRegistry,
+    input.workspaceRoot,
+    input.mcpPool,
+  );
   if (mcpDiscovery.tools.length > 0 || mcpDiscovery.errors.length > 0) {
     yield await emit(input.store, {
       type: "mcp.tools.discovered",
@@ -1352,7 +1366,8 @@ async function generateEvidenceGapPlan(input: {
     stopCondition: z.string().min(1),
     riskNote: z.string().min(1),
   });
-  const schema = z.object({ plan: z.array(stepSchema).min(2).max(6) });
+  const planArraySchema = z.array(stepSchema).min(2).max(6);
+  const schema = z.union([z.object({ plan: planArraySchema }), planArraySchema]);
   try {
     const systemPrompt = await loadAgentSystemPrompt({
       workspaceRoot: input.workspaceRoot,
@@ -1403,7 +1418,7 @@ async function generateEvidenceGapPlan(input: {
         },
       ],
     });
-    return { status: "proposed", plan: result.plan };
+    return { status: "proposed", plan: Array.isArray(result) ? result : result.plan };
   } catch (error) {
     const debug = error instanceof Error ? error.message : String(error);
     return {
@@ -1480,11 +1495,11 @@ function requiredPermissionForTool(tool: ToolDefinition<ZodTypeAny, ZodTypeAny>)
   if (tool.name.startsWith("check.") || tool.name === "shell.readonly") {
     return "shell-readonly";
   }
-  if (tool.permission.scope === "network") {
-    return "network-low";
-  }
   if ((tool.riskLevel ?? tool.permission.risk) === "high" || tool.requiresApproval) {
     return "security-active";
+  }
+  if (tool.permission.scope === "network") {
+    return "network-low";
   }
   return "read-only";
 }
@@ -1582,13 +1597,14 @@ function readWorkspaceEditPlan(edit: AgentEditRecord): WorkspaceEditPlan | undef
 async function registerMcpRuntimeTools(
   registry: ReturnType<typeof createTerminalAgentToolRegistry>,
   workspaceRoot: string,
+  mcpPool: McpClientPool,
 ): Promise<{
   config: McpConfig;
   tools: Array<{ name: string; description: string }>;
   errors: Array<{ server: string; message: string }>;
 }> {
   const config = await loadMcpConfig(workspaceRoot);
-  const runtime = await listMcpRuntimeTools(config);
+  const runtime = await listMcpRuntimeTools(config, { pool: mcpPool });
   for (const tool of runtime.tools) {
     try {
       registry.register(tool);
@@ -1612,10 +1628,11 @@ async function registerMcpRuntimeTools(
 async function discoverMcpToolEvents(input: {
   store: SqliteEgoStore;
   workspaceRoot: string;
+  mcpPool: McpClientPool;
 }): Promise<AgentRunEvent[]> {
   const runId = `mcp-${Date.now()}`;
   const registry = createTerminalAgentToolRegistry();
-  const discovery = await registerMcpRuntimeTools(registry, input.workspaceRoot);
+  const discovery = await registerMcpRuntimeTools(registry, input.workspaceRoot, input.mcpPool);
   return [
     await emit(input.store, {
       type: "mcp.tools.discovered",
@@ -1636,13 +1653,14 @@ async function* streamMcpToolCall(input: {
   args: Record<string, unknown>;
   workspaceRoot: string;
   store: SqliteEgoStore;
+  mcpPool: McpClientPool;
   getPermissionLevel(): PermissionLevel;
 }): AsyncIterable<AgentRunEvent> {
   const now = new Date().toISOString();
   const runId = `mcp-call-${now.replace(/\D/g, "")}-${Math.random().toString(36).slice(2, 8)}`;
   const sessionId = `mcp-session-${Date.now()}`;
   const registry = createTerminalAgentToolRegistry();
-  await registerMcpRuntimeTools(registry, input.workspaceRoot);
+  await registerMcpRuntimeTools(registry, input.workspaceRoot, input.mcpPool);
 
   yield await emit(input.store, {
     type: "mcp.call.proposed",

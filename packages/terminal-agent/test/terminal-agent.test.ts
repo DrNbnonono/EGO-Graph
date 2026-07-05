@@ -237,6 +237,46 @@ describe("terminal agent session", () => {
     expect(session.getRunState(events[0]!.runId)?.plan?.[0]?.title).toBe("模型生成上下文计划");
   });
 
+  it("accepts a model planner response that is a bare plan array", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-terminal-agent-model-plan-array-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-terminal-agent-home-"));
+    await writeFile(join(root, "package.json"), '{"name":"fixture"}', "utf8");
+    await writeFile(join(root, "README.md"), "hello\n", "utf8");
+    const session = createTerminalAgentSession({
+      workspaceRoot: root,
+      egoHome,
+      modelProvider: fakeProvider(
+        JSON.stringify([
+          {
+            id: "array-context",
+            title: "Array plan context",
+            knownEvidence: ["README exists"],
+            missingEvidence: ["Need requested change"],
+            toolChoiceRationale: "Use workspace.read",
+            expectedResult: "Context is loaded",
+            stopCondition: "Context is sufficient",
+            riskNote: "Read-only",
+          },
+          {
+            id: "array-patch",
+            title: "Array plan patch",
+            knownEvidence: ["Context is available"],
+            missingEvidence: ["Need approval"],
+            toolChoiceRationale: "Generate WorkspaceEditPlan after approval",
+            expectedResult: "Diff preview",
+            stopCondition: "Patch approved or rejected",
+            riskNote: "Requires workspace-write",
+          },
+        ]),
+      ),
+    });
+
+    const events = await collect(session.startTask("update README"));
+
+    expect(events.map((event) => event.type)).toContain("planner.model.used");
+    expect(session.getRunState(events[0]!.runId)?.plan?.[0]?.id).toBe("array-context");
+  });
+
   it("blocks local security research tools until security-active is granted", async () => {
     const root = await mkdtemp(join(tmpdir(), "ego-terminal-agent-security-"));
     const egoHome = await mkdtemp(join(tmpdir(), "ego-terminal-agent-home-"));

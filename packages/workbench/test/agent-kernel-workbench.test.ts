@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sqlitePath, SqliteEgoStore } from "@ego-graph/storage";
@@ -51,6 +51,29 @@ describe("agent kernel workbench state", () => {
     expect(state.hermes.recentEvents[0]?.type).toBe("memory.written");
     expect(state.skills.map((skill) => skill.name)).toContain("web-search");
     expect(state.search.status).toBe("ready");
-    expect(state.mcp.transport).toBe("stdio-v1");
+    expect(state.mcp.transport).toBe("none");
+  });
+
+  it("reports stdio MCP transport when a stdio server is configured", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "ego-kernel-workbench-mcp-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-kernel-workbench-home-"));
+    await mkdir(join(workspaceRoot, ".ego"), { recursive: true });
+    await writeFile(
+      join(workspaceRoot, ".ego", "config.json"),
+      JSON.stringify({
+        mcpServers: {
+          fixture: {
+            command: process.execPath,
+            args: ["server.mjs"],
+            enabled: true,
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    const state = await readWorkbenchState({ workspaceRoot, egoHome });
+
+    expect(state.mcp.transport).toBe("stdio");
   });
 });

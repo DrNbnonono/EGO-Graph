@@ -45,6 +45,7 @@ process.stdin.on("data", (chunk) => {
 
     const client = createMcpStdioClient({
       name: "fixture",
+      transport: "stdio",
       command: process.execPath,
       args: [serverPath],
       enabled: true,
@@ -105,6 +106,7 @@ process.stdin.on("data", (chunk) => {
 
     const client = createMcpStdioClient({
       name: "fixture",
+      transport: "stdio",
       command: process.execPath,
       args: [serverPath],
       enabled: true,

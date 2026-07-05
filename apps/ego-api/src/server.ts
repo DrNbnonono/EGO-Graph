@@ -341,13 +341,52 @@ export function createServer(options: CreateServerOptions = {}): Hono {
   app.post("/api/mcp/servers", async (context) => {
     const body = (await context.req.json()) as {
       name?: string;
+      transport?: "stdio" | "http";
       command?: string;
       args?: string[];
       env?: Record<string, string>;
+      url?: string;
+      headers?: Record<string, string>;
+      oauth?: {
+        accessToken?: string;
+        tokenType?: "Bearer";
+        scopes?: string[];
+        resourceMetadataUrl?: string;
+      };
+      defaultToolPolicy?: {
+        scope?: "fixture" | "network" | "file";
+        risk?: "low" | "medium" | "high";
+        requiresApproval?: boolean;
+        sandboxProfile?: "none" | "process" | "docker";
+        timeoutMs?: number;
+        scenarios?: string[];
+      };
+      toolPolicies?: Record<
+        string,
+        {
+          scope?: "fixture" | "network" | "file";
+          risk?: "low" | "medium" | "high";
+          requiresApproval?: boolean;
+          sandboxProfile?: "none" | "process" | "docker";
+          timeoutMs?: number;
+          scenarios?: string[];
+        }
+      >;
       enabled?: boolean;
     };
-    if (!body.name || !body.command) {
-      return context.json({ ok: false, error: "name and command are required" }, 400);
+    const transport = body.transport ?? (body.url ? "http" : "stdio");
+    if (
+      !body.name ||
+      (transport === "stdio" && !body.command) ||
+      (transport === "http" && !body.url)
+    ) {
+      return context.json(
+        {
+          ok: false,
+          error: "name plus command(stdio) or url(http) are required",
+        },
+        400,
+      );
     }
     return context.json({
       ok: true,
@@ -355,9 +394,15 @@ export function createServer(options: CreateServerOptions = {}): Hono {
         workspaceRoot,
         server: {
           name: body.name,
-          command: body.command,
+          transport,
+          ...(body.command ? { command: body.command } : {}),
           args: body.args ?? [],
           env: body.env ?? {},
+          ...(body.url ? { url: body.url } : {}),
+          headers: body.headers ?? {},
+          ...(body.oauth ? { oauth: body.oauth } : {}),
+          ...(body.defaultToolPolicy ? { defaultToolPolicy: body.defaultToolPolicy } : {}),
+          ...(body.toolPolicies ? { toolPolicies: body.toolPolicies } : {}),
           enabled: body.enabled ?? true,
         },
       })),

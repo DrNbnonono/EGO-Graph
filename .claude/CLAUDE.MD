@@ -27,7 +27,8 @@ Use a TypeScript-first stack aligned with terminal agent tools such as OpenCode,
 - Memory: `packages/memory` provides session/project/task memory, safe recall, and context compression
 - LLM access: `packages/llm` owns persistent config loading/saving, MiniMax M3 defaults, OpenAI-compatible gateways, and environment-variable overrides
 - Skills/plugins: `packages/tools` owns built-in skill registration, plugin manifest validation, permission declarations, and `web.search`
-- MCP boundary: `packages/mcp` declares local capability boundaries and includes stdio MCP client v1 for `tools/list` and `tools/call`
+- MCP boundary: `packages/mcp` declares capability boundaries and includes stdio plus Streamable HTTP MCP clients for `tools/list` and `tools/call`
+- MCP HTTP/OAuth: bearer-token support, protected-resource metadata discovery, long-lived client pooling, and per-tool permission overrides are implemented; full interactive OAuth authorization is future work
 - Workspace inspection: `packages/workspace` provides safe repository summary, text reads, file listing, and command suggestions
 - Tool execution: TypeScript orchestration with Docker sandbox and external security tools
 - Tests: Vitest, with Playwright reserved for future web console checks
@@ -69,6 +70,7 @@ curl http://127.0.0.1:4317/api/config/models
 curl http://127.0.0.1:4317/api/commands
 curl http://127.0.0.1:4317/api/config/system-prompt
 curl http://127.0.0.1:4317/api/mcp/servers
+curl http://127.0.0.1:4317/api/mcp/tools
 curl http://127.0.0.1:4317/api/runtime/metrics
 ego config model --provider openai-compatible --base-url https://api.example.com --api-key sk-... --model your-model
 ego run --scenario web_pentest --task "..."
@@ -166,6 +168,7 @@ memory, Hermes timeline, skills/plugins, MCP stdio v1, and controlled web search
 - Root `README.md` and purple lotus logo asset are present.
 - `apps/ego-web` owns Dashboard pages/components/styles/client scripts.
 - `packages/workspace`, `packages/mcp`, `packages/agent`, `packages/hermes`, and `packages/memory` are first-class workspace packages.
+- `packages/mcp` supports stdio and Streamable HTTP transports, OAuth bearer-token headers, protected-resource metadata discovery, client pooling, and per-tool risk/approval policy.
 - `packages/agent` can generate a model-backed `WorkspaceEditPlan` from natural language through `generateWorkspaceEditPlan`.
 - API exposes `/chat` for read-only model replies.
 - API exposes `/agent/plans` and `/agent/plans/:id/approve` for plan-first write tasks.
@@ -179,7 +182,8 @@ memory, Hermes timeline, skills/plugins, MCP stdio v1, and controlled web search
 - Web polls `/api/workbench`, ticks local time, supports local session switching, and makes quick commands executable.
 - Web includes a right-side model settings panel that writes `.ego/config.json`, validates disabled-provider conflicts, and tests connectivity.
 - CLI exposes `ego config model` for persistent provider/baseUrl/model/API key setup.
-- TUI keeps a lightweight Agent Kernel status view and points users to `ego serve` for full Plan and Patch approval.
+- TUI keeps a conversation-first Agent Kernel view, multi-file diff browsing, slash command palette, MCP discovery, and approval shortcuts while still pointing users to `ego serve` for full management pages.
 - Model-unavailable fallback is `needs_model`: no pending edit, no diff, no file write.
+- Active public SRC/vulnerability scanning and exploit automation remain disabled by default. Security tools require explicit authorization scope, permission elevation, approval, sandbox/audit, and controlled targets.
 
 The vertical slice is complete when `pnpm build`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`, `pnpm test`, `pnpm smoke`, `ego --help`, `ego doctor`, `ego run`, `ego replay`, and `ego eval` pass against the controlled `web_pentest` fixture.

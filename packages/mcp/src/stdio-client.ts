@@ -5,6 +5,12 @@ export type McpToolInfo = {
   name: string;
   description?: string;
   inputSchema?: Record<string, unknown>;
+  annotations?: {
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    openWorldHint?: boolean;
+    [key: string]: unknown;
+  };
 };
 
 export type McpCallToolResult = {
@@ -13,11 +19,13 @@ export type McpCallToolResult = {
   isError?: boolean;
 };
 
-export type McpStdioClient = {
+export type McpClient = {
   listTools(): Promise<McpToolInfo[]>;
   callTool(name: string, args?: Record<string, unknown>): Promise<McpCallToolResult>;
   close(): Promise<void>;
 };
+
+export type McpStdioClient = McpClient;
 
 type JsonRpcRequest = {
   jsonrpc: "2.0";
@@ -50,6 +58,9 @@ export function createMcpStdioClient(server: McpServerDescriptor): McpStdioClien
     if (connected) {
       return;
     }
+    if (!server.command) {
+      throw new Error(`MCP stdio server ${server.name} is missing command`);
+    }
     processRef = spawn(server.command, server.args ?? [], {
       cwd: process.cwd(),
       env: { ...process.env, ...(server.env ?? {}) },
@@ -61,19 +72,20 @@ export function createMcpStdioClient(server: McpServerDescriptor): McpStdioClien
       drainMessages();
     });
     processRef.stderr.on("data", () => {
-      // 中文注释：MCP server 可以把日志写到 stderr，不能因此判定协议调用失败。
+      // MCP servers may log to stderr; stderr alone is not a protocol failure.
     });
     processRef.on("error", (error) => {
       rejectAll(error instanceof Error ? error : new Error(String(error)));
     });
     processRef.on("exit", (code) => {
+      connected = false;
       if (pending.size > 0) {
         rejectAll(new Error(`MCP server ${server.name} exited with code ${code ?? "unknown"}`));
       }
     });
 
     await request("initialize", {
-      protocolVersion: "2024-11-05",
+      protocolVersion: "2025-11-25",
       capabilities: {},
       clientInfo: { name: "EGO-Graph", version: "0.1.0" },
     });
