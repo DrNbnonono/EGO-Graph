@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
-import { displayWidth, truncateDisplay } from "./cjk.js";
+import { truncateDisplay } from "./cjk.js";
+import { wrapDisplay } from "./text-wrap.js";
 
 export type PromptState = {
   value: string;
@@ -23,6 +24,8 @@ export type PromptEdit =
   | { type: "history-prev" }
   | { type: "history-next" }
   | { type: "reset"; value?: string };
+
+const maxPromptLines = 6;
 
 export function createPromptState(value = "", history: string[] = []): PromptState {
   return {
@@ -117,6 +120,31 @@ export function addPromptHistory(state: PromptState, submitted: string): PromptS
   };
 }
 
+export type PromptRenderMetrics = {
+  lines: string[];
+  height: number;
+  totalLines: number;
+};
+
+export function getPromptRenderMetrics(state: PromptState, width: number): PromptRenderMetrics {
+  const visibleWidth = Math.max(8, width - 5);
+  const chars = Array.from(state.value);
+  const beforeCursor = chars.slice(0, state.cursor).join("");
+  const afterCursor = chars.slice(state.cursor).join("");
+  const rendered = `${beforeCursor}▌${afterCursor}`;
+  const allLines = rendered
+    .split("\n")
+    .flatMap((line) => wrapDisplay(line.length > 0 ? line : " ", visibleWidth))
+    .map((line) => truncateDisplay(line, visibleWidth));
+  const lines = allLines.slice(-maxPromptLines);
+
+  return {
+    lines,
+    totalLines: allLines.length,
+    height: lines.length + 2,
+  };
+}
+
 export function PromptInput({
   state,
   busy,
@@ -126,34 +154,23 @@ export function PromptInput({
   busy: boolean;
   width: number;
 }): ReactElement {
-  const visibleWidth = Math.max(8, width - 6);
-  const beforeCursor = Array.from(state.value).slice(0, state.cursor).join("");
-  const atCursor = Array.from(state.value)[state.cursor] ?? " ";
-  const afterCursor = Array.from(state.value)
-    .slice(state.cursor + 1)
-    .join("");
-  const rendered = `${beforeCursor}${atCursor}${afterCursor}`;
-  const lines = rendered.split("\n");
+  const metrics = getPromptRenderMetrics(state, width);
+  const separator = "─".repeat(Math.max(8, width - 2));
 
   return (
-    <Box flexDirection="column" paddingX={1}>
+    <Box flexDirection="column" paddingX={1} height={metrics.height}>
+      <Text color="gray">{separator}</Text>
       <Text color={busy ? "yellow" : "gray"}>
         {busy
-          ? "Thinking - draft is editable, Enter waits until ready"
-          : "? shortcuts  / commands  Ctrl+J newline"}
+          ? "Thinking · draft stays editable · Ctrl+O thinking details"
+          : "? shortcuts · / commands · Ctrl+J newline · Ctrl+O thinking"}
       </Text>
-      {lines.map((line, index) => (
-        <Text key={index} color="magentaBright">
-          {index === 0 ? "> " : "  "}
-          {truncateDisplay(line, visibleWidth)}
-          {index === lines.length - 1 ? cursorHint(state, visibleWidth) : ""}
+      {metrics.lines.map((line, index) => (
+        <Text key={index} color="white">
+          <Text color="magentaBright">{index === 0 ? "❯ " : "  "}</Text>
+          {line}
         </Text>
       ))}
     </Box>
   );
-}
-
-function cursorHint(state: PromptState, visibleWidth: number): string {
-  const cursorWidth = displayWidth(Array.from(state.value).slice(0, state.cursor).join(""));
-  return cursorWidth <= visibleWidth ? "▌" : "";
 }

@@ -36,7 +36,7 @@ export function CommandPaletteView({
             key={command.name}
             color={unavailable ? "gray" : index === state.selectedIndex ? "magentaBright" : "white"}
           >
-            {index === state.selectedIndex ? "> " : "  "}
+            {index === state.selectedIndex ? "❯ " : "  "}
             {truncateDisplay(command.name, 22)} {truncateDisplay(command.category, 12)}{" "}
             {truncateDisplay(command.description, Math.max(10, panelWidth - 46))}
             {unavailable ? " unavailable" : ""}

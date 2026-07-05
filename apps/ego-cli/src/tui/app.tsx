@@ -5,8 +5,15 @@ import {
   type TerminalAgentSession,
 } from "@ego-graph/agent-harness";
 import { readWorkbenchState, type WorkbenchState } from "@ego-graph/workbench";
-import { Box, Text, useApp, useInput, useStdout } from "ink";
-import { useEffect, useMemo, useState, type ReactElement, type SetStateAction } from "react";
+import { Box, Text, useApp, useStdout } from "ink";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactElement,
+  type SetStateAction,
+} from "react";
 import {
   closeCommandPalette,
   createCommandPaletteState,
@@ -16,8 +23,8 @@ import {
   type CommandPaletteState,
 } from "./command-palette.js";
 import { CommandPaletteView } from "./command-palette-view.js";
-import { ConversationView } from "./conversation-view.js";
 import { ChecksView } from "./checks-view.js";
+import { ConversationView } from "./conversation-view.js";
 import { DebugView } from "./debug-view.js";
 import { DiffView, resolveDiffFileIndex, splitDiffByFile } from "./diff-view.js";
 import {
@@ -31,10 +38,13 @@ import {
   addPromptHistory,
   createPromptState,
   editPrompt,
+  getPromptRenderMetrics,
   PromptInput,
   type PromptState,
 } from "./prompt-input.js";
 import { PlanView } from "./plan-view.js";
+import { useMouseTracking, useTerminalInput, type TerminalInputAction } from "./terminal-input.js";
+import { calculateBodyHeight, useTerminalSize } from "./terminal-size.js";
 import type { OverlayMode, TuiRunSession } from "./tui-state.js";
 import { WelcomeScreen } from "./welcome-screen.js";
 
@@ -49,8 +59,9 @@ const permissionLevels: PermissionLevel[] = [
 export function EgoTui(): ReactElement {
   const { exit } = useApp();
   const { stdout } = useStdout();
-  const terminalWidth = Math.max(60, stdout.columns ?? 100);
-  const terminalHeight = Math.max(24, stdout.rows ?? 32);
+  const terminalSize = useTerminalSize(stdout);
+  const terminalWidth = terminalSize.columns;
+  const terminalHeight = terminalSize.rows;
   const session = useMemo(() => createTerminalAgentSession({ workspaceRoot: process.cwd() }), []);
   const [workbench, setWorkbench] = useState<WorkbenchState | undefined>();
   const [prompt, setPrompt] = useState<PromptState>(() => createPromptState());
@@ -71,7 +82,18 @@ export function EgoTui(): ReactElement {
   const [runSessions, setRunSessions] = useState<TuiRunSession[]>([]);
   const [replayMode, setReplayMode] = useState(false);
   const [sidePanelRequested, setSidePanelRequested] = useState(false);
+  const [thinkingExpanded, setThinkingExpanded] = useState(false);
   const layout = chooseTuiLayout(terminalWidth, sidePanelRequested);
+  const promptHeight = getPromptRenderMetrics(prompt, terminalWidth).height;
+  const paletteHeight = palette.open ? Math.min(12, palette.matches.length + 3) : 0;
+  const bodyHeight = calculateBodyHeight({
+    terminalRows: terminalHeight,
+    statusHeight: 1,
+    paletteHeight,
+    promptHeight,
+  });
+
+  useMouseTracking();
 
   useEffect(() => {
     void refreshWorkbench(setWorkbench, setHistoryItems, appendSystemEvent(setEvents));
@@ -91,189 +113,148 @@ export function EgoTui(): ReactElement {
 
   useEffect(() => {
     if (prompt.value.startsWith("/")) {
+      const next = createCommandPaletteState(prompt.value);
       setPalette((previous) => ({
-        ...createCommandPaletteState(prompt.value),
-        selectedIndex: Math.min(
-          previous.selectedIndex,
-          Math.max(0, createCommandPaletteState(prompt.value).matches.length - 1),
-        ),
+        ...next,
+        selectedIndex: Math.min(previous.selectedIndex, Math.max(0, next.matches.length - 1)),
       }));
     } else {
       setPalette((previous) => closeCommandPalette(previous));
     }
   }, [prompt.value]);
 
-  useInput((value, key) => {
-    if (key.ctrl && value === "c") {
-      exit();
+  const handleSubmit = useCallback((): void => {
+    if (busy) {
+      appendSystemEvent(setEvents)("当前仍在运行，已保留草稿；等待完成后再提交。");
       return;
     }
-    if (key.escape) {
-      if (palette.open) {
-        setPalette((previous) => closeCommandPalette(previous));
-        setPrompt((previous) => editPrompt(previous, { type: "reset", value: "" }));
-        return;
-      }
-      if (overlayMode !== "none") {
-        setOverlayMode("none");
-        return;
-      }
-      exit();
-      return;
-    }
-    if (key.ctrl && value === "r") {
-      setSidePanelRequested((previous) => !previous);
-      return;
-    }
-    if (palette.open && (key.downArrow || key.tab)) {
-      setPalette((previous) => moveCommandPaletteSelection(previous, 1));
-      return;
-    }
-    if (palette.open && key.upArrow) {
-      setPalette((previous) => moveCommandPaletteSelection(previous, -1));
-      return;
-    }
-    if (overlayMode === "history" && key.downArrow) {
-      setHistoryIndex((previous) => Math.min(previous + 1, Math.max(0, historyItems.length - 1)));
-      return;
-    }
-    if (overlayMode === "history" && key.upArrow) {
-      setHistoryIndex((previous) => Math.max(0, previous - 1));
-      return;
-    }
-    if (key.pageUp) {
-      setScrollOffset((previous) => previous + 5);
-      return;
-    }
-    if (key.pageDown) {
-      setScrollOffset((previous) => Math.max(0, previous - 5));
-      return;
-    }
-    if (!palette.open && key.upArrow) {
-      setPrompt((previous) => editPrompt(previous, { type: "history-prev" }));
-      return;
-    }
-    if (!palette.open && key.downArrow) {
-      setPrompt((previous) => editPrompt(previous, { type: "history-next" }));
-      return;
-    }
-    if (value === "n" && overlayMode === "diff") {
-      setDiffFileIndex((previous) => previous + 1);
-      return;
-    }
-    if (value === "p" && overlayMode === "diff") {
-      setDiffFileIndex((previous) => Math.max(0, previous - 1));
-      return;
-    }
-    if ((value === "y" || value === "n") && activeRunId) {
-      const state = session.getRunState(activeRunId);
-      if (state?.status === "plan_pending") {
-        void runStream(
-          value === "y" ? session.approvePlan(activeRunId) : session.rejectPlan(activeRunId),
-          {
-            setEvents,
-            setBusy,
-            setWorkbench,
-            setHistoryItems,
-            onEvent: (event) => updateRunSessions(setRunSessions, event),
-          },
-        );
-        return;
-      }
-      if (state?.status === "patch_pending") {
-        void runStream(
-          value === "y" ? session.approvePatch(activeRunId) : session.rejectPatch(activeRunId),
-          {
-            setEvents,
-            setBusy,
-            setWorkbench,
-            setHistoryItems,
-            onEvent: (event) => updateRunSessions(setRunSessions, event),
-          },
-        );
-        return;
-      }
-    }
-    if (key.return) {
-      if (busy) {
-        appendSystemEvent(setEvents)("当前运行中，已保留草稿，等待完成后再提交。");
-        return;
-      }
-      const selected = palette.open ? selectCommandPalette(palette) : undefined;
-      const submitted =
-        selected ??
-        resolvePaletteInput(
-          prompt.value,
-          palette.matches.map((command) => command.name),
-          palette.selectedIndex,
-        );
-      if (submitted === "/" || !submitted.trim()) {
-        return;
-      }
-      setPrompt((previous) => editPrompt(addPromptHistory(previous, submitted), { type: "reset" }));
-      setPalette((previous) => closeCommandPalette(previous));
-      setScrollOffset(0);
-      void submitInput({
-        submitted,
-        session,
-        activeRunId,
-        setActiveRunId,
-        setEvents,
-        setBusy,
-        setWorkbench,
-        setHistoryItems,
-        setOverlayMode,
-        setScrollOffset,
-        setDiffFileIndex,
-        historyItems,
-        historyIndex,
-        setHistoryIndex,
-        runSessions,
-        setRunSessions,
-        setPermissionLevel,
-        setReplayMode,
-        exit,
-      });
-      return;
-    }
-    if (key.leftArrow) {
-      setPrompt((previous) => editPrompt(previous, { type: "move-left" }));
-      return;
-    }
-    if (key.rightArrow) {
-      setPrompt((previous) => editPrompt(previous, { type: "move-right" }));
-      return;
-    }
-    if (key.ctrl && value === "a") {
-      setPrompt((previous) => editPrompt(previous, { type: "move-home" }));
-      return;
-    }
-    if (key.ctrl && value === "e") {
-      setPrompt((previous) => editPrompt(previous, { type: "move-end" }));
-      return;
-    }
-    if (key.ctrl && value === "u") {
-      setPrompt((previous) => editPrompt(previous, { type: "clear-before" }));
-      return;
-    }
-    if (key.ctrl && value === "k") {
-      setPrompt((previous) => editPrompt(previous, { type: "clear-after" }));
-      return;
-    }
-    if (key.ctrl && value === "j") {
-      setPrompt((previous) => editPrompt(previous, { type: "newline" }));
-      return;
-    }
-    if (key.backspace || key.delete) {
-      setPrompt((previous) =>
-        editPrompt(previous, { type: key.backspace ? "delete-before" : "delete-after" }),
+    const selected = palette.open ? selectCommandPalette(palette) : undefined;
+    const submitted =
+      selected ??
+      resolvePaletteInput(
+        prompt.value,
+        palette.matches.map((command) => command.name),
+        palette.selectedIndex,
       );
+    if (submitted === "/" || !submitted.trim()) {
       return;
     }
-    if (!key.ctrl && !key.meta && value) {
-      setPrompt((previous) => editPrompt(previous, { type: "insert", text: value }));
-    }
-  });
+    setPrompt((previous) => editPrompt(addPromptHistory(previous, submitted), { type: "reset" }));
+    setPalette((previous) => closeCommandPalette(previous));
+    setScrollOffset(0);
+    void submitInput({
+      submitted,
+      session,
+      activeRunId,
+      setActiveRunId,
+      setEvents,
+      setBusy,
+      setWorkbench,
+      setHistoryItems,
+      setOverlayMode,
+      setScrollOffset,
+      setDiffFileIndex,
+      historyItems,
+      historyIndex,
+      setHistoryIndex,
+      runSessions,
+      setRunSessions,
+      setPermissionLevel,
+      setReplayMode,
+      toggleThinking: () => setThinkingExpanded((previous) => !previous),
+      exit,
+    });
+  }, [
+    activeRunId,
+    busy,
+    exit,
+    historyIndex,
+    historyItems,
+    palette,
+    prompt.value,
+    runSessions,
+    session,
+  ]);
+
+  const handleTerminalAction = useCallback(
+    (action: TerminalInputAction): void => {
+      if (action.type === "exit") {
+        exit();
+        return;
+      }
+      if (action.type === "escape") {
+        if (palette.open) {
+          setPalette((previous) => closeCommandPalette(previous));
+          setPrompt((previous) => editPrompt(previous, { type: "reset", value: "" }));
+          return;
+        }
+        if (overlayMode !== "none") {
+          setOverlayMode("none");
+          return;
+        }
+        exit();
+        return;
+      }
+      if (action.type === "toggle-thinking") {
+        setThinkingExpanded((previous) => !previous);
+        return;
+      }
+      if (action.type === "toggle-side-panel") {
+        setSidePanelRequested((previous) => !previous);
+        return;
+      }
+      if (action.type === "scroll") {
+        setScrollOffset((previous) => Math.max(0, previous + action.delta));
+        return;
+      }
+      if (action.type === "tab") {
+        if (palette.open) {
+          setPalette((previous) => moveCommandPaletteSelection(previous, 1));
+        }
+        return;
+      }
+      if (action.type === "submit") {
+        handleSubmit();
+        return;
+      }
+      if (action.type === "move") {
+        handleMoveAction(action.direction, {
+          palette,
+          overlayMode,
+          historyItems,
+          setPalette,
+          setHistoryIndex,
+          setScrollOffset,
+          setPrompt,
+        });
+        return;
+      }
+      if (action.type === "prompt-edit") {
+        if (
+          handleSingleKeyShortcut(action, overlayMode, activeRunId, session, {
+            setDiffFileIndex,
+            setEvents,
+            setBusy,
+            setWorkbench,
+            setHistoryItems,
+            setRunSessions,
+          })
+        ) {
+          return;
+        }
+        if (action.edit === "insert") {
+          setPrompt((previous) =>
+            editPrompt(previous, { type: "insert", text: action.text ?? "" }),
+          );
+          return;
+        }
+        setPrompt((previous) => editPrompt(previous, { type: action.edit }));
+      }
+    },
+    [activeRunId, exit, handleSubmit, historyItems, overlayMode, palette, session],
+  );
+
+  useTerminalInput(handleTerminalAction);
 
   if (!workbench) {
     return (
@@ -285,10 +266,6 @@ export function EgoTui(): ReactElement {
   }
 
   const activeRun = activeRunId ? session.getRunState(activeRunId) : undefined;
-  const bodyHeight = Math.max(
-    8,
-    terminalHeight - 5 - (palette.open ? Math.min(12, palette.matches.length + 3) : 0),
-  );
 
   return (
     <Box flexDirection="column" height={terminalHeight}>
@@ -296,6 +273,7 @@ export function EgoTui(): ReactElement {
         workbench={workbench}
         permissionLevel={permissionLevel}
         busy={busy}
+        thinkingExpanded={thinkingExpanded}
         width={terminalWidth}
       />
       <Box flexGrow={1} height={bodyHeight}>
@@ -331,6 +309,7 @@ export function EgoTui(): ReactElement {
             height={bodyHeight}
             scrollOffset={scrollOffset}
             debug={false}
+            thinkingExpanded={thinkingExpanded}
             replayMode={replayMode}
           />
         )}
@@ -364,8 +343,119 @@ type SubmitInputOptions = {
   setRunSessions(value: SetStateAction<TuiRunSession[]>): void;
   setPermissionLevel(value: PermissionLevel): void;
   setReplayMode(value: boolean): void;
+  toggleThinking(): void;
   exit(): void;
 };
+
+function handleMoveAction(
+  direction: "up" | "down" | "left" | "right" | "page-up" | "page-down",
+  input: {
+    palette: CommandPaletteState;
+    overlayMode: OverlayMode;
+    historyItems: HistoryItem[];
+    setPalette(value: SetStateAction<CommandPaletteState>): void;
+    setHistoryIndex(value: SetStateAction<number>): void;
+    setScrollOffset(value: SetStateAction<number>): void;
+    setPrompt(value: SetStateAction<PromptState>): void;
+  },
+): void {
+  if (input.palette.open && (direction === "down" || direction === "up")) {
+    input.setPalette((previous) =>
+      moveCommandPaletteSelection(previous, direction === "down" ? 1 : -1),
+    );
+    return;
+  }
+  if (input.overlayMode === "history" && direction === "down") {
+    input.setHistoryIndex((previous) =>
+      Math.min(previous + 1, Math.max(0, input.historyItems.length - 1)),
+    );
+    return;
+  }
+  if (input.overlayMode === "history" && direction === "up") {
+    input.setHistoryIndex((previous) => Math.max(0, previous - 1));
+    return;
+  }
+  if (direction === "page-up") {
+    input.setScrollOffset((previous) => previous + 5);
+    return;
+  }
+  if (direction === "page-down") {
+    input.setScrollOffset((previous) => Math.max(0, previous - 5));
+    return;
+  }
+  if (!input.palette.open && direction === "up") {
+    input.setPrompt((previous) => editPrompt(previous, { type: "history-prev" }));
+    return;
+  }
+  if (!input.palette.open && direction === "down") {
+    input.setPrompt((previous) => editPrompt(previous, { type: "history-next" }));
+    return;
+  }
+  if (direction === "left") {
+    input.setPrompt((previous) => editPrompt(previous, { type: "move-left" }));
+    return;
+  }
+  if (direction === "right") {
+    input.setPrompt((previous) => editPrompt(previous, { type: "move-right" }));
+  }
+}
+
+function handleSingleKeyShortcut(
+  action: Extract<TerminalInputAction, { type: "prompt-edit" }>,
+  overlayMode: OverlayMode,
+  activeRunId: string | undefined,
+  session: TerminalAgentSession,
+  input: {
+    setDiffFileIndex(value: SetStateAction<number>): void;
+    setEvents(value: SetStateAction<AgentRunEvent[]>): void;
+    setBusy(value: boolean): void;
+    setWorkbench(value: WorkbenchState | undefined): void;
+    setHistoryItems(value: HistoryItem[]): void;
+    setRunSessions(value: SetStateAction<TuiRunSession[]>): void;
+  },
+): boolean {
+  if (action.edit !== "insert" || !action.text) {
+    return false;
+  }
+  if (action.text === "n" && overlayMode === "diff") {
+    input.setDiffFileIndex((previous) => previous + 1);
+    return true;
+  }
+  if (action.text === "p" && overlayMode === "diff") {
+    input.setDiffFileIndex((previous) => Math.max(0, previous - 1));
+    return true;
+  }
+  if ((action.text === "y" || action.text === "n") && activeRunId) {
+    const state = session.getRunState(activeRunId);
+    if (state?.status === "plan_pending") {
+      void runStream(
+        action.text === "y" ? session.approvePlan(activeRunId) : session.rejectPlan(activeRunId),
+        {
+          setEvents: input.setEvents,
+          setBusy: input.setBusy,
+          setWorkbench: input.setWorkbench,
+          setHistoryItems: input.setHistoryItems,
+          onEvent: (event) => updateRunSessions(input.setRunSessions, event),
+        },
+      );
+      return true;
+    }
+    if (state?.status === "patch_pending") {
+      void runStream(
+        action.text === "y" ? session.approvePatch(activeRunId) : session.rejectPatch(activeRunId),
+        {
+          setEvents: input.setEvents,
+          setBusy: input.setBusy,
+          setWorkbench: input.setWorkbench,
+          setHistoryItems: input.setHistoryItems,
+          onEvent: (event) => updateRunSessions(input.setRunSessions, event),
+        },
+      );
+      return true;
+    }
+  }
+  return false;
+}
 
 async function submitInput(input: SubmitInputOptions): Promise<void> {
   const normalized = input.submitted.toLowerCase().trim();
@@ -373,14 +463,7 @@ async function submitInput(input: SubmitInputOptions): Promise<void> {
     input.exit();
     return;
   }
-  if (normalized === "/clear") {
-    input.setEvents([]);
-    input.setActiveRunId(undefined);
-    input.setReplayMode(false);
-    input.setOverlayMode("none");
-    return;
-  }
-  if (normalized === "/new") {
+  if (normalized === "/clear" || normalized === "/new") {
     input.setEvents([]);
     input.setActiveRunId(undefined);
     input.setReplayMode(false);
@@ -392,11 +475,15 @@ async function submitInput(input: SubmitInputOptions): Promise<void> {
     input.setOverlayMode("none");
     return;
   }
+  if (normalized === "/thinking") {
+    input.toggleThinking();
+    input.setEvents((previous) => [...previous, localEvent("思考/工具过程显示状态已切换。")]);
+    return;
+  }
   if (normalized === "/status") {
-    input.setOverlayMode("status");
     input.setEvents((previous) => [
       ...previous,
-      localEvent("Status is shown in the bottom line. Use /debug for event details."),
+      localEvent("状态显示在顶部栏；使用 /debug 查看完整事件 payload。"),
     ]);
     return;
   }
@@ -426,10 +513,20 @@ async function submitInput(input: SubmitInputOptions): Promise<void> {
     input.setScrollOffset(0);
     return;
   }
+  if (normalized === "/sessions") {
+    const lines =
+      input.runSessions.length > 0
+        ? input.runSessions.map((run, index) => `${index + 1}. ${run.title} · ${run.runId}`)
+        : ["当前进程还没有缓存的 run。"];
+    input.setEvents((previous) => [...previous, localEvent(lines.join("\n"))]);
+    return;
+  }
   if (normalized === "/model" || normalized === "/models") {
     input.setEvents((previous) => [
       ...previous,
-      localEvent("模型管理请打开 ego serve 的 Models 页面；TUI 顶部显示当前 active profile。"),
+      localEvent(
+        "模型管理请打开 ego serve 的 Models 页面；TUI 顶部会同步显示当前 active profile。",
+      ),
     ]);
     return;
   }
@@ -677,11 +774,12 @@ function helpText(): string {
     "可用命令：",
     "/history 浏览持久化 run",
     "/replay 1 按序号回放历史",
+    "/thinking 展开/折叠思考与工具过程",
     "/allow <level> 切换权限",
     "/plan approve|reject 审批计划",
     "/diff next|prev 浏览 diff",
     "/patch approve|reject 审批 patch",
-    "/debug 展开调试详情",
+    "/debug 展开完整调试详情",
     "/clear 清屏",
     "/exit 退出",
   ].join("\n");

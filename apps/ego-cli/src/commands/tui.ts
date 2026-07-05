@@ -9,7 +9,7 @@ export async function handleTuiCommand(): Promise<void> {
       : "deterministic fallback";
     console.log("EGO-Graph 紫莲花 Agent Workbench v0.1.0");
     console.log("项目进展：TypeScript monorepo / Agent Runtime / JSONL + SQLite / Web + TUI");
-    console.log(`交互对话：直接运行 ego 进入终端对话式 Agent，当前模型 ${modelLabel}`);
+    console.log(`交互对话：运行 ego 进入终端对话式 Agent，当前模型 ${modelLabel}`);
     console.log("Agent Kernel：Terminal chat / Memory / Plan / Patch / Checks");
     console.log(
       "权限等级：默认 read-only，可用 /allow workspace-write 或 /allow shell-readonly 升级",

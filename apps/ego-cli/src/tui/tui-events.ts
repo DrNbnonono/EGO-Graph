@@ -5,6 +5,7 @@ import { wrapDisplay } from "./text-wrap.js";
 export type RenderEventOptions = {
   width: number;
   debug: boolean;
+  thinkingExpanded: boolean;
 };
 
 export function renderEventLines(event: AgentRunEvent, options: RenderEventOptions): string[] {
@@ -16,7 +17,7 @@ export function renderEventLines(event: AgentRunEvent, options: RenderEventOptio
     return renderAssistantMessage(event.message, width);
   }
   if (event.type === "assistant.delta") {
-    return wrapDisplay(`lotus ${event.message}`, width);
+    return wrapDisplay(`✻ ${event.message}`, width);
   }
   if (event.type.includes("plan")) {
     return wrapDisplay(`plan ${event.message}`, width);
@@ -24,11 +25,21 @@ export function renderEventLines(event: AgentRunEvent, options: RenderEventOptio
   if (event.type.includes("patch")) {
     return wrapDisplay(`patch ${event.message}`, width);
   }
-  if (event.type.includes("check")) {
-    return wrapDisplay(`check ${event.message}`, width);
-  }
   if (isFoldedEvent(event.type) && !options.debug) {
-    return [truncateDisplay(`${eventIcon(event.type)} ${event.message}`, width)];
+    if (!options.thinkingExpanded) {
+      return [
+        truncateDisplay(
+          `${eventIcon(event.type)} ${readCompactEventLabel(event.type)} · Ctrl+O expand`,
+          width,
+        ),
+      ];
+    }
+    const lines = wrapDisplay(`${eventIcon(event.type)} ${event.message}`, width);
+    const summary = summarizePayload(event.payload);
+    if (summary) {
+      lines.push(...wrapDisplay(`  ${summary}`, width));
+    }
+    return lines;
   }
 
   const base = wrapDisplay(`${eventIcon(event.type)} ${event.message}`, width);
@@ -39,7 +50,7 @@ export function renderEventLines(event: AgentRunEvent, options: RenderEventOptio
 }
 
 function renderAssistantMessage(message: string, width: number): string[] {
-  const lines: string[] = ["lotus"];
+  const lines: string[] = ["●"];
   for (const sourceLine of message.split(/\r?\n/u)) {
     lines.push(...wrapDisplay(renderMarkdownLine(sourceLine), width));
   }
@@ -61,8 +72,49 @@ function isFoldedEvent(type: AgentRunEvent["type"]): boolean {
     type.includes("tool") ||
     type.includes("evidence") ||
     type.includes("reflection") ||
-    type.includes("model.failed")
+    type.includes("model.failed") ||
+    type.includes("check")
   );
+}
+
+function readCompactEventLabel(type: AgentRunEvent["type"]): string {
+  if (type.includes("tool")) {
+    return "tool event";
+  }
+  if (type.includes("evidence")) {
+    return "evidence event";
+  }
+  if (type.includes("reflection")) {
+    return "reasoning summary";
+  }
+  if (type.includes("check")) {
+    return "check event";
+  }
+  if (type.includes("model")) {
+    return "model event";
+  }
+  return "runtime event";
+}
+
+function summarizePayload(payload: AgentRunEvent["payload"]): string | undefined {
+  const debug = payload.debug;
+  if (!debug || typeof debug !== "object") {
+    return undefined;
+  }
+  const entries = Object.entries(debug)
+    .slice(0, 4)
+    .map(([key, value]) => `${key}=${formatDebugValue(value)}`);
+  return entries.length > 0 ? entries.join(" · ") : undefined;
+}
+
+function formatDebugValue(value: unknown): string {
+  if (typeof value === "string") {
+    return truncateDisplay(value, 80);
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return truncateDisplay(JSON.stringify(value), 80);
 }
 
 function eventIcon(type: AgentRunEvent["type"]): string {

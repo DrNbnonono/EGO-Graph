@@ -6,6 +6,8 @@ export { getCommandPaletteMatches, resolvePaletteInput } from "./command-palette
 export { resolveDiffFileIndex, splitDiffByFile } from "./diff-view.js";
 export { displayWidth, truncateDisplay } from "./cjk.js";
 export { wrapDisplay } from "./text-wrap.js";
+export { normalizeTerminalInput, parseMouseWheel } from "./terminal-input.js";
+export { createTerminalSize } from "./terminal-size.js";
 
 export function renderTui(): void {
   render(<EgoTui />);

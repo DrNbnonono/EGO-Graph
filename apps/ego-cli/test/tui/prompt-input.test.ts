@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createPromptState, editPrompt } from "../../src/tui/prompt-input.js";
+import {
+  createPromptState,
+  editPrompt,
+  getPromptRenderMetrics,
+} from "../../src/tui/prompt-input.js";
 
 describe("prompt input model", () => {
   it("supports cursor movement and insert/delete editing", () => {
@@ -40,5 +44,13 @@ describe("prompt input model", () => {
 
     state = editPrompt(state, { type: "history-next" });
     expect(state.value).toBe("second");
+  });
+
+  it("caps multiline prompt height so the input stays anchored", () => {
+    const state = createPromptState("1\n2\n3\n4\n5\n6\n7");
+    const metrics = getPromptRenderMetrics(state, 80);
+
+    expect(metrics.lines).toHaveLength(6);
+    expect(metrics.height).toBe(8);
   });
 });

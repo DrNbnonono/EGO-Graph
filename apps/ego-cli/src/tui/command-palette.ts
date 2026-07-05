@@ -43,6 +43,7 @@ export const commandPalette: CommandManifest[] = [
   { name: "/mcp", category: "MCP", description: "Discover configured MCP tools." },
   { name: "/skills", category: "MCP", description: "Show skill management guidance." },
   { name: "/prompt", category: "Model", description: "Show system prompt location." },
+  { name: "/thinking", category: "Help", description: "Toggle folded reasoning and tool events." },
   { name: "/permissions", category: "Permission", description: "Show permission levels." },
   { name: "/allow read-only", category: "Permission", description: "Use read-only mode." },
   {

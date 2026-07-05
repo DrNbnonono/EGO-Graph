@@ -1,7 +1,7 @@
 # EGO-Graph User Guide
 
-Start the terminal TUI. It opens a conversation-first terminal Agent surface with a welcome screen,
-model/permission/workspace status, and a fixed prompt at the bottom:
+Start the terminal TUI. It opens a conversation-first terminal Agent surface with a compact purple
+lotus welcome screen, model/permission/workspace status, and a fixed prompt at the bottom:
 
 ```bash
 ego
@@ -16,10 +16,12 @@ Terminal shortcuts:
 - Type natural language directly to chat with the Agent.
 - Type `/` to open the command palette. Use Tab or arrow keys to select, Enter to run, Esc to close.
 - Use Ctrl+A/Ctrl+E for Home/End, Ctrl+U to clear before cursor, Ctrl+K to clear after cursor, Ctrl+J for a new line.
-- Use Up/Down to browse prompt history. Use PageUp/PageDown to scroll conversation history.
+- Use Backspace to delete before the cursor and Delete to delete after the cursor.
+- Use Up/Down to browse prompt history. Use mouse wheel or PageUp/PageDown to scroll conversation history.
+- Use Ctrl+O or `/thinking` to expand/collapse auditable reasoning summaries and tool events.
 - Use `/history` to browse persisted runs, then `/replay 1` or `/switch 1` to open a run by number.
 - Use `/plan approve`, `/diff`, `/diff next`, `/patch approve`, and `/checks` for the approval flow.
-- Use `/debug` only when you need folded tool payloads and technical details.
+- Use `/debug` only when you need full folded tool payloads and technical details.
 
 Start the browser visualization:
 

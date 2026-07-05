@@ -1,7 +1,7 @@
+import type { PermissionLevel } from "@ego-graph/agent-harness";
 import type { WorkbenchState } from "@ego-graph/workbench";
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
-import type { PermissionLevel } from "@ego-graph/agent-harness";
 import { truncateDisplay } from "./cjk.js";
 
 export type TuiLayout = {
@@ -29,11 +29,13 @@ export function StatusLine({
   workbench,
   permissionLevel,
   busy,
+  thinkingExpanded,
   width,
 }: {
   workbench: WorkbenchState;
   permissionLevel: PermissionLevel;
   busy: boolean;
+  thinkingExpanded: boolean;
   width: number;
 }): ReactElement {
   const label = [
@@ -44,7 +46,7 @@ export function StatusLine({
     `Memory ${workbench.memory.total}`,
     `MCP ${workbench.mcp.status}`,
     busy ? "Thinking" : "Ready",
-    "? help",
+    thinkingExpanded ? "thinking expanded" : "thinking folded",
   ].join(" · ");
 
   return (

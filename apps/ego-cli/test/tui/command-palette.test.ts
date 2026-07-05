@@ -16,6 +16,9 @@ describe("command palette", () => {
     expect(filtered.map((command) => command.name)).toEqual(
       expect.arrayContaining(["/plan", "/plan approve", "/plan reject"]),
     );
+    expect(getCommandPaletteMatches("/think").map((command) => command.name)).toContain(
+      "/thinking",
+    );
   });
 
   it("moves selection with arrow-like deltas and tab-like next", () => {
