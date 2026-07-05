@@ -28,7 +28,7 @@ This matters because the competition is not scored on a static dashboard or a si
 Implemented:
 
 - `ego` terminal command.
-- Chinese terminal TUI workbench with sessions, tools, context, logs, approvals, and quick commands.
+- Chinese terminal TUI workbench with a concept-style purple lotus startup card, conversation stream, sessions, tools, context, logs, approvals, and quick commands.
 - Local Hono API and browser workbench using the same state model.
 - MiniMax M3 model profile through the domestic Anthropic-compatible endpoint.
 - Deterministic fallback planner.

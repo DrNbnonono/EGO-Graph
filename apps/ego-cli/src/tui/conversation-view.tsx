@@ -20,6 +20,10 @@ export type ConversationWindow = {
   scrollOffset: number;
 };
 
+export function isUserPromptLine(line: string): boolean {
+  return line.startsWith("❯ ");
+}
+
 export function createConversationWindow(input: ConversationWindowInput): ConversationWindow {
   const rendered = input.events.flatMap((event) =>
     renderEventLines(event, {
@@ -72,9 +76,15 @@ export function ConversationView({
 
   return (
     <Box flexDirection="column" paddingX={1} height={height}>
-      {window.visibleLines.map((line, index) => (
-        <Text key={`${window.scrollOffset}-${index}`}>{line}</Text>
-      ))}
+      {window.visibleLines.map((line, index) =>
+        isUserPromptLine(line) ? (
+          <Text key={`${window.scrollOffset}-${index}`} backgroundColor="black" color="white">
+            {line}
+          </Text>
+        ) : (
+          <Text key={`${window.scrollOffset}-${index}`}>{line}</Text>
+        ),
+      )}
       {window.maxScroll > 0 ? (
         <Text color="gray">
           {window.scrollOffset > 0

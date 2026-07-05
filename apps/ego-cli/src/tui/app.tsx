@@ -84,11 +84,13 @@ export function EgoTui(): ReactElement {
   const [sidePanelRequested, setSidePanelRequested] = useState(false);
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
   const layout = chooseTuiLayout(terminalWidth, sidePanelRequested);
+  const showStartup = overlayMode === "none" && events.length === 0;
+  const showStatusLine = !showStartup;
   const promptHeight = getPromptRenderMetrics(prompt, terminalWidth).height;
   const paletteHeight = palette.open ? Math.min(12, palette.matches.length + 3) : 0;
   const bodyHeight = calculateBodyHeight({
     terminalRows: terminalHeight,
-    statusHeight: 1,
+    statusHeight: showStatusLine ? 1 : 0,
     paletteHeight,
     promptHeight,
   });
@@ -269,13 +271,15 @@ export function EgoTui(): ReactElement {
 
   return (
     <Box flexDirection="column" height={terminalHeight}>
-      <StatusLine
-        workbench={workbench}
-        permissionLevel={permissionLevel}
-        busy={busy}
-        thinkingExpanded={thinkingExpanded}
-        width={terminalWidth}
-      />
+      {showStatusLine ? (
+        <StatusLine
+          workbench={workbench}
+          permissionLevel={permissionLevel}
+          busy={busy}
+          thinkingExpanded={thinkingExpanded}
+          width={terminalWidth}
+        />
+      ) : null}
       <Box flexGrow={1} height={bodyHeight}>
         {overlayMode === "history" ? (
           <HistoryBrowser
@@ -296,7 +300,7 @@ export function EgoTui(): ReactElement {
           <ChecksView checks={activeRun?.checks ?? []} width={layout.conversationWidth} />
         ) : overlayMode === "debug" ? (
           <DebugView events={events} width={layout.conversationWidth} height={bodyHeight} />
-        ) : events.length === 0 ? (
+        ) : showStartup ? (
           <WelcomeScreen
             workbench={workbench}
             permissionLevel={permissionLevel}

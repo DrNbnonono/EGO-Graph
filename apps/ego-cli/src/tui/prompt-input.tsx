@@ -25,6 +25,19 @@ export type PromptEdit =
   | { type: "history-next" }
   | { type: "reset"; value?: string };
 
+export type PromptChrome = {
+  separator: string;
+  footer: string;
+  promptPrefix: string;
+  status: string;
+};
+
+export type PromptRenderMetrics = {
+  lines: string[];
+  height: number;
+  totalLines: number;
+};
+
 const maxPromptLines = 6;
 
 export function createPromptState(value = "", history: string[] = []): PromptState {
@@ -120,11 +133,14 @@ export function addPromptHistory(state: PromptState, submitted: string): PromptS
   };
 }
 
-export type PromptRenderMetrics = {
-  lines: string[];
-  height: number;
-  totalLines: number;
-};
+export function createPromptChrome(width: number, busy: boolean): PromptChrome {
+  return {
+    separator: "─".repeat(Math.max(8, width - 2)),
+    footer: "? for shortcuts  |  /help 查看所有命令",
+    promptPrefix: "❯ ",
+    status: busy ? "Stop hook running · Ctrl+O 展开思考过程" : "",
+  };
+}
 
 export function getPromptRenderMetrics(state: PromptState, width: number): PromptRenderMetrics {
   const visibleWidth = Math.max(8, width - 5);
@@ -141,7 +157,7 @@ export function getPromptRenderMetrics(state: PromptState, width: number): Promp
   return {
     lines,
     totalLines: allLines.length,
-    height: lines.length + 2,
+    height: lines.length + 3,
   };
 }
 
@@ -155,22 +171,19 @@ export function PromptInput({
   width: number;
 }): ReactElement {
   const metrics = getPromptRenderMetrics(state, width);
-  const separator = "─".repeat(Math.max(8, width - 2));
+  const chrome = createPromptChrome(width, busy);
 
   return (
     <Box flexDirection="column" paddingX={1} height={metrics.height}>
-      <Text color="gray">{separator}</Text>
-      <Text color={busy ? "yellow" : "gray"}>
-        {busy
-          ? "Thinking · draft stays editable · Ctrl+O thinking details"
-          : "? shortcuts · / commands · Ctrl+J newline · Ctrl+O thinking"}
-      </Text>
+      <Text color="gray">{chrome.separator}</Text>
       {metrics.lines.map((line, index) => (
         <Text key={index} color="white">
-          <Text color="magentaBright">{index === 0 ? "❯ " : "  "}</Text>
+          <Text color="white">{index === 0 ? chrome.promptPrefix : "  "}</Text>
           {line}
         </Text>
       ))}
+      <Text color="gray">{chrome.separator}</Text>
+      <Text color={busy ? "yellow" : "gray"}>{busy ? chrome.status : chrome.footer}</Text>
     </Box>
   );
 }

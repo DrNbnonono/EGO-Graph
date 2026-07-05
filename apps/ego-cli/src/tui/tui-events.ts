@@ -11,7 +11,7 @@ export type RenderEventOptions = {
 export function renderEventLines(event: AgentRunEvent, options: RenderEventOptions): string[] {
   const width = Math.max(24, options.width);
   if (event.type === "user.message") {
-    return wrapDisplay(`> ${event.message}`, width);
+    return wrapDisplay(`❯ ${event.message}`, width);
   }
   if (event.type === "assistant.message" || event.type === "assistant.completed") {
     return renderAssistantMessage(event.message, width);

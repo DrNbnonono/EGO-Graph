@@ -194,7 +194,7 @@ memory, Hermes timeline, skills/plugins, MCP stdio v1, and controlled web search
 - Web includes a right-side model settings panel that writes `.ego/config.json`, validates disabled-provider conflicts, and tests connectivity.
 - CLI exposes `ego config model` for persistent provider/baseUrl/model/API key setup.
 - TUI is now split under `apps/ego-cli/src/tui/`: `app.tsx`, `conversation-view.tsx`, `prompt-input.tsx`, `command-palette.ts`, `history-browser.tsx`, `diff-view.tsx`, `plan-view.tsx`, `checks-view.tsx`, `debug-view.tsx`, `layout.tsx`, `terminal-input.ts`, `terminal-size.ts`, `cjk.ts`, `text-wrap.ts`, and support modules.
-- TUI keeps a conversation-first Agent Kernel view, purple lotus welcome screen, fixed prompt input, mouse-wheel/PageUp review, Ctrl+O thinking expansion, overlay slash command palette, persisted history/replay browsing, multi-file diff browsing, MCP discovery, and approval shortcuts while still pointing users to `ego serve` for full management pages.
+- TUI keeps a conversation-first Agent Kernel view, concept-style purple lotus startup card, fixed prompt input, mouse-wheel/PageUp review, Ctrl+O thinking expansion, overlay slash command palette, persisted history/replay browsing, multi-file diff browsing, MCP discovery, and approval shortcuts while still pointing users to `ego serve` for full management pages.
 - Model-unavailable fallback is `needs_model`: no pending edit, no diff, no file write.
 - Active public SRC/vulnerability scanning and exploit automation remain disabled by default. Security tools require explicit authorization scope, permission elevation, approval, sandbox/audit, and controlled targets.
 

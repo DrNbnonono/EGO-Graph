@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createPromptChrome,
   createPromptState,
   editPrompt,
   getPromptRenderMetrics,
@@ -51,6 +52,14 @@ describe("prompt input model", () => {
     const metrics = getPromptRenderMetrics(state, 80);
 
     expect(metrics.lines).toHaveLength(6);
-    expect(metrics.height).toBe(8);
+    expect(metrics.height).toBe(9);
+  });
+
+  it("uses the concept-style prompt chrome", () => {
+    const chrome = createPromptChrome(80, false);
+
+    expect(chrome.promptPrefix).toBe("❯ ");
+    expect(chrome.footer).toBe("? for shortcuts  |  /help 查看所有命令");
+    expect(chrome.separator).toHaveLength(78);
   });
 });
