@@ -38,10 +38,15 @@ Implemented:
 - Web/TUI Agent Kernel status panels for Memory, Plans, Skills, MCP, Search, approvals, and checks.
 - Codex-like terminal Agent Harness for chat, inspect, plan, tool calls, diff preview, approval,
   apply, checks, repair proposals, memory, and replay.
+- Modular `packages/agent-harness` boundary: public exports, session lifecycle, run state,
+  planner facade, context bridge, memory/MCP bridge, patch/check/repair helpers, safety policy,
+  and unified tool executor.
 - Workspace Context Pack with repo map, relevance-ranked files, long-file compression, and recent
   event summaries so models receive minimal context instead of raw file dumps.
 - Memory v2 categories for project facts, preferences, decisions, failures, tool results, security
-  scope, and run summaries, with recall, compact, archive, and forget operations.
+  scope, and run summaries, with persisted importance/confidence/raw/source/evidence/access fields.
+- Unified ToolCall protocol for schema validation, permission gate, approval gate, timeout,
+  stdout/stderr truncation, `tool.failed`, `tool.timeout`, and `tool.blocked` events.
 
 In progress:
 

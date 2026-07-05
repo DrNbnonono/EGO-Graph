@@ -16,10 +16,10 @@ The Agent Kernel v1 turns EGO-Graph into a durable agent runtime rather than a s
 It adds five shared capabilities that every future CTF or coding overlay must use:
 
 - **Hermes runtime timeline:** `packages/hermes` is the internal event bus. Runtime surfaces emit events such as `message.received`, `plan.updated`, `approval.created`, `tool.called`, `memory.written`, and `check.finished`; SQLite stores the timeline for replay and debugging.
-- **Memory and context compression:** `packages/memory` owns session, project, and task memory plus structured context summaries. It rejects sensitive references such as `.env`, key files, and secret-like paths before long-term storage.
+- **Memory and context compression:** `packages/memory` owns session, project, and task memory plus structured context summaries. It persists Memory v2 metadata such as kind, importance, confidence, source run, evidence refs, access count, and soft-forget status. It rejects sensitive references such as `.env`, key files, and secret-like paths before long-term storage.
 - **Plan mode:** natural-language write tasks enter `/agent/plans` and return `draft_plan`. Approval of a plan is required before the existing Patch proposal flow can produce a diff.
 - **Skills/plugins:** `packages/tools` registers built-in skills and validates plugin manifests before exposing tools or permissions to the Workbench.
-- **MCP/search base:** `packages/mcp` includes stdio MCP client v1 for `tools/list` and `tools/call`; `packages/tools` includes a controlled `web.search` tool with normalized results and source URLs.
+- **MCP/search base:** `packages/mcp` includes stdio and Streamable HTTP MCP clients for `tools/list` and `tools/call`; `packages/tools` includes a controlled `web.search` tool with normalized results and source URLs.
 
 The kernel deliberately keeps writes behind the existing workspace policy, diff preview, approval,
 checks, and audit chain. Plan approval is not file approval; users still inspect and approve the
@@ -47,6 +47,7 @@ Primary packages:
 - `apps/ego-web`: static HTML/CSS/JS Web Workbench assets, designed to build with TypeScript only.
 - `packages/workbench`: shared Workbench state model consumed by the TUI, Web app, and API, including pending edits and approvals.
 - `packages/agent`: natural-language coding-agent turn runner with inspect, plan, propose-edit, and apply-approved-edit modes.
+- `packages/agent-harness`: terminal Agent Runtime split into public exports, session lifecycle, run state, event protocol, planner, context bridge, memory/MCP bridges, safety policy, tool executor, patch/check/repair helpers, and replay.
 - `packages/workspace`: safe repository inspection, diff preview, and policy-gated write application.
 - `packages/hermes`: internal event bus, timeline query, and run replay helpers.
 - `packages/memory`: memory records, scope-aware recall, sensitive-reference filtering, and context compression.

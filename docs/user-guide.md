@@ -7,6 +7,10 @@ progress, and the Web dashboard entry:
 ego
 ```
 
+The TUI is intentionally thin. It renders conversation, collapsed tool events, approvals, diffs,
+checks, memory commands, and replay. Agent state, tool execution, Patch approval, repair, memory,
+and MCP calls live in `packages/agent-harness`.
+
 Start the browser visualization:
 
 ```bash
@@ -119,6 +123,26 @@ locally and are not echoed by public status APIs:
 
 Unknown MCP tools remain approval-gated. Active public scanning or exploitation still requires
 explicit authorization scope and is not enabled by default.
+
+## Memory And Tool Events
+
+Memory v2 stores reusable project facts, preferences, decisions, failures, tool results, security
+scope, and run summaries. Each record has importance, confidence, source run, evidence refs,
+status, access count, and timestamps. `rawContent` is kept for local audit/debug only; prompts and
+compact summaries should use the safer `summary` field.
+
+Use:
+
+```text
+/memory recall <query>
+/memory compact
+/memory archive <id>
+/memory forget <id>
+```
+
+Tool calls normalize through a `ToolCall` protocol with schema validation, permission checks,
+approval gates, timeout, output truncation, and output validation. Policy denials show
+`tool.blocked`, runtime failures show `tool.failed`, and timeout failures show `tool.timeout`.
 
 Advanced overrides:
 

@@ -76,15 +76,34 @@ export type HermesEventRecord = {
 };
 
 export type MemoryScope = "session" | "project" | "task";
+export type MemoryKind =
+  | "project_fact"
+  | "user_preference"
+  | "decision"
+  | "failure"
+  | "tool_result"
+  | "security_scope"
+  | "run_summary";
+export type MemoryStatus = "active" | "archived" | "forgotten";
 
 export type MemoryRecord = {
   id: string;
   scope: MemoryScope;
+  kind?: MemoryKind;
   content: string;
+  summary?: string;
+  rawContent?: string;
   source: string;
+  sourceRunId?: string;
+  evidenceRefs?: string[];
   tags: string[];
   references: string[];
-  status?: "active" | "archived";
+  importance?: number;
+  confidence?: number;
+  expiresAt?: string;
+  status?: MemoryStatus;
+  lastAccessedAt?: string;
+  accessCount?: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -194,11 +213,21 @@ type HermesEventRow = {
 type MemoryRow = {
   id: string;
   scope: MemoryScope;
+  kind: MemoryKind | null;
   content: string;
+  summary: string;
+  raw_content: string | null;
   source: string;
+  source_run_id: string | null;
+  evidence_refs_json: string;
   tags_json: string;
   references_json: string;
-  status: "active" | "archived";
+  importance: number;
+  confidence: number;
+  expires_at: string | null;
+  status: MemoryStatus;
+  last_accessed_at: string | null;
+  access_count: number;
   created_at: string;
   updated_at: string;
 };
@@ -585,26 +614,46 @@ export class SqliteEgoStore {
       .prepare(
         [
           "insert into memory_items",
-          "(id, scope, content, source, tags_json, references_json, status, created_at, updated_at)",
-          "values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "(id, scope, kind, content, summary, raw_content, source, source_run_id, evidence_refs_json, tags_json, references_json, importance, confidence, expires_at, status, last_accessed_at, access_count, created_at, updated_at)",
+          "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           "on conflict(id) do update set",
           "scope = excluded.scope,",
+          "kind = excluded.kind,",
           "content = excluded.content,",
+          "summary = excluded.summary,",
+          "raw_content = excluded.raw_content,",
           "source = excluded.source,",
+          "source_run_id = excluded.source_run_id,",
+          "evidence_refs_json = excluded.evidence_refs_json,",
           "tags_json = excluded.tags_json,",
           "references_json = excluded.references_json,",
+          "importance = excluded.importance,",
+          "confidence = excluded.confidence,",
+          "expires_at = excluded.expires_at,",
           "status = excluded.status,",
+          "last_accessed_at = excluded.last_accessed_at,",
+          "access_count = excluded.access_count,",
           "updated_at = excluded.updated_at",
         ].join(" "),
       )
       .run(
         record.id,
         record.scope,
+        record.kind ?? null,
         record.content,
+        record.summary ?? record.content,
+        record.rawContent ?? null,
         record.source,
+        record.sourceRunId ?? null,
+        JSON.stringify(record.evidenceRefs ?? []),
         JSON.stringify(record.tags),
         JSON.stringify(record.references),
+        record.importance ?? 3,
+        record.confidence ?? 0.7,
+        record.expiresAt ?? null,
         record.status ?? "active",
+        record.lastAccessedAt ?? null,
+        record.accessCount ?? 0,
         record.createdAt,
         record.updatedAt,
       );
@@ -613,6 +662,7 @@ export class SqliteEgoStore {
   async listMemories(
     filter: {
       scope?: MemoryScope;
+      status?: MemoryStatus;
       includeArchived?: boolean;
       limit?: number;
     } = {},
@@ -623,7 +673,10 @@ export class SqliteEgoStore {
       clauses.push("scope = ?");
       params.push(filter.scope);
     }
-    if (!filter.includeArchived) {
+    if (filter.status) {
+      clauses.push("status = ?");
+      params.push(filter.status);
+    } else if (!filter.includeArchived) {
       clauses.push("status = 'active'");
     }
     params.push(filter.limit ?? 50);
@@ -637,6 +690,23 @@ export class SqliteEgoStore {
   async archiveMemory(id: string, updatedAt = new Date().toISOString()): Promise<boolean> {
     const result = this.db
       .prepare("update memory_items set status = 'archived', updated_at = ? where id = ?")
+      .run(updatedAt, id);
+    return Number(result.changes ?? 0) > 0;
+  }
+
+  async forgetMemory(id: string, updatedAt = new Date().toISOString()): Promise<boolean> {
+    const result = this.db
+      .prepare(
+        [
+          "update memory_items set",
+          "status = 'forgotten',",
+          "content = '',",
+          "summary = 'Memory forgotten by user request.',",
+          "raw_content = '',",
+          "updated_at = ?",
+          "where id = ?",
+        ].join(" "),
+      )
       .run(updatedAt, id);
     return Number(result.changes ?? 0) > 0;
   }
@@ -855,11 +925,21 @@ export class SqliteEgoStore {
       create table if not exists memory_items (
         id text primary key,
         scope text not null check (scope in ('session', 'project', 'task')),
+        kind text check (kind in ('project_fact', 'user_preference', 'decision', 'failure', 'tool_result', 'security_scope', 'run_summary')),
         content text not null,
+        summary text not null default '',
+        raw_content text,
         source text not null,
+        source_run_id text,
+        evidence_refs_json text not null default '[]',
         tags_json text not null,
         references_json text not null,
-        status text not null check (status in ('active', 'archived')),
+        importance integer not null default 3 check (importance between 1 and 5),
+        confidence real not null default 0.7 check (confidence >= 0 and confidence <= 1),
+        expires_at text,
+        status text not null check (status in ('active', 'archived', 'forgotten')),
+        last_accessed_at text,
+        access_count integer not null default 0,
         created_at text not null,
         updated_at text not null
       );
@@ -885,6 +965,90 @@ export class SqliteEgoStore {
     `);
     this.ensureAgentRunsStatusConstraint();
     this.ensureApprovalsKindConstraint();
+    this.ensureMemoryV2Schema();
+  }
+
+  private ensureMemoryV2Schema(): void {
+    const row = this.db
+      .prepare("select sql from sqlite_master where type = 'table' and name = 'memory_items'")
+      .get() as { sql: string } | undefined;
+
+    if (row?.sql?.includes("raw_content") && row.sql.includes("'forgotten'")) {
+      return;
+    }
+
+    this.db.exec(`
+      drop table if exists memory_items_v2_migration;
+
+      create table memory_items_v2_migration (
+        id text primary key,
+        scope text not null check (scope in ('session', 'project', 'task')),
+        kind text check (kind in ('project_fact', 'user_preference', 'decision', 'failure', 'tool_result', 'security_scope', 'run_summary')),
+        content text not null,
+        summary text not null default '',
+        raw_content text,
+        source text not null,
+        source_run_id text,
+        evidence_refs_json text not null default '[]',
+        tags_json text not null,
+        references_json text not null,
+        importance integer not null default 3 check (importance between 1 and 5),
+        confidence real not null default 0.7 check (confidence >= 0 and confidence <= 1),
+        expires_at text,
+        status text not null check (status in ('active', 'archived', 'forgotten')),
+        last_accessed_at text,
+        access_count integer not null default 0,
+        created_at text not null,
+        updated_at text not null
+      );
+
+      insert into memory_items_v2_migration (
+        id,
+        scope,
+        kind,
+        content,
+        summary,
+        raw_content,
+        source,
+        source_run_id,
+        evidence_refs_json,
+        tags_json,
+        references_json,
+        importance,
+        confidence,
+        expires_at,
+        status,
+        last_accessed_at,
+        access_count,
+        created_at,
+        updated_at
+      )
+      select
+        id,
+        scope,
+        null,
+        content,
+        content,
+        content,
+        source,
+        null,
+        '[]',
+        tags_json,
+        references_json,
+        3,
+        0.7,
+        null,
+        status,
+        null,
+        0,
+        created_at,
+        updated_at
+      from memory_items;
+
+      drop table memory_items;
+      alter table memory_items_v2_migration rename to memory_items;
+      create index if not exists idx_memory_scope_status on memory_items(scope, status, updated_at);
+    `);
   }
 
   private ensureAgentRunsStatusConstraint(): void {
@@ -1042,11 +1206,21 @@ function memoryRowToRecord(row: MemoryRow): MemoryRecord {
   return {
     id: row.id,
     scope: row.scope,
+    ...(row.kind ? { kind: row.kind } : {}),
     content: row.content,
+    summary: row.summary,
+    ...(row.raw_content !== null ? { rawContent: row.raw_content } : {}),
     source: row.source,
+    ...(row.source_run_id ? { sourceRunId: row.source_run_id } : {}),
+    evidenceRefs: JSON.parse(row.evidence_refs_json) as string[],
     tags: JSON.parse(row.tags_json) as string[],
     references: JSON.parse(row.references_json) as string[],
+    importance: row.importance,
+    confidence: row.confidence,
+    ...(row.expires_at ? { expiresAt: row.expires_at } : {}),
     status: row.status,
+    ...(row.last_accessed_at ? { lastAccessedAt: row.last_accessed_at } : {}),
+    accessCount: row.access_count,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

@@ -13,13 +13,16 @@ workspace writes, checks, repair, and audit live in the Harness.
 Runs move through stable phases:
 
 ```text
-chat -> inspect -> plan -> tool_call -> diff_preview -> approval
-  -> apply -> check -> repair -> complete
-                     \-> blocked
+idle -> chat -> context_loading -> planning -> waiting_plan_approval
+  -> patch_generating -> waiting_patch_approval -> patch_applying
+  -> checking -> repairing -> waiting_patch_approval -> checking -> completed
+                                                       \-> blocked/cancelled
 ```
 
 Every phase emits Hermes/trajectory events and can be replayed after restart. File writes still
 require the two gates: plan approval and patch approval.
+Events carry `runId`, `sessionId`, `createdAt`, `phase`, `permissionLevel`, a user-visible
+`message`, and technical details under `payload.debug`.
 
 ## Runtime Flow
 
@@ -58,6 +61,25 @@ proposal. The Patch still needs explicit diff approval before files are written.
 - `packages/storage`: SQLite persistence for Hermes events, memories, plans, approvals, edits, checks, and runs.
 - `packages/workspace`: repository map, relevance-ranked context pack, safe reads, policy-gated edit preview, and writes.
 - `packages/workbench`: shared state contract for Web and TUI observability.
+
+## Agent Harness Modules
+
+`packages/agent-harness/src/index.ts` is now a public export surface. Runtime responsibilities are
+split into focused modules so the terminal UI can remain a thin renderer:
+
+- `session.ts`: `createTerminalAgentSession` and session lifecycle.
+- `run-state.ts`: phase names, pending-run helpers, and run-state types.
+- `event-protocol.ts`: harness event shape, user-visible messages, and debug payload access.
+- `context-pack-bridge.ts`: workspace context-pack integration.
+- `planner.ts`: intent routing and structured planner decision facade.
+- `tool-executor.ts`: normalized `ToolCall` execution with schema validation, permission gates,
+  approval gates, timeout, truncation, output validation, and failure events.
+- `memory-bridge.ts`: Memory v2 helper exports for decisions, failures, tool results, scopes, and
+  run summaries.
+- `mcp-bridge.ts`: MCP discovery/call facade over stdio and Streamable HTTP transports.
+- `patch-harness.ts`, `check-runner.ts`, `repair-loop.ts`: Patch approval flow, check output
+  truncation, and max-two-round repair policy.
+- `safety-policy.ts`: permission levels and required-permission resolution.
 
 ## Hermes Events
 
@@ -113,6 +135,16 @@ Memory records include source metadata so the UI can show why a memory was recal
 be easy to recall, compact, archive, or forget. Sensitive references such as `.env`, private keys,
 `.git`, and secret-like paths must not be promoted into long-term memory.
 
+Memory v2 fields are persisted as first-class SQLite columns rather than hidden in tags:
+
+- `kind`, `importance`, `confidence`, `summary`, `rawContent`
+- `sourceRunId`, `evidenceRefs`, `expiresAt`
+- `status` as `active`, `archived`, or `forgotten`
+- `lastAccessedAt`, `accessCount`
+
+System prompts and compact context should use `summary`; `rawContent` is for local debug/audit and
+must not be injected into model prompts.
+
 Context compression keeps:
 
 - user goal
@@ -158,6 +190,34 @@ Full interactive OAuth browser/device authorization and HTTP MCP subscriptions a
 `web.search` is a controlled tool. It returns normalized result items with titles, URLs, snippets,
 source names, and cached timestamps. Search results can inform plans and answers, but they must not
 directly trigger repository writes without the normal Plan and Patch approval flow.
+
+## Tool Executor
+
+All new tools should normalize to this protocol before execution:
+
+```ts
+type ToolCall = {
+  id: string;
+  name: string;
+  input: unknown;
+  permissionRequired: PermissionLevel;
+  riskLevel: "low" | "medium" | "high";
+  requiresApproval: boolean;
+  sandboxProfile: "none" | "process" | "docker";
+  timeoutMs: number;
+};
+```
+
+The required path is:
+
+```text
+schema validate -> permission gate -> approval gate -> execute with timeout
+  -> stdout/stderr truncate -> output schema validate -> evidence/memory candidates
+  -> event emit
+```
+
+Failures must emit `tool.failed`, timeouts must emit `tool.timeout`, and policy denials must emit
+`tool.blocked`. They must not be disguised as `tool.completed`.
 
 ## Terminal And Web
 

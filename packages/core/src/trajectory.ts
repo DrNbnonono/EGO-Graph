@@ -14,6 +14,7 @@ export const trajectoryEventSchema = z.object({
     "safety.checked",
     "tool.started",
     "tool.completed",
+    "tool.failed",
     "observation.created",
     "evidence.created",
     "evaluation.completed",

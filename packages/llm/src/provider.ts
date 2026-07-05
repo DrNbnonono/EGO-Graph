@@ -17,6 +17,7 @@ export type ChatModelProvider = {
   name: string;
   model: string;
   complete(input: ChatCompletionInput): Promise<string>;
+  streamComplete?(input: ChatCompletionInput): AsyncIterable<string>;
 };
 
 export class ModelConfigurationError extends Error {}

@@ -48,6 +48,8 @@ Use a TypeScript-first stack aligned with terminal agent tools such as OpenCode,
 - TypeScript orchestrates tools; mature security tools run as controlled external processes.
 - Every agent action must be represented by an auditable trajectory event.
 - Tool adapters must declare input schema, output schema, permissions, sandbox profile, parser, and evidence mapping.
+- New tool execution should use the Harness `ToolCall` protocol: schema validation, permission gate,
+  approval gate, timeout, stdout/stderr truncation, output validation, failure event, and recovery hint.
 - Scenario-specific behavior belongs in overlays, not in the shared core.
 - The first strong scenario should be `web_pentest`, followed by `incident_response`, `vulnerability_research`, and `reverse_engineering`.
 - The system must be useful in authorized, controlled environments and must reject actions outside declared scope.
@@ -169,6 +171,11 @@ memory, Hermes timeline, skills/plugins, MCP stdio v1, and controlled web search
 - `apps/ego-web` owns Dashboard pages/components/styles/client scripts.
 - `packages/workspace`, `packages/mcp`, `packages/agent`, `packages/hermes`, and `packages/memory` are first-class workspace packages.
 - `packages/mcp` supports stdio and Streamable HTTP transports, OAuth bearer-token headers, protected-resource metadata discovery, client pooling, and per-tool risk/approval policy.
+- `packages/agent-harness` is now modularized: `index.ts` is public exports, `session.ts` owns the
+  live session, and focused modules cover run state, events, planner, context bridge, memory/MCP
+  bridges, safety policy, tool executor, patch/check/repair helpers.
+- `packages/memory` Memory v2 persists kind, importance, confidence, summary/rawContent, source run,
+  evidence refs, status, last access, and access count; raw content must not be injected into prompts.
 - `packages/agent` can generate a model-backed `WorkspaceEditPlan` from natural language through `generateWorkspaceEditPlan`.
 - API exposes `/chat` for read-only model replies.
 - API exposes `/agent/plans` and `/agent/plans/:id/approve` for plan-first write tasks.

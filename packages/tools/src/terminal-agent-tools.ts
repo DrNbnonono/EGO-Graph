@@ -542,9 +542,15 @@ async function grepWorkspace(
 function assertReadonlyCommand(command: string, args: string[]): void {
   if (command === "pnpm") {
     const script = args[0] ?? "";
-    if (["typecheck", "test", "build", "lint", "format:check", "smoke"].includes(script)) {
+    if (
+      script === "--version" ||
+      ["typecheck", "test", "build", "lint", "format:check", "smoke"].includes(script)
+    ) {
       return;
     }
+  }
+  if (command === "node" && args[0] === "--version") {
+    return;
   }
   if (command === "git") {
     const subcommand = args[0] ?? "";
@@ -552,7 +558,7 @@ function assertReadonlyCommand(command: string, args: string[]): void {
       return;
     }
   }
-  if (["rg", "ls", "cat", "sed"].includes(command)) {
+  if (["ls", "pwd", "cat", "head", "tail", "grep", "rg", "find"].includes(command)) {
     return;
   }
   throw new Error(`Command is not allowed in shell-readonly mode: ${command} ${args.join(" ")}`);
