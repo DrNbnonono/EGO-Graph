@@ -21,6 +21,14 @@ const mouseTrackingOff = "\x1b[?1000l\x1b[?1006l";
 const escapeCharacter = String.fromCharCode(27);
 const sgrMousePattern = new RegExp(`^${escapeCharacter}\\[<(?<button>\\d+);\\d+;\\d+[mM]`, "u");
 
+export type MouseTrackingOptions = {
+  captureMouse?: boolean;
+};
+
+export function shouldEnableMouseTracking(options: MouseTrackingOptions = {}): boolean {
+  return options.captureMouse === true;
+}
+
 export function normalizeTerminalInput(raw: string): TerminalInputAction[] {
   const direct = directTerminalAction(raw);
   if (direct) {

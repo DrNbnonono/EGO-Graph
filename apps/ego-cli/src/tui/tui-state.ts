@@ -6,7 +6,8 @@ import type {
 import type { WorkbenchState } from "@ego-graph/workbench";
 import type { HistoryItem } from "./history-browser.js";
 
-export type OverlayMode = "none" | "status" | "plan" | "diff" | "checks" | "debug" | "history";
+export type OverlayMode =
+  "none" | "status" | "plan" | "diff" | "checks" | "debug" | "history" | "permissions";
 
 export type TuiRunSession = {
   runId: string;

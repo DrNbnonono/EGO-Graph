@@ -7,16 +7,18 @@ export async function handleTuiCommand(): Promise<void> {
     const modelLabel = isModelConfigured(model)
       ? (model.model ?? model.provider)
       : "deterministic fallback";
-    console.log("EGO-Graph 紫莲花 Agent Workbench v0.1.0");
-    console.log("项目进展：TypeScript monorepo / Agent Runtime / JSONL + SQLite / Web + TUI");
-    console.log(`交互对话：运行 ego 进入终端对话式 Agent，当前模型 ${modelLabel}`);
-    console.log("Agent Kernel：Terminal chat / Memory / Plan / Patch / Checks");
+    console.log("EGO-Graph Purple Lotus Agent Workbench v0.1.0");
+    console.log("Project: TypeScript monorepo / Agent Runtime / JSONL + SQLite / Web + TUI");
+    console.log(`Interactive TUI: run ego to enter terminal agent mode, model: ${modelLabel}`);
+    console.log("Agent Kernel: Terminal chat / Memory / Plan / Patch / Checks");
     console.log(
-      "权限等级：默认 read-only，可用 /allow workspace-write 或 /allow shell-readonly 升级",
+      "Permissions: default read-only; use /allow workspace-write or /allow shell-readonly",
     );
-    console.log("Web Workbench：运行 ego serve 后打开 http://127.0.0.1:4317");
-    console.log("终端审批：TUI 内可完成 Plan 审批、Diff 查看、Patch 批准/拒绝、应用和检查");
-    console.log(`SQLite：${sqlitePath(defaultEgoHome())}`);
+    console.log("Web Workbench: run ego serve and open http://127.0.0.1:4317");
+    console.log(
+      "Terminal approvals: review Plan, inspect Diff, approve/reject Patch, apply and check",
+    );
+    console.log(`SQLite: ${sqlitePath(defaultEgoHome())}`);
     console.log("ego run --scenario web_pentest --input scenarios/web_pentest/basic/task.json");
     return;
   }

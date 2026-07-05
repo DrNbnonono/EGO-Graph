@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { normalizeTerminalInput, parseMouseWheel } from "../../src/tui/terminal-input.js";
+import {
+  normalizeTerminalInput,
+  parseMouseWheel,
+  shouldEnableMouseTracking,
+} from "../../src/tui/terminal-input.js";
 
 describe("terminal input normalization", () => {
   it("maps backspace bytes to delete-before", () => {
@@ -35,6 +39,12 @@ describe("terminal input normalization", () => {
     expect(normalizeTerminalInput("\x1b[<0;20;12M\x1b[<64;20;12M")).toEqual([
       { type: "scroll", delta: 5 },
     ]);
+  });
+
+  it("keeps native terminal scrollback unless mouse capture is explicitly requested", () => {
+    expect(shouldEnableMouseTracking()).toBe(false);
+    expect(shouldEnableMouseTracking({ captureMouse: false })).toBe(false);
+    expect(shouldEnableMouseTracking({ captureMouse: true })).toBe(true);
   });
 
   it("ignores legacy X10 mouse clicks instead of treating them as Escape", () => {

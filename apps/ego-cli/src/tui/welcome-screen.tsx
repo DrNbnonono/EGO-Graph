@@ -1,6 +1,7 @@
 import type { PermissionLevel } from "@ego-graph/agent-harness";
 import type { WorkbenchState } from "@ego-graph/workbench";
 import { Box, Text } from "ink";
+import React from "react";
 import type { ReactElement } from "react";
 import { displayWidth, truncateDisplay } from "./cjk.js";
 
@@ -28,7 +29,7 @@ export function createWelcomeModel({
   memoryLabel = "8KB / 2GB (0%)",
   toolCount = 12,
   startupLabel = "0.8s",
-  lastSessionLabel = "暂无",
+  lastSessionLabel = "none",
 }: {
   modelLabel: string;
   permissionLevel: PermissionLevel;
@@ -42,40 +43,35 @@ export function createWelcomeModel({
   return {
     title: "EGO-Graph v0.1.0",
     logo: [
-      "              ▄█▄",
-      "          ▄▄  ███  ▄▄",
-      "       ▄████▄█████▄████▄",
-      "     ▄███████████████████▄",
-      "      ▀█████████████████▀",
-      "   ▄▄▄  ▀███████████▀  ▄▄▄",
-      " ▄██████▄▄ ▀█████▀ ▄▄██████▄",
-      "  ▀████████▄▄ ▀ ▄▄████████▀",
-      "     ▀████████▄████████▀",
-      "        ▀███████████▀",
-      "            ▀███▀",
+      "              ▄██▄              ",
+      "        ▄█▄  ██████  ▄█▄        ",
+      "       ████▌ ██████ ▐████       ",
+      "   ▄█▄ █████▌ ████ ▐█████ ▄█▄   ",
+      "  █████ █████      █████ █████  ",
+      "    ▀███████      ███████▀      ",
+      "        PURPLE LOTUS / 紫莲花    ",
+      "       EGO-Graph v0.1.0 TUI     ",
     ],
-    identityLine: `${modelLabel} • API Usage Billing • EGO-Graph Organization`,
+    identityLine: `${modelLabel} | API Usage Billing | EGO-Graph Organization`,
     workspaceLine: `Workspace: ${cwd}`,
     statusRows: [
-      ["运行模式: agent", `内存使用: ${memoryLabel}`, "会话配置: default"],
+      ["Mode: agent", `Memory: ${memoryLabel}`, "Config: default"],
       [
-        permissionLevel === "read-only"
-          ? "活动策略: policy v1.0"
-          : `活动策略: policy v1.0 · ${permissionLevel}`,
-        "证据模式: evidence-grounded",
-        `上次会话: ${lastSessionLabel}`,
+        permissionLevel === "read-only" ? "Policy: read-only" : `Policy: ${permissionLevel}`,
+        "Evidence: grounded",
+        `Last run: ${lastSessionLabel}`,
       ],
-      [`工具数量: ${toolCount}`, `网络状态: ${network}`, `启动时间: ${startupLabel}`],
+      [`Tools: ${toolCount}`, `Network: ${network}`, `Startup: ${startupLabel}`],
     ],
     tips: [
-      { command: "/init", description: "初始化工作区" },
-      { command: "/scan", description: "启动安全扫描" },
-      { command: "/analyze", description: "进行证据分析" },
-      { command: "/report", description: "生成清晰报告" },
-      { command: "/tools", description: "查看可用工具" },
-      { command: "/help", description: "查看更多帮助" },
+      { command: "/history", description: "browse previous runs" },
+      { command: "/model", description: "inspect model routing" },
+      { command: "/permissions", description: "review write boundaries" },
+      { command: "/mcp", description: "discover MCP tools" },
+      { command: "/memory", description: "recall project memory" },
+      { command: "/help", description: "show command help" },
     ],
-    whatsNew: ["策略驱动的工具执行", "证据驱动的推理与结论", "报告生成流程优化"],
+    whatsNew: ["Safe approval shortcuts", "Focusable diff review", "Restorable prompt drafts"],
     releaseNotes: "/release-notes for more",
   };
 }
@@ -89,10 +85,8 @@ export function WelcomeScreen({
   permissionLevel: PermissionLevel;
   width: number;
 }): ReactElement {
-  const innerWidth = Math.max(42, Math.min(Math.max(42, width - 2), 140));
-  const wide = innerWidth >= 92;
-  const leftWidth = wide ? Math.max(44, Math.floor(innerWidth * 0.63)) : innerWidth - 4;
-  const rightWidth = wide ? Math.max(28, innerWidth - leftWidth - 5) : innerWidth - 4;
+  const innerWidth = Math.max(52, Math.min(Math.max(52, width - 2), 104));
+  const contentWidth = Math.max(40, innerWidth - 4);
   const model = createWelcomeModel({
     modelLabel: workbench.model.label,
     permissionLevel,
@@ -113,91 +107,52 @@ export function WelcomeScreen({
         paddingX={1}
         width={innerWidth}
       >
-        <Text color="magentaBright"> {model.title} </Text>
-        <Box flexDirection={wide ? "row" : "column"}>
-          <Box flexDirection="column" width={leftWidth} paddingRight={2}>
-            <Text color="white">{centerLine("Welcome back!", leftWidth - 2)}</Text>
-            {model.logo.map((line) => (
-              <Text key={line} color="magentaBright">
-                {centerLine(line, leftWidth - 2)}
-              </Text>
-            ))}
-            <Text color="gray">{centerLine(model.identityLine, leftWidth - 2)}</Text>
-            <Text color="gray">{truncateDisplay(model.workspaceLine, leftWidth - 2)}</Text>
-            <Text color="magentaBright">{"─".repeat(Math.max(8, leftWidth - 2))}</Text>
-            {model.statusRows.map((row, rowIndex) =>
-              wide ? (
-                <Box key={rowIndex} flexDirection="row">
-                  {row.map((item, itemIndex) => (
-                    <Box key={item} width={Math.floor((leftWidth - 2) / 3)}>
-                      <Text color="gray">
-                        {statusIcon(rowIndex, itemIndex)}{" "}
-                        {truncateDisplay(item, Math.floor((leftWidth - 8) / 3))}
-                      </Text>
-                    </Box>
-                  ))}
-                </Box>
-              ) : (
-                row.map((item, itemIndex) => (
-                  <Text key={item} color="gray">
-                    {statusIcon(rowIndex, itemIndex)} {truncateDisplay(item, leftWidth - 4)}
-                  </Text>
-                ))
-              ),
-            )}
-          </Box>
-          {wide ? (
-            <Box flexDirection="column" width={1}>
-              {Array.from({ length: 16 }).map((_, index) => (
-                <Text key={index} color="magenta">
-                  │
-                </Text>
-              ))}
-            </Box>
-          ) : null}
-          <Box
-            flexDirection="column"
-            width={rightWidth}
-            paddingLeft={wide ? 2 : 0}
-            paddingTop={wide ? 0 : 1}
-          >
-            <Text color="magentaBright">Tips for getting started</Text>
-            <Text color="magentaBright">{"─".repeat(Math.max(8, rightWidth - 2))}</Text>
-            {model.tips.map((tip) => (
-              <Text key={tip.command}>
-                <Text color="white">{tip.command.padEnd(10)}</Text>
-                <Text color="gray">{truncateDisplay(tip.description, rightWidth - 14)}</Text>
-              </Text>
-            ))}
-            <Text> </Text>
-            <Text color="magentaBright">What's new</Text>
-            <Text color="magentaBright">{"─".repeat(Math.max(8, rightWidth - 2))}</Text>
-            {model.whatsNew.map((item) => (
-              <Text key={item} color="gray">
-                • {truncateDisplay(item, rightWidth - 4)}
-              </Text>
-            ))}
-            <Text> </Text>
-            <Text color="magenta">
-              /{truncateDisplay(model.releaseNotes.replace(/^\//u, ""), rightWidth - 2)}
-            </Text>
-          </Box>
-        </Box>
+        {model.logo.map((line) => (
+          <Text key={line} color="magentaBright">
+            {centerLine(line, contentWidth)}
+          </Text>
+        ))}
+        <Text color="gray">{centerLine(model.identityLine, contentWidth)}</Text>
+        <Text color="gray">{truncateDisplay(model.workspaceLine, contentWidth)}</Text>
+        <Text color="magenta">{rule(contentWidth)}</Text>
+        <Text color="gray">
+          {truncateDisplay(
+            `> ${model.statusRows[0]?.[0] ?? "Mode: agent"} | + ${
+              model.statusRows[1]?.[0] ?? "Policy: read-only"
+            } | @ Model: ${workbench.model.label}`,
+            contentWidth,
+          )}
+        </Text>
+        <Text color="gray">
+          {truncateDisplay(
+            `# ${model.statusRows[0]?.[1] ?? "Memory: 8KB"} | * ${
+              model.statusRows[2]?.[0] ?? "Tools: 12"
+            } | o ${model.statusRows[2]?.[1] ?? "Network: connected"}`,
+            contentWidth,
+          )}
+        </Text>
+        <Text color="magenta">{rule(contentWidth)}</Text>
+        <Text color="magentaBright">Commands</Text>
+        <Text color="gray">
+          {truncateDisplay(model.tips.map((tip) => tip.command).join("  "), contentWidth)}
+        </Text>
+        <Text color="magenta">{rule(contentWidth)}</Text>
+        <Text color="magentaBright">Workflow</Text>
+        <Text color="gray">{truncateDisplay(model.whatsNew.join(" | "), contentWidth)}</Text>
+        <Text color="gray">{truncateDisplay(model.releaseNotes, contentWidth)}</Text>
       </Box>
       <Box marginTop={1} flexDirection="column">
-        <Text backgroundColor="black" color="white">
-          ❯ 你好你的模型是什么？
-        </Text>
-        <Text> </Text>
-        <Text>你好！我是 EGO-Graph，一个面向网络安全场景的智能体（Agent）。</Text>
-        <Text>我专注于帮助你理解任务目标、分析证据、调度合适的工具并生成清晰可靠的报告。</Text>
-        <Text>核心能力：任务理解 · 证据分析 · 工具编排 · 报告生成</Text>
-        <Text>如需开始，请尝试 /init 初始化工作区，或 /scan 启动安全扫描。</Text>
-        <Text color="gray">ⓘ hook output: UserPromptSubmit · completed in 182ms</Text>
-        <Text color="gray">{"─".repeat(Math.min(92, Math.max(20, width - 4)))}</Text>
+        <Text color="magentaBright">Quick start</Text>
+        <Text color="gray">Ask in natural language for read-only analysis.</Text>
+        <Text color="gray">Use /allow workspace-write before approving edits.</Text>
+        <Text color="gray">Review /plan, inspect /diff, then approve or reject the patch.</Text>
         <Text color="green">
-          ✓ Runtime ready • {workbench.model.label} • tools: {countTools(workbench)} • memory: 8KB •
-          network: {workbench.network}
+          {truncateDisplay(
+            `Ready | ${workbench.model.label} | tools: ${countTools(workbench)} | memory: ${formatConceptMemory(
+              workbench.memory.total,
+            )} | network: ${workbench.network}`,
+            Math.max(20, width - 8),
+          )}
         </Text>
       </Box>
     </Box>
@@ -216,7 +171,7 @@ function formatConceptMemory(total: number): string {
 function formatLastSession(workbench: WorkbenchState): string {
   const newest = workbench.recentRuns[0]?.updatedAt;
   if (!newest) {
-    return "暂无";
+    return "none";
   }
   const date = new Date(newest);
   if (Number.isNaN(date.getTime())) {
@@ -238,11 +193,6 @@ function centerLine(value: string, width: number): string {
   return `${" ".repeat(padding)}${visible}`;
 }
 
-function statusIcon(rowIndex: number, itemIndex: number): string {
-  const icons = [
-    [">", "#", "@"],
-    ["+", "=", "~"],
-    ["*", "o", "-"],
-  ];
-  return icons[rowIndex]?.[itemIndex] ?? "•";
+function rule(width: number): string {
+  return "-".repeat(Math.max(8, width));
 }

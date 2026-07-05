@@ -1,5 +1,6 @@
 import type { RunIndexRecord } from "@ego-graph/storage";
 import { Box, Text } from "ink";
+import React from "react";
 import type { ReactElement } from "react";
 import { truncateDisplay } from "./cjk.js";
 

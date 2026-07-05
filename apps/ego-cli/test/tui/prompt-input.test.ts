@@ -35,16 +35,22 @@ describe("prompt input model", () => {
   });
 
   it("walks input history with up/down without changing conversation scroll", () => {
-    let state = createPromptState("", ["first", "second"]);
+    let state = createPromptState("draft", ["first", "second"]);
 
     state = editPrompt(state, { type: "history-prev" });
     expect(state.value).toBe("second");
+    expect(state.draftBeforeHistory).toBe("draft");
 
     state = editPrompt(state, { type: "history-prev" });
     expect(state.value).toBe("first");
 
     state = editPrompt(state, { type: "history-next" });
     expect(state.value).toBe("second");
+
+    state = editPrompt(state, { type: "history-next" });
+    expect(state.value).toBe("draft");
+    expect(state.historyIndex).toBeNull();
+    expect(state.draftBeforeHistory).toBeUndefined();
   });
 
   it("caps multiline prompt height so the input stays anchored", () => {

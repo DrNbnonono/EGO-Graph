@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SqliteEgoStore, sqlitePath } from "@ego-graph/storage";
 import { ToolRegistry, type ToolDefinition } from "@ego-graph/tools";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -276,14 +277,52 @@ describe("terminal agent session", () => {
       egoHome,
       permissionLevel: "security-active",
     });
-    const allowedEvents = await collect(allowed.startTask("做一次依赖漏洞审计"));
+    const scopedWithoutAuthorizationEvents = await collect(allowed.startTask("做一次依赖漏洞审计"));
+    expect(
+      scopedWithoutAuthorizationEvents.some(
+        (event) =>
+          event.type === "tool.blocked" &&
+          String(event.message).includes("authorization scope"),
+      ),
+    ).toBe(true);
+
+    const store = new SqliteEgoStore(sqlitePath(egoHome));
+    try {
+      await store.saveMemory({
+        id: "security-scope-test",
+        scope: "project",
+        kind: "security_scope",
+        content: "依赖漏洞审计 security scope",
+        summary: "Allow dependency audit inspection",
+        rawContent: JSON.stringify({
+          allowedActions: ["inspect"],
+          forbiddenActions: [],
+          riskLevel: "high",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+        }),
+        source: "test",
+        tags: ["security", "audit"],
+        references: [],
+        status: "active",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    } finally {
+      store.close();
+    }
+
+    const authorized = createTerminalAgentSession({
+      workspaceRoot: root,
+      egoHome,
+      permissionLevel: "security-active",
+    });
+    const allowedEvents = await collect(authorized.startTask("做一次依赖漏洞审计"));
 
     expect(
       allowedEvents.some(
         (event) =>
           event.type === "tool.completed" &&
-          typeof event.payload.tool === "string" &&
-          event.payload.tool === "security.package_manifest_audit",
+          readPayloadToolName(event) === "security.package_manifest_audit",
       ),
     ).toBe(true);
   });
@@ -482,6 +521,38 @@ process.stdin.on("data", (chunk) => {
     expect(discovered[0]?.message).toContain("1 MCP tool");
     expect(called.map((event) => event.type)).toContain("tool.completed");
     expect(JSON.stringify(called.map((event) => event.payload))).toContain("echo:ok");
+  });
+
+  it("persists conversation history across turns and recalls it for the next model call", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-terminal-agent-history-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-terminal-agent-home-h-"));
+    await writeFile(join(root, "README.md"), "history fixture\n", "utf8");
+
+    const capturedMessages: unknown[][] = [];
+    const session = createTerminalAgentSession({
+      workspaceRoot: root,
+      egoHome,
+      modelProvider: {
+        name: "fake",
+        model: "fake",
+        async complete() {
+          return "ok";
+        },
+        async completeStructured(input) {
+          capturedMessages.push(input.messages);
+          // Always finish with a text answer so the loop terminates.
+          return { content: "answered", toolCalls: [] };
+        },
+      },
+    });
+
+    await collect(session.submitMessage("第一次问题"));
+    // Second turn in the same session must see the first turn's content.
+    await collect(session.submitMessage("第二次问题"));
+
+    const secondTurnJson = JSON.stringify(capturedMessages.at(-1) ?? []);
+    expect(secondTurnJson).toContain("第一次问题");
+    expect(secondTurnJson).toContain("answered");
   });
 });
 

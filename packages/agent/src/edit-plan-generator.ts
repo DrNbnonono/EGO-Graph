@@ -24,6 +24,37 @@ const workspaceEditOperationSchema = z.discriminatedUnion("type", [
     oldText: z.string().min(1),
     newText: z.string(),
   }),
+  z.object({
+    type: z.literal("insert_after"),
+    path: z.string().min(1),
+    anchorText: z.string().min(1),
+    content: z.string(),
+  }),
+  z.object({
+    type: z.literal("insert_before"),
+    path: z.string().min(1),
+    anchorText: z.string().min(1),
+    content: z.string(),
+  }),
+  z.object({
+    type: z.literal("delete_text"),
+    path: z.string().min(1),
+    text: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("rename_file"),
+    path: z.string().min(1),
+    newPath: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("move_file"),
+    path: z.string().min(1),
+    newPath: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("delete_file"),
+    path: z.string().min(1),
+  }),
 ]);
 
 const workspaceEditPlanSchema = z.object({
@@ -97,9 +128,10 @@ export async function generateWorkspaceEditPlan(
             "You are EGO-Graph's coding agent edit planner.",
             "Return only JSON that matches this shape:",
             '{"rationale":"...","editPlan":{"goal":"...","operations":[...]}}',
-            "Allowed operations are create_file, replace_file, and replace_text.",
+            "Allowed operations are create_file, replace_file, replace_text, insert_after, insert_before, delete_text, rename_file, move_file, and policy-gated delete_file.",
             "Use relative workspace paths only. Do not target .env, .git, node_modules, dist, or files outside the workspace.",
-            "Prefer the smallest safe edit. If changing an existing file, prefer replace_text with exact oldText.",
+            "Prefer the smallest safe edit. For existing files, prefer exact replace_text, insert_after/insert_before, or delete_text over replace_file.",
+            "Use rename_file or move_file only when the user asks to rename or move a file. Use delete_file only when explicitly requested; it may still be rejected by workspace policy.",
           ].join("\n"),
         },
         {

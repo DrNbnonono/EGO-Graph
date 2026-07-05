@@ -1,4 +1,5 @@
 import { Box, Text } from "ink";
+import React from "react";
 import type { ReactElement } from "react";
 import { truncateDisplay } from "./cjk.js";
 import { wrapDisplay } from "./text-wrap.js";
@@ -8,6 +9,7 @@ export type PromptState = {
   cursor: number;
   history: string[];
   historyIndex: number | null;
+  draftBeforeHistory?: string | undefined;
 };
 
 export type PromptEdit =
@@ -63,6 +65,7 @@ export function editPrompt(state: PromptState, edit: PromptEdit): PromptState {
         value: next,
         cursor: state.cursor + Array.from(edit.text).length,
         historyIndex: null,
+        draftBeforeHistory: undefined,
       };
     }
     case "move-left":
@@ -104,11 +107,27 @@ export function editPrompt(state: PromptState, edit: PromptEdit): PromptState {
           ? state.history.length - 1
           : Math.max(0, state.historyIndex - 1);
       const value = state.history[nextIndex] ?? "";
-      return { ...state, value, cursor: Array.from(value).length, historyIndex: nextIndex };
+      return {
+        ...state,
+        value,
+        cursor: Array.from(value).length,
+        historyIndex: nextIndex,
+        draftBeforeHistory: state.historyIndex === null ? state.value : state.draftBeforeHistory,
+      };
     }
     case "history-next": {
       if (state.history.length === 0 || state.historyIndex === null) {
         return state;
+      }
+      if (state.historyIndex === state.history.length - 1) {
+        const value = state.draftBeforeHistory ?? "";
+        return {
+          ...state,
+          value,
+          cursor: Array.from(value).length,
+          historyIndex: null,
+          draftBeforeHistory: undefined,
+        };
       }
       const nextIndex = Math.min(state.history.length - 1, state.historyIndex + 1);
       const value = state.history[nextIndex] ?? "";
@@ -116,7 +135,13 @@ export function editPrompt(state: PromptState, edit: PromptEdit): PromptState {
     }
     case "reset": {
       const value = edit.value ?? "";
-      return { ...state, value, cursor: Array.from(value).length, historyIndex: null };
+      return {
+        ...state,
+        value,
+        cursor: Array.from(value).length,
+        historyIndex: null,
+        draftBeforeHistory: undefined,
+      };
     }
   }
 }
@@ -130,6 +155,7 @@ export function addPromptHistory(state: PromptState, submitted: string): PromptS
     ...state,
     history: [...state.history.filter((item) => item !== trimmed), trimmed].slice(-50),
     historyIndex: null,
+    draftBeforeHistory: undefined,
   };
 }
 

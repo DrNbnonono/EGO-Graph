@@ -1,6 +1,5 @@
-import type { ChatModelProvider } from "@ego-graph/llm";
+import { zodToJsonSchema, type ChatMessage, type ChatModelProvider } from "@ego-graph/llm";
 import type { createTerminalAgentToolRegistry } from "@ego-graph/tools";
-import type { ZodTypeAny } from "zod";
 import {
   executeHarnessToolStep,
   type HarnessEvidenceEventInput,
@@ -10,6 +9,7 @@ import { mergeLoopPolicy, type LoopPolicy } from "./loop-policy.js";
 import { createLoopState, type LoopIntent, type PlannerAction } from "./loop-state.js";
 import { buildLoopReflection } from "./reflection.js";
 import { evaluateStopCondition } from "./stop-condition.js";
+import type { SecurityScopeGate } from "./tool-executor.js";
 import type { AgentRunEvent, PermissionLevel } from "./session.js";
 
 export type AgentLoopInput = {
@@ -21,14 +21,38 @@ export type AgentLoopInput = {
   permissionLevel: PermissionLevel;
   toolRegistry: ReturnType<typeof createTerminalAgentToolRegistry>;
   modelProvider?: ChatModelProvider | null;
-  securityScope?: unknown;
+  securityScope?: SecurityScopeGate;
   policy?: Partial<LoopPolicy>;
+  /**
+   * Prior conversation messages recalled from persistent storage. When
+   * provided, these are prepended to the in-memory model context so the model
+   * sees true multi-turn history instead of a single-shot prompt.
+   */
+  seedMessages?: ChatMessage[];
+  /**
+   * Optional callback invoked for every message appended to the model context
+   * (user turns, assistant turns, tool exchanges). Used by the session layer
+   * to persist the conversation. Keeping the loop decoupled from storage.
+   */
+  onMessage?(message: ChatMessage): void;
   emit(event: HarnessToolEventInput): Promise<AgentRunEvent>;
   emitEvidence(event: HarnessEvidenceEventInput): Promise<AgentRunEvent>;
 };
 
 export async function* runAgentLoop(input: AgentLoopInput): AsyncIterable<AgentRunEvent> {
   const policy = mergeLoopPolicy(input.policy);
+  // For chat intent, allow read-only tool calls (e.g. workspace.grep) but
+  // keep a tighter tool budget so small questions do not spiral. The previous
+  // behaviour of short-circuiting chat entirely meant the model could never
+  // answer "where is X defined?" by actually searching the repo.
+  const isChat = input.intent === "chat";
+  const effectivePolicy = isChat
+    ? mergeLoopPolicy({
+        ...input.policy,
+        maxToolCalls: Math.min(input.policy?.maxToolCalls ?? policy.maxToolCalls, 3),
+        maxSteps: Math.min(input.policy?.maxSteps ?? policy.maxSteps, 4),
+      })
+    : policy;
   const state = createLoopState({
     runId: input.runId,
     sessionId: input.sessionId,
@@ -36,19 +60,30 @@ export async function* runAgentLoop(input: AgentLoopInput): AsyncIterable<AgentR
     intent: input.intent,
   });
 
-  if (input.intent === "chat") {
-    yield await input.emit({
-      type: "loop.stopped",
-      runId: input.runId,
-      sessionId: input.sessionId,
-      message: "Chat intent does not enter the autonomous tool loop.",
-      payload: { reason: "chat-direct-answer" },
+  // Seed multi-turn history from persistent storage, then record the current
+  // user turn. Both go to the model context and to the persistence callback.
+  const modelMessages: ChatMessage[] = input.seedMessages ? [...input.seedMessages] : [];
+  if (!modelMessages.some((message) => message.role === "system")) {
+    modelMessages.unshift({
+      role: "system",
+      content: buildLoopSystemPreamble(input.intent, Boolean(input.securityScope)),
     });
-    return;
   }
+  const userTurn: ChatMessage = {
+    role: "user",
+    content: isChat
+      ? input.message
+      : [
+          `Task: ${input.message}`,
+          `Intent: ${input.intent}`,
+          `Security scope configured: ${Boolean(input.securityScope)}`,
+        ].join("\n"),
+  };
+  modelMessages.push(userTurn);
+  input.onMessage?.(userTurn);
 
   while (state.status === "running") {
-    const stop = evaluateStopCondition(state, policy);
+    const stop = evaluateStopCondition(state, effectivePolicy);
     if (stop.shouldStop) {
       state.status = stop.status;
       state.stopReason = stop.reason;
@@ -72,11 +107,11 @@ export async function* runAgentLoop(input: AgentLoopInput): AsyncIterable<AgentR
         step: state.stepCount,
         intent: input.intent,
         toolCallCount: state.toolCallCount,
-        maxToolCalls: policy.maxToolCalls,
+        maxToolCalls: effectivePolicy.maxToolCalls,
       },
     });
 
-    const action = await choosePlannerAction(input, state);
+    const action = await choosePlannerAction(input, state, effectivePolicy, modelMessages);
     yield await input.emit({
       type: "planner.decision",
       runId: input.runId,
@@ -127,6 +162,8 @@ export async function* runAgentLoop(input: AgentLoopInput): AsyncIterable<AgentR
     if (action.nextAction === "call_tool" && action.toolCall) {
       state.toolCallCount += 1;
       let lastObservation: string | undefined;
+      let lastToolOutput: unknown;
+      let modelToolUseId = `loop-tool-${state.stepCount}`;
       for await (const event of executeHarnessToolStep({
         runId: input.runId,
         sessionId: input.sessionId,
@@ -135,19 +172,30 @@ export async function* runAgentLoop(input: AgentLoopInput): AsyncIterable<AgentR
         permissionLevel: input.permissionLevel,
         toolName: action.toolCall.name,
         toolInput: action.toolCall.arguments,
+        ...(input.securityScope ? { securityScope: input.securityScope } : {}),
         emit: input.emit,
         emitEvidence: input.emitEvidence,
       })) {
+        if (event.type === "tool.started") {
+          modelToolUseId = readToolCallId(event.payload) ?? modelToolUseId;
+        }
         if (event.type === "observation.created") {
           lastObservation = event.message;
+          lastToolOutput = event.payload.output;
           state.observations.push(event.message);
         }
         yield event;
       }
 
+      appendToolExchange(modelMessages, {
+        toolUseId: modelToolUseId,
+        action,
+        output: lastToolOutput,
+        ...(lastObservation ? { observation: lastObservation } : {}),
+      });
       const reflection = buildLoopReflection({
         action,
-        remainingToolBudget: Math.max(0, policy.maxToolCalls - state.toolCallCount),
+        remainingToolBudget: Math.max(0, effectivePolicy.maxToolCalls - state.toolCallCount),
         ...(lastObservation ? { observation: lastObservation } : {}),
       });
       state.reflections.push(reflection);
@@ -177,8 +225,10 @@ export async function* runAgentLoop(input: AgentLoopInput): AsyncIterable<AgentR
 async function choosePlannerAction(
   input: AgentLoopInput,
   state: ReturnType<typeof createLoopState>,
+  policy: LoopPolicy,
+  modelMessages: ChatMessage[],
 ): Promise<PlannerAction> {
-  const structured = await tryStructuredModelAction(input, state);
+  const structured = await tryStructuredModelAction(input, state, policy, modelMessages);
   if (structured) {
     return structured;
   }
@@ -188,22 +238,36 @@ async function choosePlannerAction(
 async function tryStructuredModelAction(
   input: AgentLoopInput,
   state: ReturnType<typeof createLoopState>,
+  policy: LoopPolicy,
+  modelMessages: ChatMessage[],
 ): Promise<PlannerAction | undefined> {
   if (!input.modelProvider?.completeStructured) {
     return undefined;
   }
+  // Chat intent is restricted to read-only tools so small questions can still
+  // grep/list the repo without risking writes or shell execution.
+  const isChat = input.intent === "chat";
   try {
-    const toolManifests = input.toolRegistry.list().map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: zodToJsonSchemaLite(tool.inputSchema),
-      riskLevel: tool.riskLevel ?? tool.permission.risk,
-      requiredPermission: inferRequiredPermission(tool),
-      requiresApproval: Boolean(tool.requiresApproval),
-      sandboxProfile: tool.sandboxProfile ?? (tool.permission.requiresSandbox ? "docker" : "none"),
-      timeoutMs: tool.timeoutMs ?? 30_000,
-      scenarios: tool.scenarios ?? [],
-    }));
+    const toolManifests = input.toolRegistry
+      .list()
+      .filter((tool) => {
+        if (!isChat) {
+          return true;
+        }
+        const permission = inferRequiredPermission(tool);
+        return permission === "read-only";
+      })
+      .map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: zodToJsonSchema(tool.inputSchema),
+        riskLevel: tool.riskLevel ?? tool.permission.risk,
+        requiredPermission: inferRequiredPermission(tool),
+        requiresApproval: Boolean(tool.requiresApproval),
+        sandboxProfile: tool.sandboxProfile ?? (tool.permission.requiresSandbox ? "docker" : "none"),
+        timeoutMs: tool.timeoutMs ?? 30_000,
+        scenarios: tool.scenarios ?? [],
+      }));
     const tools = toolManifests.map((tool) => ({
       name: tool.name,
       description: [
@@ -215,34 +279,45 @@ async function tryStructuredModelAction(
       ].join(" | "),
       inputSchema: tool.inputSchema,
     }));
+    const remainingTools = Math.max(0, policy.maxToolCalls - state.toolCallCount);
     const result = await input.modelProvider.completeStructured({
       temperature: 0,
       maxTokens: 1200,
-      toolChoice: "auto",
-      tools,
+      ...(tools.length > 0 ? { toolChoice: "auto" as const, tools } : {}),
       messages: [
+        ...modelMessages,
         {
-          role: "system",
-          content:
-            "You are the EGO-Graph planner. Choose at most one safe next tool call, or answer/stop. Do not reveal hidden chain-of-thought.",
-        },
-        {
-          role: "user",
+          role: "user" as const,
           content: [
-            `Task: ${input.message}`,
-            `Intent: ${input.intent}`,
             `Step: ${state.stepCount}`,
             `Observations: ${state.observations.join(" | ") || "(none)"}`,
-            `Security scope configured: ${Boolean(input.securityScope)}`,
+            `Reflections: ${state.reflections.join(" | ") || "(none)"}`,
+            `Remaining tool budget: ${remainingTools}/${policy.maxToolCalls}`,
             "Available tool manifests:",
             JSON.stringify(toolManifests.slice(0, 40)),
+            "If you have enough evidence to answer, reply with text only (no tool call).",
           ].join("\n"),
         },
       ],
     });
     const call = result.toolCalls[0];
     if (!call) {
-      return undefined;
+      // No tool call: treat the model's text content as the final answer and
+      // persist it as an assistant turn so the next user turn has context.
+      const answer = result.content.trim();
+      if (answer) {
+        input.onMessage?.({ role: "assistant", content: answer });
+      }
+      return {
+        thoughtSummary: answer || "Model produced no tool call.",
+        intent: input.intent,
+        nextAction: "answer",
+        riskLevel: "low",
+        requiredPermission: "read-only",
+        userVisibleMessage: answer || "模型未给出明确回答。",
+        expectedObservation: "No further tool required.",
+        stopCondition: "Model produced a final text answer.",
+      };
     }
     return {
       thoughtSummary: result.content || `Model selected ${call.name}.`,
@@ -260,51 +335,81 @@ async function tryStructuredModelAction(
   }
 }
 
-function zodToJsonSchemaLite(schema: ZodTypeAny): Record<string, unknown> {
-  const def = schema._def as {
-    typeName?: string;
-    shape?: () => Record<string, ZodTypeAny>;
-    innerType?: ZodTypeAny;
-    values?: string[];
-  };
-  if (def.typeName === "ZodObject" && typeof def.shape === "function") {
-    const shape = def.shape();
-    const properties = Object.fromEntries(
-      Object.entries(shape).map(([key, value]) => [key, zodToJsonSchemaLite(value)]),
+function buildLoopSystemPreamble(intent: LoopIntent, hasSecurityScope: boolean): string {
+  const lines = [
+    "You are the EGO-Graph terminal agent planner.",
+    "Choose at most one safe next tool call per turn, or answer directly when you have enough evidence.",
+    "Do not reveal hidden chain-of-thought; provide auditable summaries only.",
+  ];
+  if (intent === "chat") {
+    lines.push("This is a conversational turn; only read-only tools are available.");
+  }
+  if (intent === "security_task") {
+    lines.push(
+      hasSecurityScope
+        ? "Security scope is configured; stay within the authorized targets and actions."
+        : "No security scope is configured; do not perform active security tooling.",
     );
-    return {
-      type: "object",
-      properties,
-      required: Object.entries(shape)
-        .filter(([, value]) => !isOptionalZod(value))
-        .map(([key]) => key),
-      additionalProperties: false,
-    };
   }
-  if (def.typeName === "ZodString") return { type: "string" };
-  if (def.typeName === "ZodNumber") return { type: "number" };
-  if (def.typeName === "ZodBoolean") return { type: "boolean" };
-  if (def.typeName === "ZodArray" && "type" in def) {
-    return {
-      type: "array",
-      items: zodToJsonSchemaLite((def as unknown as { type: ZodTypeAny }).type),
-    };
-  }
-  if (def.typeName === "ZodEnum" && Array.isArray(def.values)) {
-    return { type: "string", enum: def.values };
-  }
-  if (def.typeName === "ZodOptional" && def.innerType) {
-    return zodToJsonSchemaLite(def.innerType);
-  }
-  if (def.typeName === "ZodDefault" && def.innerType) {
-    return zodToJsonSchemaLite(def.innerType);
-  }
-  return { type: "object" };
+  return lines.join(" ");
 }
 
-function isOptionalZod(schema: ZodTypeAny): boolean {
-  const def = schema._def as { typeName?: string };
-  return def.typeName === "ZodOptional" || def.typeName === "ZodDefault";
+function appendToolExchange(
+  messages: ChatMessage[],
+  input: {
+    toolUseId: string;
+    action: PlannerAction;
+    observation?: string;
+    output: unknown;
+  },
+): void {
+  if (!input.action.toolCall) {
+    return;
+  }
+  messages.push({
+    role: "assistant",
+    content: [
+      { type: "text", text: input.action.userVisibleMessage },
+      {
+        type: "tool_use",
+        id: input.toolUseId,
+        name: input.action.toolCall.name,
+        input: input.action.toolCall.arguments,
+      },
+    ],
+  });
+  messages.push({
+    role: "tool",
+    toolCallId: input.toolUseId,
+    name: input.action.toolCall.name,
+    content: [
+      {
+        type: "tool_result",
+        toolUseId: input.toolUseId,
+        content: serializeToolResult(input.output, input.observation),
+      },
+    ],
+  });
+}
+
+function readToolCallId(payload: Record<string, unknown>): string | undefined {
+  const toolCall = payload.toolCall;
+  if (typeof toolCall !== "object" || toolCall === null || Array.isArray(toolCall)) {
+    return undefined;
+  }
+  const id = (toolCall as { id?: unknown }).id;
+  return typeof id === "string" ? id : undefined;
+}
+
+function serializeToolResult(output: unknown, fallback: string | undefined): string {
+  if (output !== undefined) {
+    try {
+      return JSON.stringify(output).slice(0, 16_000);
+    } catch {
+      return String(output).slice(0, 16_000);
+    }
+  }
+  return fallback ?? "Tool completed without structured output.";
 }
 
 function inferRequiredPermission(tool: {

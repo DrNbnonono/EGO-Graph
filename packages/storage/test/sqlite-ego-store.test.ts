@@ -103,4 +103,85 @@ describe("SqliteEgoStore", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it("stores and recalls token-bounded conversation history", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ego-sqlite-conversation-"));
+    let store: SqliteEgoStore | undefined;
+    try {
+      store = new SqliteEgoStore(join(dir, "ego.sqlite"));
+      await store.appendMessage({
+        id: "msg-1",
+        sessionId: "session-1",
+        role: "system",
+        contentJson: JSON.stringify("system prompt"),
+        tokenCount: 1000,
+        createdAt: "2026-07-05T00:00:00.000Z",
+      });
+      await store.appendMessage({
+        id: "msg-2",
+        sessionId: "session-1",
+        runId: "run-1",
+        role: "user",
+        contentJson: JSON.stringify("first question"),
+        tokenCount: 4,
+        createdAt: "2026-07-05T00:00:01.000Z",
+      });
+      await store.appendMessage({
+        id: "msg-3",
+        sessionId: "session-1",
+        role: "assistant",
+        contentJson: JSON.stringify([
+          { type: "text", text: "I will inspect it." },
+          {
+            type: "tool_use",
+            id: "call-1",
+            name: "workspace.read",
+            input: { path: "README.md" },
+          },
+        ]),
+        toolCallId: "call-1",
+        toolName: "workspace.read",
+        tokenCount: 8,
+        createdAt: "2026-07-05T00:00:02.000Z",
+      });
+      await store.appendMessage({
+        id: "msg-4",
+        sessionId: "session-1",
+        role: "tool",
+        contentJson: JSON.stringify([
+          { type: "tool_result", toolUseId: "call-1", content: "README body" },
+        ]),
+        toolCallId: "call-1",
+        toolName: "workspace.read",
+        tokenCount: 6,
+        createdAt: "2026-07-05T00:00:03.000Z",
+      });
+
+      expect((await store.listMessages("session-1")).map((message) => message.id)).toEqual([
+        "msg-1",
+        "msg-2",
+        "msg-3",
+        "msg-4",
+      ]);
+      expect(
+        (await store.listMessages("session-1", { beforeId: "msg-4", limit: 2 })).map(
+          (message) => message.id,
+        ),
+      ).toEqual(["msg-2", "msg-3"]);
+
+      const recalled = await store.recallForPrompt("session-1", 14);
+      expect(recalled.map((message) => message.id)).toEqual(["msg-1", "msg-3", "msg-4"]);
+      expect(recalled[1]).toMatchObject({
+        role: "assistant",
+        toolCallId: "call-1",
+        toolName: "workspace.read",
+      });
+
+      await store.clearSession("session-1");
+      expect(await store.listMessages("session-1")).toEqual([]);
+    } finally {
+      store?.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

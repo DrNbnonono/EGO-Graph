@@ -65,6 +65,40 @@ describe("model-backed workspace edit planning", () => {
     });
   });
 
+  it("accepts richer precise edit operations from the model", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-agent-rich-plan-"));
+    await writeFile(join(root, "package.json"), '{"name":"fixture"}', "utf8");
+    await writeFile(join(root, "README.md"), "alpha\nbeta\n", "utf8");
+
+    const result = await generateWorkspaceEditPlan({
+      message: "在 alpha 后插入一句说明",
+      workspaceRoot: root,
+      provider: fakeProvider(
+        JSON.stringify({
+          rationale: "Insert the requested line without rewriting the whole README.",
+          editPlan: {
+            goal: "insert readme note",
+            operations: [
+              {
+                type: "insert_after",
+                path: "README.md",
+                anchorText: "alpha\n",
+                content: "inserted\n",
+              },
+            ],
+          },
+        }),
+      ),
+    });
+
+    expect(result).toMatchObject({
+      status: "proposed",
+      editPlan: {
+        operations: [{ type: "insert_after", path: "README.md" }],
+      },
+    });
+  });
+
   it("auto-proposes a diff but does not write before approval", async () => {
     const root = await mkdtemp(join(tmpdir(), "ego-agent-auto-propose-"));
     await writeFile(join(root, "package.json"), '{"name":"fixture"}', "utf8");

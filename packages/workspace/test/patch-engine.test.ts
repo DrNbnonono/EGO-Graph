@@ -48,4 +48,71 @@ describe("patch engine", () => {
     );
     await expect(applyPatchPreview(root, preview, { approved: true })).rejects.toThrow();
   });
+
+  it("rolls back to the pre-patch snapshot when an operation fails mid-apply", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-patch-rollback-"));
+    await writeFile(join(root, "a.txt"), "AAA\n", "utf8");
+    await writeFile(join(root, "b.txt"), "BBB\n", "utf8");
+
+    // Both ops preview cleanly against the original content. Between preview
+    // and apply we delete b.txt, so the second replace_text fails at apply
+    // time (file not found) — the first op has already written a.txt, so
+    // rollback must restore it.
+    const preview = await proposePatch(root, {
+      goal: "partial patch",
+      operations: [
+        { type: "replace_text", path: "a.txt", oldText: "AAA", newText: "AAA-edited" },
+        { type: "replace_text", path: "b.txt", oldText: "BBB", newText: "BBB-edited" },
+      ],
+    });
+    const { rm } = await import("node:fs/promises");
+    await rm(join(root, "b.txt"), { force: true });
+
+    const result = await applyPatchPreview(root, preview, { approved: true });
+    expect(result.applied).toBe(false);
+    expect(result.rolledBack?.reason).toBeTruthy();
+    // a.txt must be restored to its original content despite the first op having run.
+    expect(await readFile(join(root, "a.txt"), "utf8")).toBe("AAA\n");
+  });
+
+  it("flags cross-operation conflicts: same path edited by two non-text ops", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-patch-cross-"));
+    await writeFile(join(root, "shared.txt"), "body\n", "utf8");
+
+    const preview = await proposePatch(root, {
+      goal: "conflicting patch",
+      operations: [
+        { type: "replace_file", path: "shared.txt", content: "one\n" },
+        { type: "replace_file", path: "shared.txt", content: "two\n" },
+      ],
+    });
+
+    expect(
+      preview.conflicts.some((conflict) =>
+        conflict.reason.includes("Multiple operations target the same path"),
+      ),
+    ).toBe(true);
+  });
+
+  it("allows multiple replace_text edits against the same file", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-patch-multi-text-"));
+    await writeFile(join(root, "doc.md"), "alpha\nbeta\n", "utf8");
+
+    const preview = await proposePatch(root, {
+      goal: "two distinct edits",
+      operations: [
+        { type: "replace_text", path: "doc.md", oldText: "alpha", newText: "ALPHA" },
+        { type: "replace_text", path: "doc.md", oldText: "beta", newText: "BETA" },
+      ],
+    });
+
+    expect(
+      preview.conflicts.some((conflict) =>
+        conflict.reason.includes("Multiple operations"),
+      ),
+    ).toBe(false);
+    const result = await applyPatchPreview(root, preview, { approved: true });
+    expect(result.applied).toBe(true);
+    expect(await readFile(join(root, "doc.md"), "utf8")).toBe("ALPHA\nBETA\n");
+  });
 });

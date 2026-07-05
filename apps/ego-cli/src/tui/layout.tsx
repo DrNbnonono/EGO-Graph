@@ -1,6 +1,7 @@
 import type { PermissionLevel } from "@ego-graph/agent-harness";
 import type { WorkbenchState } from "@ego-graph/workbench";
 import { Box, Text } from "ink";
+import React from "react";
 import type { ReactElement } from "react";
 import { truncateDisplay } from "./cjk.js";
 

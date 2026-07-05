@@ -1,4 +1,5 @@
 import { render } from "ink";
+import React from "react";
 import { EgoTui } from "./app.js";
 
 export { EgoTui } from "./app.js";

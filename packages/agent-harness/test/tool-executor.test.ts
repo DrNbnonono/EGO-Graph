@@ -138,4 +138,78 @@ describe("tool executor", () => {
       fullOutput: expect.objectContaining({ result: "ok" }),
     });
   });
+
+  it("blocks high-risk tools when no SecurityScope is provided", async () => {
+    const result = await executeToolCall({
+      tool: createTool({ name: "security.scan", riskLevel: "high" }),
+      input: { value: "x" },
+      workspaceRoot: process.cwd(),
+      permissionLevel: "security-active",
+      approvalGranted: true,
+      runId: "run-scope-1",
+      sessionId: "session-scope-1",
+      // no securityScope
+    });
+    expect(result.status).toBe("blocked");
+    expect(result.event.message).toContain("authorization scope");
+  });
+
+  it("blocks high-risk tools when the SecurityScope has expired", async () => {
+    const result = await executeToolCall({
+      tool: createTool({ name: "security.scan", riskLevel: "high" }),
+      input: { value: "x" },
+      workspaceRoot: process.cwd(),
+      permissionLevel: "security-active",
+      approvalGranted: true,
+      runId: "run-scope-2",
+      sessionId: "session-scope-2",
+      securityScope: {
+        allowedActions: ["inspect", "fingerprint"],
+        forbiddenActions: ["exploit"],
+        riskLevel: "high",
+        expiresAt: new Date(Date.now() - 60_000).toISOString(),
+      },
+    });
+    expect(result.status).toBe("blocked");
+    expect(result.event.message).toContain("expired");
+  });
+
+  it("runs a high-risk tool when the scope authorizes the action", async () => {
+    const result = await executeToolCall({
+      tool: createTool({ name: "security.fingerprint", riskLevel: "high" }),
+      input: { value: "x" },
+      workspaceRoot: process.cwd(),
+      permissionLevel: "security-active",
+      approvalGranted: true,
+      runId: "run-scope-3",
+      sessionId: "session-scope-3",
+      securityScope: {
+        allowedActions: ["inspect", "fingerprint"],
+        forbiddenActions: ["exploit", "ddos"],
+        riskLevel: "high",
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    });
+    expect(result.status).toBe("completed");
+  });
+
+  it("blocks when the required action is forbidden even if the scope is otherwise valid", async () => {
+    const result = await executeToolCall({
+      tool: createTool({ name: "security.exploit_target", riskLevel: "high" }),
+      input: { value: "x" },
+      workspaceRoot: process.cwd(),
+      permissionLevel: "security-active",
+      approvalGranted: true,
+      runId: "run-scope-4",
+      sessionId: "session-scope-4",
+      securityScope: {
+        allowedActions: ["inspect"],
+        forbiddenActions: ["exploit"],
+        riskLevel: "high",
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    });
+    expect(result.status).toBe("blocked");
+    expect(result.event.message).toContain("forbidden");
+  });
 });

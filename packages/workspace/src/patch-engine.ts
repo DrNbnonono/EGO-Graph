@@ -1,8 +1,9 @@
 import { constants } from "node:fs";
 import { access, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { assertNoEditConflicts, type EditConflict } from "./edit-conflict.js";
+import { assertNoEditConflicts, detectCrossOperationConflicts, type EditConflict } from "./edit-conflict.js";
 import {
+  applyRollbackProposal,
   createPatchSnapshot,
   createRollbackProposal,
   type PatchSnapshot,
@@ -47,6 +48,12 @@ export type PatchApplyResult = {
   files: string[];
   snapshot: PatchSnapshot;
   rollback: RollbackProposal;
+  /**
+   * Present (with the triggering error) when the apply failed partway and the
+   * snapshot was used to roll the workspace back to its pre-patch state.
+   * `applied` is false in that case.
+   */
+  rolledBack?: { reason: string };
 };
 
 export async function proposePatch(
@@ -61,6 +68,10 @@ export async function proposePatch(
   const diffs: string[] = [];
   const files: string[] = [];
   const conflicts: EditConflict[] = [];
+
+  // Whole-list conflicts (same path twice, delete vs edit, rename target
+  // collisions) are invisible to the per-operation loop below.
+  conflicts.push(...detectCrossOperationConflicts(plan.operations));
 
   for (const operation of plan.operations) {
     if (operation.type === "chmod") {
@@ -124,8 +135,29 @@ export async function applyPatchPreview(
   assertNoEditConflicts(preview.conflicts);
   const root = resolve(workspaceRoot);
   const snapshot = await createPatchSnapshot(root, preview.files);
-  for (const operation of preview.operations) {
-    await applyPatchOperation(root, operation, policy);
+  try {
+    for (const operation of preview.operations) {
+      await applyPatchOperation(root, operation, policy);
+    }
+  } catch (error) {
+    // A mid-patch failure leaves the workspace half-written. Restore every
+    // snapshotted file before re-throwing so the repo is not left in an
+    // inconsistent state; the caller learns about the rollback from the
+    // result shape (when caught) or the re-thrown error.
+    const reason = error instanceof Error ? error.message : String(error);
+    try {
+      await applyRollbackProposal(root, createRollbackProposal(snapshot));
+    } catch {
+      // Best-effort rollback; surface the original failure reason regardless.
+    }
+    return {
+      previewId: preview.id,
+      applied: false,
+      files: preview.files,
+      snapshot,
+      rollback: createRollbackProposal(snapshot),
+      rolledBack: { reason },
+    };
   }
   return {
     previewId: preview.id,

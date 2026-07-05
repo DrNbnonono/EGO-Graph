@@ -6,6 +6,7 @@ import {
 } from "@ego-graph/agent-harness";
 import { readWorkbenchState, type WorkbenchState } from "@ego-graph/workbench";
 import { Box, Text, useApp, useStdout } from "ink";
+import React from "react";
 import {
   useCallback,
   useEffect,
@@ -17,7 +18,9 @@ import {
 } from "react";
 import {
   closeCommandPalette,
+  commandPalette,
   createCommandPaletteState,
+  getCommandAvailability,
   moveCommandPaletteSelection,
   resolvePaletteInput,
   selectCommandPalette,
@@ -47,8 +50,15 @@ import {
   PromptInput,
   type PromptState,
 } from "./prompt-input.js";
+import { PermissionsView } from "./permissions-view.js";
 import { PlanView } from "./plan-view.js";
-import { useMouseTracking, useTerminalInput, type TerminalInputAction } from "./terminal-input.js";
+import { SidePanelView } from "./side-panel-view.js";
+import {
+  shouldEnableMouseTracking,
+  useMouseTracking,
+  useTerminalInput,
+  type TerminalInputAction,
+} from "./terminal-input.js";
 import { calculateBodyHeight, useTerminalSize } from "./terminal-size.js";
 import type { OverlayMode, TuiRunSession } from "./tui-state.js";
 import { WelcomeScreen } from "./welcome-screen.js";
@@ -100,8 +110,9 @@ export function EgoTui(): ReactElement {
     paletteHeight,
     promptHeight,
   });
+  const activeRun = activeRunId ? session.getRunState(activeRunId) : undefined;
 
-  useMouseTracking();
+  useMouseTracking(shouldEnableMouseTracking());
 
   useEffect(() => {
     void refreshWorkbench(setWorkbench, setHistoryItems, appendSystemEvent(setEvents));
@@ -172,6 +183,19 @@ export function EgoTui(): ReactElement {
       return;
     }
     const selected = palette.open ? selectCommandPalette(palette) : undefined;
+    const selectedCommand = selected
+      ? palette.matches.find((command) => command.name === selected)
+      : undefined;
+    if (selectedCommand) {
+      const availability = getCommandAvailability(selectedCommand, { activeRun });
+      if (!availability.available) {
+        appendSystemEvent(setEvents)(
+          `${selectedCommand.name} 暂不可用：${availability.reason ?? "unavailable"}`,
+        );
+        setPalette((previous) => closeCommandPalette(previous));
+        return;
+      }
+    }
     const submitted =
       selected ??
       resolvePaletteInput(
@@ -209,6 +233,7 @@ export function EgoTui(): ReactElement {
     });
   }, [
     activeRunId,
+    activeRun,
     busy,
     exit,
     historyIndex,
@@ -228,7 +253,6 @@ export function EgoTui(): ReactElement {
       if (action.type === "escape") {
         if (palette.open) {
           setPalette((previous) => closeCommandPalette(previous));
-          setPrompt((previous) => editPrompt(previous, { type: "reset", value: "" }));
           return;
         }
         if (overlayMode !== "none") {
@@ -276,6 +300,7 @@ export function EgoTui(): ReactElement {
         if (
           handleSingleKeyShortcut(action, overlayMode, activeRunId, session, {
             setDiffFileIndex,
+            setScrollOffset,
             setEvents,
             setBusy,
             setWorkbench,
@@ -308,8 +333,6 @@ export function EgoTui(): ReactElement {
     );
   }
 
-  const activeRun = activeRunId ? session.getRunState(activeRunId) : undefined;
-
   return (
     <Box flexDirection="column" height={terminalHeight}>
       {showStatusLine ? (
@@ -321,48 +344,62 @@ export function EgoTui(): ReactElement {
           width={terminalWidth}
         />
       ) : null}
-      <Box flexGrow={1} height={bodyHeight}>
-        {overlayMode === "history" ? (
-          <HistoryBrowser
-            items={historyItems}
-            selectedIndex={historyIndex}
-            width={layout.conversationWidth}
-          />
-        ) : overlayMode === "plan" ? (
-          <PlanView plan={activeRun?.plan ?? []} width={layout.conversationWidth} />
-        ) : overlayMode === "diff" ? (
-          <DiffView
-            diff={activeRun?.diff}
-            fileIndex={diffFileIndex}
-            width={layout.conversationWidth}
-            height={bodyHeight}
-          />
-        ) : overlayMode === "checks" ? (
-          <ChecksView checks={activeRun?.checks ?? []} width={layout.conversationWidth} />
-        ) : overlayMode === "debug" ? (
-          <DebugView events={events} width={layout.conversationWidth} height={bodyHeight} />
-        ) : showStartup ? (
-          <WelcomeScreen
+      <Box flexGrow={1} height={bodyHeight} flexDirection="row">
+        <Box flexDirection="column" width={showStartup ? terminalWidth : layout.conversationWidth}>
+          {overlayMode === "history" ? (
+            <HistoryBrowser
+              items={historyItems}
+              selectedIndex={historyIndex}
+              width={layout.conversationWidth}
+            />
+          ) : overlayMode === "plan" ? (
+            <PlanView plan={activeRun?.plan ?? []} width={layout.conversationWidth} />
+          ) : overlayMode === "diff" ? (
+            <DiffView
+              diff={activeRun?.diff}
+              fileIndex={diffFileIndex}
+              width={layout.conversationWidth}
+              height={bodyHeight}
+              scrollOffset={scrollOffset}
+            />
+          ) : overlayMode === "checks" ? (
+            <ChecksView checks={activeRun?.checks ?? []} width={layout.conversationWidth} />
+          ) : overlayMode === "debug" ? (
+            <DebugView events={events} width={layout.conversationWidth} height={bodyHeight} />
+          ) : overlayMode === "permissions" ? (
+            <PermissionsView current={permissionLevel} activeRun={activeRun} />
+          ) : showStartup ? (
+            <WelcomeScreen
+              workbench={workbench}
+              permissionLevel={permissionLevel}
+              width={terminalWidth}
+            />
+          ) : (
+            <ConversationView
+              events={events}
+              width={layout.conversationWidth}
+              height={bodyHeight}
+              scrollOffset={scrollOffset}
+              debug={false}
+              thinkingExpanded={thinkingExpanded}
+              replayMode={replayMode}
+            />
+          )}
+        </Box>
+        {layout.showSidePanel && !showStartup ? (
+          <SidePanelView
             workbench={workbench}
+            activeRun={activeRun}
             permissionLevel={permissionLevel}
-            width={terminalWidth}
+            history={historyItems}
+            width={layout.sidePanelWidth}
           />
-        ) : (
-          <ConversationView
-            events={events}
-            width={layout.conversationWidth}
-            height={bodyHeight}
-            scrollOffset={scrollOffset}
-            debug={false}
-            thinkingExpanded={thinkingExpanded}
-            replayMode={replayMode}
-          />
-        )}
+        ) : null}
       </Box>
       <CommandPaletteView
         state={palette}
         width={terminalWidth}
-        {...(activeRunId ? { activeRunId } : {})}
+        {...(activeRun ? { activeRun } : {})}
       />
       <PromptInput state={prompt} busy={busy} width={terminalWidth} />
     </Box>
@@ -452,6 +489,7 @@ function handleSingleKeyShortcut(
   session: TerminalAgentSession,
   input: {
     setDiffFileIndex(value: SetStateAction<number>): void;
+    setScrollOffset(value: SetStateAction<number>): void;
     setEvents(value: SetStateAction<AgentRunEvent[]>): void;
     setBusy(value: boolean): void;
     setWorkbench(value: WorkbenchState | undefined): void;
@@ -464,13 +502,15 @@ function handleSingleKeyShortcut(
   }
   if (action.text === "n" && overlayMode === "diff") {
     input.setDiffFileIndex((previous) => previous + 1);
+    input.setScrollOffset(0);
     return true;
   }
   if (action.text === "p" && overlayMode === "diff") {
     input.setDiffFileIndex((previous) => Math.max(0, previous - 1));
+    input.setScrollOffset(0);
     return true;
   }
-  if ((action.text === "y" || action.text === "n") && activeRunId) {
+  if ((action.text === "y" || action.text === "n") && activeRunId && overlayMode === "plan") {
     const state = session.getRunState(activeRunId);
     if (state?.status === "plan_pending") {
       void runStream(
@@ -485,6 +525,9 @@ function handleSingleKeyShortcut(
       );
       return true;
     }
+  }
+  if ((action.text === "y" || action.text === "r") && activeRunId && overlayMode === "diff") {
+    const state = session.getRunState(activeRunId);
     if (state?.status === "patch_pending") {
       void runStream(
         action.text === "y" ? session.approvePatch(activeRunId) : session.rejectPatch(activeRunId),
@@ -504,6 +547,18 @@ function handleSingleKeyShortcut(
 
 async function submitInput(input: SubmitInputOptions): Promise<void> {
   const normalized = input.submitted.toLowerCase().trim();
+  const activeRun = input.activeRunId ? input.session.getRunState(input.activeRunId) : undefined;
+  const command = commandPalette.find((candidate) => candidate.name === normalized);
+  if (command) {
+    const availability = getCommandAvailability(command, { activeRun });
+    if (!availability.available) {
+      input.setEvents((previous) => [
+        ...previous,
+        localEvent(`${command.name} 暂不可用：${availability.reason ?? "unavailable"}`),
+      ]);
+      return;
+    }
+  }
   if (normalized === "/exit") {
     input.exit();
     return;
@@ -601,12 +656,7 @@ async function submitInput(input: SubmitInputOptions): Promise<void> {
     return;
   }
   if (normalized === "/permissions") {
-    input.setEvents((previous) => [
-      ...previous,
-      localEvent(
-        `当前权限: ${input.session.getPermissionLevel()}\n可选: ${permissionLevels.join(", ")}`,
-      ),
-    ]);
+    input.setOverlayMode("permissions");
     return;
   }
   if (normalized.startsWith("/allow ")) {
@@ -646,9 +696,9 @@ async function submitInput(input: SubmitInputOptions): Promise<void> {
     return;
   }
   if (normalized.startsWith("/diff ")) {
-    const activeRun = input.activeRunId ? input.session.getRunState(input.activeRunId) : undefined;
     const fileCount = activeRun?.diff ? splitDiffByFile(activeRun.diff).length : 0;
     input.setDiffFileIndex((previous) => resolveDiffFileIndex(normalized, previous, fileCount));
+    input.setScrollOffset(0);
     input.setOverlayMode("diff");
     return;
   }

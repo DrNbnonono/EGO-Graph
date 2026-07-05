@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -22,6 +22,37 @@ export type WorkspaceEditOperation =
       path: string;
       oldText: string;
       newText: string;
+    }
+  | {
+      type: "insert_after";
+      path: string;
+      anchorText: string;
+      content: string;
+    }
+  | {
+      type: "insert_before";
+      path: string;
+      anchorText: string;
+      content: string;
+    }
+  | {
+      type: "delete_text";
+      path: string;
+      text: string;
+    }
+  | {
+      type: "rename_file";
+      path: string;
+      newPath: string;
+    }
+  | {
+      type: "move_file";
+      path: string;
+      newPath: string;
+    }
+  | {
+      type: "delete_file";
+      path: string;
     };
 
 export type WorkspaceEditPlan = {
@@ -32,7 +63,7 @@ export type WorkspaceEditPlan = {
 export type WorkspaceWritePolicy = {
   maxFileBytes: number;
   deniedPathNames: string[];
-  allowDelete: false;
+  allowDelete: boolean;
 };
 
 export type WorkspaceEditPreview = {
@@ -96,9 +127,12 @@ export function createWorkspaceWriteService(
       for (const operation of plan.operations) {
         const target = resolveEditPath(root, operation.path, policy);
         files.push(toWorkspacePath(root, target));
+        if ("newPath" in operation) {
+          files.push(toWorkspacePath(root, resolveEditPath(root, operation.newPath, policy)));
+        }
         const current = await readCurrentContent(target);
         const next = await previewNextContent(operation, current, target, policy);
-        diffs.push(renderUnifiedDiff(toWorkspacePath(root, target), current ?? "", next));
+        diffs.push(renderOperationDiff(root, target, operation, current, next));
       }
 
       return {
@@ -118,6 +152,20 @@ export function createWorkspaceWriteService(
 
       for (const operation of preview.operations) {
         const target = resolveEditPath(root, operation.path, policy);
+        if (operation.type === "delete_file") {
+          if (!policy.allowDelete) {
+            throw new WorkspaceEditPolicyError("delete_file is disabled by workspace policy");
+          }
+          await rm(target, { force: true });
+          continue;
+        }
+        if (operation.type === "rename_file" || operation.type === "move_file") {
+          const nextPath = resolveEditPath(root, operation.newPath, policy);
+          await assertExistingFileSize(target, policy);
+          await mkdir(dirname(nextPath), { recursive: true });
+          await rename(target, nextPath);
+          continue;
+        }
         const current = await readCurrentContent(target);
         const next = await previewNextContent(operation, current, target, policy);
         await mkdir(dirname(target), { recursive: true });
@@ -198,26 +246,106 @@ async function previewNextContent(
       return operation.content;
     }
     case "replace_text": {
+      return replaceExact(current, target, operation.path, operation.oldText, operation.newText, policy);
+    }
+    case "insert_after": {
+      return insertExact(
+        current,
+        target,
+        operation.path,
+        operation.anchorText,
+        operation.content,
+        "after",
+        policy,
+      );
+    }
+    case "insert_before": {
+      return insertExact(
+        current,
+        target,
+        operation.path,
+        operation.anchorText,
+        operation.content,
+        "before",
+        policy,
+      );
+    }
+    case "delete_text": {
+      return replaceExact(current, target, operation.path, operation.text, "", policy);
+    }
+    case "rename_file":
+    case "move_file": {
       if (current === undefined) {
-        throw new WorkspaceEditPolicyError(
-          `Cannot replace text in missing file: ${operation.path}`,
-        );
+        throw new WorkspaceEditPolicyError(`Cannot move missing file: ${operation.path}`);
       }
-      if (!operation.oldText) {
-        throw new WorkspaceEditPolicyError("replace_text requires non-empty oldText");
-      }
-      const count = countOccurrences(current, operation.oldText);
-      if (count !== 1) {
-        throw new WorkspaceEditPolicyError(
-          `replace_text expected exactly one match in ${operation.path}, found ${count}`,
-        );
-      }
-      const next = current.replace(operation.oldText, operation.newText);
-      assertContentSize(next, policy);
       await assertExistingFileSize(target, policy);
-      return next;
+      return current;
+    }
+    case "delete_file": {
+      if (!policy.allowDelete) {
+        throw new WorkspaceEditPolicyError("delete_file is disabled by workspace policy");
+      }
+      if (current === undefined) {
+        throw new WorkspaceEditPolicyError(`Cannot delete missing file: ${operation.path}`);
+      }
+      await assertExistingFileSize(target, policy);
+      return "";
     }
   }
+}
+
+async function replaceExact(
+  current: string | undefined,
+  target: string,
+  path: string,
+  oldText: string,
+  newText: string,
+  policy: WorkspaceWritePolicy,
+): Promise<string> {
+  if (current === undefined) {
+    throw new WorkspaceEditPolicyError(`Cannot replace text in missing file: ${path}`);
+  }
+  if (!oldText) {
+    throw new WorkspaceEditPolicyError("exact text operation requires non-empty text");
+  }
+  const count = countOccurrences(current, oldText);
+  if (count !== 1) {
+    throw new WorkspaceEditPolicyError(
+      `exact text operation expected exactly one match in ${path}, found ${count}`,
+    );
+  }
+  const next = current.replace(oldText, newText);
+  assertContentSize(next, policy);
+  await assertExistingFileSize(target, policy);
+  return next;
+}
+
+async function insertExact(
+  current: string | undefined,
+  target: string,
+  path: string,
+  anchorText: string,
+  content: string,
+  position: "before" | "after",
+  policy: WorkspaceWritePolicy,
+): Promise<string> {
+  if (current === undefined) {
+    throw new WorkspaceEditPolicyError(`Cannot insert text in missing file: ${path}`);
+  }
+  if (!anchorText) {
+    throw new WorkspaceEditPolicyError("insert operation requires non-empty anchorText");
+  }
+  const count = countOccurrences(current, anchorText);
+  if (count !== 1) {
+    throw new WorkspaceEditPolicyError(
+      `insert operation expected exactly one anchor in ${path}, found ${count}`,
+    );
+  }
+  const replacement = position === "before" ? `${content}${anchorText}` : `${anchorText}${content}`;
+  const next = current.replace(anchorText, replacement);
+  assertContentSize(next, policy);
+  await assertExistingFileSize(target, policy);
+  return next;
 }
 
 async function readCurrentContent(path: string): Promise<string | undefined> {
@@ -259,6 +387,19 @@ function renderUnifiedDiff(path: string, before: string, after: string): string 
     ...newLines.map((line) => `+${line}`),
     "",
   ].join("\n");
+}
+
+function renderOperationDiff(
+  root: string,
+  target: string,
+  operation: WorkspaceEditOperation,
+  current: string | undefined,
+  next: string,
+): string {
+  if (operation.type === "rename_file" || operation.type === "move_file") {
+    return `rename from ${operation.path}\nrename to ${operation.newPath}\n`;
+  }
+  return renderUnifiedDiff(toWorkspacePath(root, target), current ?? "", next);
 }
 
 function countOccurrences(input: string, needle: string): number {

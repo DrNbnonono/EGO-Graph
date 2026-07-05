@@ -10,8 +10,10 @@ import { createTrajectoryEvent, type TrajectoryEvent } from "@ego-graph/core";
 import { createHermesEvent } from "@ego-graph/hermes";
 import {
   createChatModelProvider,
+  estimateMessageTokens,
   generateJson,
   loadModelConfig,
+  type ChatMessage,
   type ChatModelProvider,
 } from "@ego-graph/llm";
 import {
@@ -51,7 +53,7 @@ import {
 } from "./failure-localization.js";
 import { hydratePendingRunsFromStore, replayRunFromStore } from "./persistence.js";
 import { executeHarnessToolStep } from "./tool-flow.js";
-import type { ToolCallProtocol } from "./tool-executor.js";
+import type { SecurityScopeGate, ToolCallProtocol } from "./tool-executor.js";
 
 export type PermissionLevel = HarnessPermissionLevel;
 
@@ -164,6 +166,10 @@ export type TerminalAgentSessionOptions = {
 export type TerminalAgentSession = {
   getPermissionLevel(): PermissionLevel;
   setPermissionLevel(level: PermissionLevel): void;
+  /** Stable per-TUI-session id; conversation history is keyed by this. */
+  getActiveSessionId(): string;
+  /** Reset the active session id and wipe persisted conversation history. */
+  clearConversation(): Promise<AgentRunEvent[]>;
   hydratePendingRuns(): Promise<TerminalAgentRunState[]>;
   submitMessage(message: string): AsyncIterable<AgentRunEvent>;
   startTask(message: string): AsyncIterable<AgentRunEvent>;
@@ -223,6 +229,9 @@ export function createTerminalAgentSession(
   const pendingRuns = new Map<string, PendingRun>();
   const plannerProvider = resolvePlannerProvider(options);
   let permissionLevel = options.permissionLevel ?? "read-only";
+  // Stable per-TUI-session id so conversation history accumulates across
+  // turns. Reset by clearConversation() (the /clear command).
+  let activeSessionId = `tui-session-${Date.now()}`;
 
   return {
     getPermissionLevel() {
@@ -231,12 +240,21 @@ export function createTerminalAgentSession(
     setPermissionLevel(level) {
       permissionLevel = level;
     },
+    getActiveSessionId() {
+      return activeSessionId;
+    },
+    async clearConversation() {
+      await store.clearSession(activeSessionId);
+      activeSessionId = `tui-session-${Date.now()}`;
+      return [];
+    },
     async hydratePendingRuns() {
       await hydratePendingRunsFromStore({ store, pendingRuns });
       return [...pendingRuns.values()];
     },
     submitMessage(message) {
       const intent = classifyTerminalIntent(message);
+      const sessionId = activeSessionId;
       if (intent === "code_change" || intent === "security_task") {
         return streamStartTask({
           message,
@@ -246,6 +264,7 @@ export function createTerminalAgentSession(
           mcpPool,
           pendingRuns,
           plannerProvider,
+          sessionId,
           getPermissionLevel: () => permissionLevel,
         });
       }
@@ -258,11 +277,13 @@ export function createTerminalAgentSession(
         pendingRuns,
         intent,
         plannerProvider,
+        sessionId,
         modelProvider: options.modelProvider,
         getPermissionLevel: () => permissionLevel,
       });
     },
     startTask(message) {
+      const sessionId = activeSessionId;
       return streamStartTask({
         message,
         workspaceRoot,
@@ -271,6 +292,7 @@ export function createTerminalAgentSession(
         mcpPool,
         pendingRuns,
         plannerProvider,
+        sessionId,
         getPermissionLevel: () => permissionLevel,
       });
     },
@@ -344,11 +366,12 @@ async function* streamChatTurn(input: {
   intent: TerminalIntent;
   plannerProvider: ChatModelProvider | null | undefined;
   modelProvider: TerminalAgentSessionOptions["modelProvider"];
+  sessionId: string;
   getPermissionLevel(): PermissionLevel;
 }): AsyncIterable<AgentRunEvent> {
   const now = new Date().toISOString();
   const runId = `tui-chat-${now.replace(/\D/g, "")}-${Math.random().toString(36).slice(2, 8)}`;
-  const sessionId = `tui-session-${Date.now()}`;
+  const sessionId = input.sessionId;
   input.pendingRuns.set(runId, {
     runId,
     sessionId,
@@ -374,31 +397,37 @@ async function* streamChatTurn(input: {
   });
 
   const memoryHits = await recallStoreMemories(input.store, input.message);
-  if (input.intent === "project_analysis") {
-    const contextPack = await createWorkspaceContextPack({
-      workspaceRoot: input.workspaceRoot,
-      query: input.message,
-      recentEvents: await readRecentEventMessages(input.store),
-      maxFiles: 6,
-      maxCharsPerFile: 6_000,
-    });
-    yield await emit(input.store, {
-      type: "context.loaded",
-      runId,
-      sessionId,
-      message: `已读取项目上下文：${contextPack.summary.apps.length} 个 app、${contextPack.summary.packages.length} 个 package、${contextPack.selectedFiles.length} 个相关文件。`,
-      payload: {
-        repoMap: contextPack.repoMap.slice(0, 12),
-        selectedFiles: contextPack.selectedFiles.map((file) => ({
-          path: file.path,
-          score: file.score,
-          reason: file.reason,
-          truncated: file.truncated,
-        })),
-        recentEventsSummary: contextPack.recentEventsSummary,
-      },
-    });
+  if (input.intent === "project_analysis" || input.intent === "chat") {
+    if (input.intent === "project_analysis") {
+      const contextPack = await createWorkspaceContextPack({
+        workspaceRoot: input.workspaceRoot,
+        query: input.message,
+        recentEvents: await readRecentEventMessages(input.store),
+        maxFiles: 6,
+        maxCharsPerFile: 6_000,
+      });
+      yield await emit(input.store, {
+        type: "context.loaded",
+        runId,
+        sessionId,
+        message: `已读取项目上下文：${contextPack.summary.apps.length} 个 app、${contextPack.summary.packages.length} 个 package、${contextPack.selectedFiles.length} 个相关文件。`,
+        payload: {
+          repoMap: contextPack.repoMap.slice(0, 12),
+          selectedFiles: contextPack.selectedFiles.map((file) => ({
+            path: file.path,
+            score: file.score,
+            reason: file.reason,
+            truncated: file.truncated,
+          })),
+          recentEventsSummary: contextPack.recentEventsSummary,
+        },
+      });
+    }
 
+    // Recall cross-turn conversation history so the model sees prior Q&A and
+    // tool exchanges, not just the current user turn. Persist every new
+    // message produced inside the loop back into the store.
+    const seedMessages = await recallChatSeedMessages(input.store, sessionId);
     yield* runAgentLoop({
       runId,
       sessionId,
@@ -407,6 +436,10 @@ async function* streamChatTurn(input: {
       workspaceRoot: input.workspaceRoot,
       permissionLevel: input.getPermissionLevel(),
       toolRegistry: input.toolRegistry,
+      seedMessages,
+      onMessage: (message) => {
+        void persistChatMessage(input.store, sessionId, runId, message);
+      },
       ...(input.plannerProvider !== undefined ? { modelProvider: input.plannerProvider } : {}),
       emit: (event) => emit(input.store, event),
       emitEvidence: (event) => emitEvidence(input.store, event),
@@ -513,11 +546,12 @@ async function* streamStartTask(input: {
   mcpPool: McpClientPool;
   pendingRuns: Map<string, PendingRun>;
   plannerProvider: ChatModelProvider | null | undefined;
+  sessionId: string;
   getPermissionLevel(): PermissionLevel;
 }): AsyncIterable<AgentRunEvent> {
   const now = new Date().toISOString();
   const runId = `tui-run-${now.replace(/\D/g, "")}-${Math.random().toString(36).slice(2, 8)}`;
-  const sessionId = `tui-session-${Date.now()}`;
+  const sessionId = input.sessionId;
   const createdAt = new Date().toISOString();
   input.pendingRuns.set(runId, {
     runId,
@@ -614,6 +648,7 @@ async function* streamStartTask(input: {
   const classifiedIntent = classifyTerminalIntent(input.message);
   const loopIntent = classifiedIntent === "chat" ? "project_analysis" : classifiedIntent;
 
+  const seedMessages = await recallChatSeedMessages(input.store, sessionId);
   yield* runAgentLoop({
     runId,
     sessionId,
@@ -622,8 +657,12 @@ async function* streamStartTask(input: {
     workspaceRoot: input.workspaceRoot,
     permissionLevel: input.getPermissionLevel(),
     toolRegistry: input.toolRegistry,
+    seedMessages,
+    onMessage: (message) => {
+      void persistChatMessage(input.store, sessionId, runId, message);
+    },
     ...(input.plannerProvider !== undefined ? { modelProvider: input.plannerProvider } : {}),
-    securityScope: memoryHits.find((memory) => memory.kind === "security_scope") ?? null,
+    ...resolveSecurityScopeGate(memoryHits),
     emit: (event) => emit(input.store, event),
     emitEvidence: (event) => emitEvidence(input.store, event),
   });
@@ -1871,4 +1910,136 @@ function buildFinalSummary(checks: Array<{ status: string; command: string }>): 
 
 function readString(value: unknown, fallback: string): string {
   return typeof value === "string" ? value : fallback;
+}
+
+/**
+ * Recall persisted conversation history for a session and deserialize it back
+ * into ChatMessage form so the agent loop can seed its model context with
+ * real multi-turn history (user/assistant/tool exchanges from prior turns).
+ *
+ * The token budget keeps the recall bounded; system messages are always
+ * retained without consuming budget. Storage stores content as opaque JSON,
+ * so we parse it back into the ChatContentBlock shape here.
+ */
+async function recallChatSeedMessages(
+  store: SqliteEgoStore,
+  sessionId: string,
+): Promise<ChatMessage[]> {
+  const tokenBudget = 16_000;
+  const stored = await store.recallForPrompt(sessionId, tokenBudget);
+  return stored.map((row) => {
+    const content = parseChatContent(row.contentJson);
+    const message: ChatMessage = { role: row.role, content };
+    if (row.toolCallId) {
+      message.toolCallId = row.toolCallId;
+    }
+    if (row.toolName) {
+      message.name = row.toolName;
+    }
+    return message;
+  });
+}
+
+/**
+ * Persist a chat message produced inside the agent loop. Content is serialized
+ * to JSON so storage remains content-agnostic. Fire-and-forget: a failed
+ * write must not break the conversation flow.
+ */
+async function persistChatMessage(
+  store: SqliteEgoStore,
+  sessionId: string,
+  runId: string,
+  message: ChatMessage,
+): Promise<void> {
+  try {
+    await store.appendMessage({
+      sessionId,
+      runId,
+      role: message.role,
+      contentJson: serializeChatContent(message.content),
+      tokenCount: estimateMessageTokens(message),
+      ...(message.toolCallId ? { toolCallId: message.toolCallId } : {}),
+      ...(message.name ? { toolName: message.name } : {}),
+    });
+  } catch {
+    // Persistence is best-effort: a storage failure should not abort the run.
+  }
+}
+
+function serializeChatContent(content: ChatMessage["content"]): string {
+  try {
+    return JSON.stringify(content);
+  } catch {
+    return String(content);
+  }
+}
+
+function parseChatContent(contentJson: string): ChatMessage["content"] {
+  try {
+    const parsed = JSON.parse(contentJson) as unknown;
+    if (typeof parsed === "string") {
+      return parsed;
+    }
+    // Block arrays and single blocks round-trip as their JSON form; the
+    // ChatContentBlock union is structurally compatible with the parsed shape.
+    return parsed as ChatMessage["content"];
+  } catch {
+    return contentJson;
+  }
+}
+
+/**
+ * Extract a SecurityScopeGate from the active security_scope memory record,
+ * if any. The memory layer stores the scope as a serialized JSON object in
+ * its content/rawContent field. Returns an empty object when no scope is
+ * configured so the spread is a no-op (loop receives no securityScope).
+ */
+function resolveSecurityScopeGate(
+  memories: RuntimeMemoryRecord[],
+): { securityScope?: SecurityScopeGate } {
+  const record = memories.find((memory) => memory.kind === "security_scope");
+  if (!record) {
+    return {};
+  }
+  const candidate = record.rawContent ?? record.content;
+  const parsed = parseSecurityScope(candidate);
+  if (!parsed) {
+    return {};
+  }
+  return { securityScope: parsed };
+}
+
+function parseSecurityScope(value: unknown): SecurityScopeGate | undefined {
+  let object: unknown = value;
+  if (typeof value === "string") {
+    try {
+      object = JSON.parse(value);
+    } catch {
+      return undefined;
+    }
+  }
+  if (!object || typeof object !== "object" || Array.isArray(object)) {
+    return undefined;
+  }
+  const record = object as Record<string, unknown>;
+  const allowedActions = Array.isArray(record.allowedActions)
+    ? record.allowedActions.filter((item): item is string => typeof item === "string")
+    : [];
+  const forbiddenActions = Array.isArray(record.forbiddenActions)
+    ? record.forbiddenActions.filter((item): item is string => typeof item === "string")
+    : [];
+  const riskLevel = record.riskLevel;
+  const expiresAt = record.expiresAt;
+  if (typeof expiresAt !== "string") {
+    return undefined;
+  }
+  return {
+    allowedActions,
+    forbiddenActions,
+    riskLevel:
+      riskLevel === "low" || riskLevel === "medium" || riskLevel === "high" || riskLevel === "critical"
+        ? riskLevel
+        : "low",
+    expiresAt,
+  };
 }

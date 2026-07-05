@@ -1,4 +1,4 @@
-import type { PermissionLevel } from "@ego-graph/agent-harness";
+import type { PermissionLevel, TerminalAgentRunState } from "@ego-graph/agent-harness";
 
 export type CommandCategory =
   | "Session"
@@ -26,6 +26,16 @@ export type CommandPaletteState = {
   query: string;
   selectedIndex: number;
   matches: CommandManifest[];
+};
+
+export type CommandAvailability = {
+  available: boolean;
+  reason?: string;
+};
+
+export type CommandAvailabilityContext = {
+  activeRun?:
+    Pick<TerminalAgentRunState, "status" | "phase" | "plan" | "diff" | "checks"> | undefined;
 };
 
 export const commandPalette: CommandManifest[] = [
@@ -189,6 +199,54 @@ export function closeCommandPalette(state: CommandPaletteState): CommandPaletteS
 
 export function selectCommandPalette(state: CommandPaletteState): string | undefined {
   return state.matches[Math.min(state.selectedIndex, Math.max(0, state.matches.length - 1))]?.name;
+}
+
+export function getCommandAvailability(
+  command: CommandManifest,
+  context: CommandAvailabilityContext,
+): CommandAvailability {
+  const run = context.activeRun;
+  if (command.requiresActiveRun && !run) {
+    return { available: false, reason: "needs an active run" };
+  }
+
+  if (command.name === "/plan approve" || command.name === "/plan reject") {
+    return run?.status === "plan_pending"
+      ? { available: true }
+      : {
+          available: false,
+          reason: "current run is not waiting for plan approval",
+        };
+  }
+
+  if (command.name === "/patch approve" || command.name === "/patch reject") {
+    return run?.status === "patch_pending"
+      ? { available: true }
+      : {
+          available: false,
+          reason: "current run is not waiting for patch approval",
+        };
+  }
+
+  if (command.name === "/diff" || command.name.startsWith("/diff ")) {
+    return run?.diff
+      ? { available: true }
+      : { available: false, reason: "current run has no diff yet" };
+  }
+
+  if (command.name === "/checks") {
+    return run?.checks && run.checks.length > 0
+      ? { available: true }
+      : { available: false, reason: "current run has no checks yet" };
+  }
+
+  if (command.name === "/plan") {
+    return run?.plan && run.plan.length > 0
+      ? { available: true }
+      : { available: false, reason: "current run has no plan yet" };
+  }
+
+  return { available: true };
 }
 
 export function resolvePaletteInput(input: string, matches: string[], selectedIndex = 0): string {

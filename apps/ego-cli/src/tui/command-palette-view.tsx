@@ -1,16 +1,21 @@
 import { Box, Text } from "ink";
+import React from "react";
 import type { ReactElement } from "react";
-import type { CommandPaletteState } from "./command-palette.js";
+import {
+  getCommandAvailability,
+  type CommandAvailabilityContext,
+  type CommandPaletteState,
+} from "./command-palette.js";
 import { truncateDisplay } from "./cjk.js";
 
 export function CommandPaletteView({
   state,
   width,
-  activeRunId,
+  activeRun,
 }: {
   state: CommandPaletteState;
   width: number;
-  activeRunId?: string;
+  activeRun?: CommandAvailabilityContext["activeRun"];
 }): ReactElement | null {
   if (!state.open) {
     return null;
@@ -30,7 +35,8 @@ export function CommandPaletteView({
       </Text>
       {state.matches.length === 0 ? <Text color="gray">No command matched.</Text> : null}
       {state.matches.slice(0, 10).map((command, index) => {
-        const unavailable = command.requiresActiveRun && !activeRunId;
+        const availability = getCommandAvailability(command, { activeRun });
+        const unavailable = !availability.available;
         return (
           <Text
             key={command.name}
@@ -38,8 +44,12 @@ export function CommandPaletteView({
           >
             {index === state.selectedIndex ? "❯ " : "  "}
             {truncateDisplay(command.name, 22)} {truncateDisplay(command.category, 12)}{" "}
-            {truncateDisplay(command.description, Math.max(10, panelWidth - 46))}
-            {unavailable ? " unavailable" : ""}
+            {truncateDisplay(
+              unavailable
+                ? `${command.description} · ${availability.reason ?? "unavailable"}`
+                : command.description,
+              Math.max(10, panelWidth - 46),
+            )}
           </Text>
         );
       })}

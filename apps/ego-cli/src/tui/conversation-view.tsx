@@ -1,5 +1,6 @@
 import type { AgentRunEvent } from "@ego-graph/agent-harness";
 import { Box, Text } from "ink";
+import React from "react";
 import type { ReactElement } from "react";
 import { renderConversationLines } from "./tui-events.js";
 

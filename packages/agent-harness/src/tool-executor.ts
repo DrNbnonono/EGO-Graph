@@ -16,6 +16,25 @@ export type ToolCallProtocol = {
   requiresApproval: boolean;
   sandboxProfile: SandboxProfile;
   timeoutMs: number;
+  /**
+   * Security action this tool performs (e.g. "inspect", "exploit", "report").
+   * High-risk and network-scoped tools are gated against the active
+   * SecurityScope's allowedActions/forbiddenActions before execution.
+   */
+  requiredAction?: string;
+};
+
+/**
+ * Structural shape compatible with @ego-graph/security-tools SecurityScope.
+ * Declared here as a plain interface so tool-executor does not need a hard
+ * runtime dependency on the security-tools package; any object with these
+ * fields (including a real SecurityScope) is accepted.
+ */
+export type SecurityScopeGate = {
+  allowedActions: string[];
+  forbiddenActions: string[];
+  riskLevel: "low" | "medium" | "high" | "critical";
+  expiresAt: string;
 };
 
 export type ToolExecutorEvent = {
@@ -47,6 +66,8 @@ export type ExecuteToolCallInput<
   workspaceRoot: string;
   permissionLevel: PermissionLevel;
   approvalGranted?: boolean;
+  /** When provided, high-risk/network tools are gated against this scope. */
+  securityScope?: SecurityScopeGate;
   runId: string;
   sessionId: string;
   maxOutputChars?: number;
@@ -94,6 +115,18 @@ export async function executeToolCall<
     return failResult(input, call, "tool.blocked", "Tool blocked by permission policy.", {
       ...basePayload,
       recoveryHint: buildPermissionRecoveryHint(call.permissionRequired),
+    });
+  }
+
+  // Security scope gate: high-risk or network-scoped tools must clear an
+  // explicit authorization scope. Without this gate, "security-active"
+  // permission alone would be enough to run intrusive tools, which defeats
+  // the contest requirement of evidence-grounded, scope-bounded autonomy.
+  const scopeCheck = evaluateSecurityScopeGate(input, call);
+  if (scopeCheck) {
+    return failResult(input, call, "tool.blocked", scopeCheck.message, {
+      ...basePayload,
+      recoveryHint: scopeCheck.recoveryHint,
     });
   }
 
@@ -237,4 +270,91 @@ function buildToolRecoveryHint(toolName: string, reason: "failed" | "timeout"): 
     return `The ${toolName} call exceeded its timeout; narrow the input or raise timeoutMs for an approved run.`;
   }
   return `Inspect ${toolName} output in debug details and retry after fixing the cause.`;
+}
+
+/**
+ * Decide whether a tool must be gated by a SecurityScope, and if so whether
+ * the supplied scope permits it.
+ *
+ * Returns undefined when the tool is not security-gated (low/medium risk on
+ * local files), otherwise returns a block descriptor with a recovery hint.
+ *
+ * The requiredAction is taken from the tool's declared `requiredAction` when
+ * present (security tools set this), falling back to a name-based inference
+ * ("security." prefix tools default to "inspect" unless their name suggests
+ * otherwise). This keeps the gate useful without forcing every ToolDefinition
+ * to declare a security action.
+ */
+function evaluateSecurityScopeGate(
+  input: ExecuteToolCallInput<ZodTypeAny, ZodTypeAny>,
+  call: ToolCallProtocol,
+): { message: string; recoveryHint: string } | undefined {
+  const tool = input.tool;
+  const isHighRisk = call.riskLevel === "high" || tool.permission.risk === "high";
+  const isNetwork = tool.permission.scope === "network";
+  if (!isHighRisk && !isNetwork) {
+    return undefined;
+  }
+
+  const scope = input.securityScope;
+  if (!scope) {
+    return {
+      message: "Security task requires an explicit authorization scope before this tool runs.",
+      recoveryHint:
+        "Define a SecurityScope (target, allowedActions, riskLevel, expiresAt) and re-run within scope.",
+    };
+  }
+
+  const expiry = Date.parse(scope.expiresAt);
+  if (Number.isNaN(expiry) || expiry < Date.now()) {
+    return {
+      message: "SecurityScope has expired; refuse or renew the scope before retrying.",
+      recoveryHint: "Re-issue a SecurityScope with a future expiresAt.",
+    };
+  }
+
+  const requiredAction = inferRequiredSecurityAction(tool, call);
+  if (scope.forbiddenActions.includes(requiredAction)) {
+    return {
+      message: `${requiredAction} is forbidden by the active SecurityScope.`,
+      recoveryHint: `Remove ${requiredAction} from forbiddenActions or choose a different tool.`,
+    };
+  }
+  if (!scope.allowedActions.includes(requiredAction)) {
+    return {
+      message: `${requiredAction} is not in the SecurityScope allowedActions list.`,
+      recoveryHint: `Add ${requiredAction} to allowedActions if the task truly requires it.`,
+    };
+  }
+
+  const scopeRiskRank = securityRiskRank(scope.riskLevel);
+  const toolRiskRank =
+    call.riskLevel === "high" ? 3 : call.riskLevel === "medium" ? 2 : 1;
+  if (toolRiskRank > scopeRiskRank) {
+    return {
+      message: `Tool risk (${call.riskLevel}) exceeds SecurityScope risk level (${scope.riskLevel}).`,
+      recoveryHint: "Raise the scope risk level only if the engagement authorizes it.",
+    };
+  }
+
+  return undefined;
+}
+
+function inferRequiredSecurityAction(
+  tool: ToolDefinition<ZodTypeAny, ZodTypeAny>,
+  call: ToolCallProtocol,
+): string {
+  if (call.requiredAction) {
+    return call.requiredAction;
+  }
+  const name = tool.name.toLowerCase();
+  if (name.includes("exploit") || name.includes("attack")) return "exploit";
+  if (name.includes("scan") || name.includes("fingerprint")) return "fingerprint";
+  if (name.includes("report")) return "report";
+  if (name.includes("evidence")) return "evidence.save";
+  return "inspect";
+}
+
+function securityRiskRank(risk: SecurityScopeGate["riskLevel"]): number {
+  return { low: 1, medium: 2, high: 3, critical: 4 }[risk];
 }

@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { commandPalette } from "../../src/tui/command-palette.js";
 import { createWelcomeModel } from "../../src/tui/welcome-screen.js";
 
+const mojibakePattern = /鈥|鈻|鏆|杩|浼|娲|璇|缃|鍚|瀹|鍙|鎶|�/u;
+
 describe("welcome screen model", () => {
-  it("matches the concept startup panel content", () => {
+  it("uses real commands, clean copy, and a recognizable lotus mark", () => {
     const model = createWelcomeModel({
       modelLabel: "lotus-sec-7b",
       permissionLevel: "read-only",
@@ -11,33 +14,42 @@ describe("welcome screen model", () => {
       memoryLabel: "8KB / 2GB (0%)",
       toolCount: 12,
       startupLabel: "0.8s",
-      lastSessionLabel: "2025-05-18 14:32",
+      lastSessionLabel: "2026-07-06 14:32",
     });
+    const tips = model.tips.map((tip) => tip.command);
+    const allText = [
+      model.title,
+      model.identityLine,
+      model.workspaceLine,
+      model.logo.join("\n"),
+      model.statusRows.flat().join("\n"),
+      model.tips.map((tip) => `${tip.command} ${tip.description}`).join("\n"),
+      model.whatsNew.join("\n"),
+    ].join("\n");
 
-    expect(model.title).toBe("EGO-Graph v0.1.0");
-    expect(model.logo.join("\n")).toContain("█████");
-    expect(model.logo.join("\n")).not.toContain("\\");
-    expect(model.identityLine).toBe("lotus-sec-7b • API Usage Billing • EGO-Graph Organization");
-    expect(model.workspaceLine).toContain("Workspace:");
-    expect(model.tips.map((tip) => tip.command)).toEqual([
-      "/init",
-      "/scan",
-      "/analyze",
-      "/report",
-      "/tools",
-      "/help",
-    ]);
+    expect(tips).toEqual(["/history", "/model", "/permissions", "/mcp", "/memory", "/help"]);
+    expect(tips.every((tip) => commandPalette.some((command) => command.name === tip))).toBe(true);
+    expect(allText).not.toMatch(mojibakePattern);
+    expect(model.identityLine).toBe("lotus-sec-7b | API Usage Billing | EGO-Graph Organization");
+    expect(model.logo).toHaveLength(8);
+    expect(model.logo.join("\n")).toContain("PURPLE LOTUS");
+    expect(model.logo.join("\n")).toContain("EGO-Graph v0.1.0 TUI");
+    expect(model.logo.join("\n")).toContain("████");
     expect(model.statusRows.flat()).toEqual(
       expect.arrayContaining([
-        "运行模式: agent",
-        "内存使用: 8KB / 2GB (0%)",
-        "会话配置: default",
-        "活动策略: policy v1.0",
-        "证据模式: evidence-grounded",
-        "网络状态: connected",
-        "启动时间: 0.8s",
+        "Mode: agent",
+        "Memory: 8KB / 2GB (0%)",
+        "Config: default",
+        "Policy: read-only",
+        "Evidence: grounded",
+        "Network: connected",
+        "Startup: 0.8s",
       ]),
     );
-    expect(model.whatsNew).toContain("报告生成流程优化");
+    expect(model.whatsNew).toEqual([
+      "Safe approval shortcuts",
+      "Focusable diff review",
+      "Restorable prompt drafts",
+    ]);
   });
 });

@@ -4,6 +4,13 @@ import { dirname } from "node:path";
 import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
 import { trajectoryEventSchema, type TrajectoryEvent } from "@ego-graph/core";
 import type { RunIndexRecord } from "./run-index-store.js";
+import type {
+  AppendMessageInput,
+  ConversationStore,
+  ListMessagesOptions,
+  StoredMessage,
+} from "./conversation-store.js";
+import { createStoredMessageId } from "./conversation-store.js";
 
 export type SqliteEvidenceRecord = {
   id: number;
@@ -248,7 +255,7 @@ type AgentPlanRow = {
 
 type DatabaseSyncConstructor = new (path: string) => DatabaseSyncType;
 
-export class SqliteEgoStore {
+export class SqliteEgoStore implements ConversationStore {
   private readonly db: DatabaseSyncType;
 
   constructor(private readonly path: string) {
@@ -793,6 +800,108 @@ export class SqliteEgoStore {
       .run(status, runId ?? null, updatedAt, planId);
   }
 
+  async appendMessage(input: AppendMessageInput): Promise<StoredMessage> {
+    const id = input.id ?? createStoredMessageId();
+    const createdAt = input.createdAt ?? new Date().toISOString();
+    this.db
+      .prepare(
+        `insert into conversation_messages
+          (id, session_id, run_id, role, content_json, tool_call_id, tool_name, token_count, created_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        input.sessionId,
+        input.runId ?? null,
+        input.role,
+        input.contentJson,
+        input.toolCallId ?? null,
+        input.toolName ?? null,
+        input.tokenCount ?? null,
+        createdAt,
+      );
+    return {
+      id,
+      sessionId: input.sessionId,
+      ...(input.runId ? { runId: input.runId } : {}),
+      role: input.role,
+      contentJson: input.contentJson,
+      ...(input.toolCallId ? { toolCallId: input.toolCallId } : {}),
+      ...(input.toolName ? { toolName: input.toolName } : {}),
+      ...(input.tokenCount !== undefined ? { tokenCount: input.tokenCount } : {}),
+      createdAt,
+    };
+  }
+
+  async listMessages(
+    sessionId: string,
+    options?: ListMessagesOptions,
+  ): Promise<StoredMessage[]> {
+    const limit = options?.limit ?? 200;
+    if (options?.beforeId) {
+      const boundary = this.db
+        .prepare("select created_at from conversation_messages where id = ?")
+        .get(options.beforeId) as { created_at: string } | undefined;
+      if (!boundary) {
+        return [];
+      }
+      const rows = this.db
+        .prepare(
+          `select * from conversation_messages
+           where session_id = ? and created_at < ?
+           order by created_at desc, id desc limit ?`,
+        )
+        .all(sessionId, boundary.created_at, limit) as ConversationMessageRow[];
+      return rows.reverse().map(rowToStoredMessage);
+    }
+    const rows = this.db
+      .prepare(
+        `select * from conversation_messages
+         where session_id = ?
+         order by created_at desc, id desc limit ?`,
+      )
+      .all(sessionId, limit) as ConversationMessageRow[];
+    return rows.reverse().map(rowToStoredMessage);
+  }
+
+  async recallForPrompt(sessionId: string, tokenBudget: number): Promise<StoredMessage[]> {
+    if (tokenBudget <= 0) {
+      return [];
+    }
+    const rows = this.db
+      .prepare(
+        `select * from conversation_messages
+         where session_id = ?
+         order by created_at desc, id desc`,
+      )
+      .all(sessionId) as ConversationMessageRow[];
+
+    const selected: ConversationMessageRow[] = rows.filter((row) => row.role === "system");
+    let used = 0;
+    for (const row of rows) {
+      if (row.role === "system") {
+        continue;
+      }
+      const cost = row.token_count ?? estimateRowCountTokens(row.content_json);
+      if (used + cost > tokenBudget) {
+        break;
+      }
+      used += cost;
+      selected.push(row);
+    }
+    return selected
+      .sort((left, right) =>
+        left.created_at.localeCompare(right.created_at) || left.id.localeCompare(right.id),
+      )
+      .map(rowToStoredMessage);
+  }
+
+  async clearSession(sessionId: string): Promise<void> {
+    this.db
+      .prepare("delete from conversation_messages where session_id = ?")
+      .run(sessionId);
+  }
+
   close(): void {
     this.db.close();
   }
@@ -962,6 +1071,20 @@ export class SqliteEgoStore {
 
       create index if not exists idx_agent_plans_status on agent_plans(status, updated_at);
       create index if not exists idx_agent_plans_session on agent_plans(session_id, updated_at);
+
+      create table if not exists conversation_messages (
+        id text primary key,
+        session_id text not null,
+        run_id text,
+        role text not null check (role in ('system', 'user', 'assistant', 'tool')),
+        content_json text not null,
+        tool_call_id text,
+        tool_name text,
+        token_count integer,
+        created_at text not null
+      );
+
+      create index if not exists idx_messages_session on conversation_messages(session_id, created_at);
     `);
     this.ensureAgentRunsStatusConstraint();
     this.ensureApprovalsKindConstraint();
@@ -1240,4 +1363,39 @@ function agentPlanRowToRecord(row: AgentPlanRow): AgentPlanRecord {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+type ConversationMessageRow = {
+  id: string;
+  session_id: string;
+  run_id: string | null;
+  role: "system" | "user" | "assistant" | "tool";
+  content_json: string;
+  tool_call_id: string | null;
+  tool_name: string | null;
+  token_count: number | null;
+  created_at: string;
+};
+
+function rowToStoredMessage(row: ConversationMessageRow): StoredMessage {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    ...(row.run_id ? { runId: row.run_id } : {}),
+    role: row.role,
+    contentJson: row.content_json,
+    ...(row.tool_call_id ? { toolCallId: row.tool_call_id } : {}),
+    ...(row.tool_name ? { toolName: row.tool_name } : {}),
+    ...(row.token_count !== null ? { tokenCount: row.token_count } : {}),
+    createdAt: row.created_at,
+  };
+}
+
+/**
+ * Cheap fallback token estimate when a row was written without token_count.
+ * Uses byte/4 over the raw JSON string. The agent layer is expected to pass
+ * accurate token_count at write time; this only matters for legacy rows.
+ */
+function estimateRowCountTokens(contentJson: string): number {
+  return Math.max(1, Math.ceil(Buffer.byteLength(contentJson, "utf8") / 4));
 }

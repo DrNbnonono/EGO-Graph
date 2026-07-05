@@ -5,7 +5,7 @@ import type {
 } from "@ego-graph/tools";
 import { type ZodTypeAny, type z } from "zod";
 import type { AgentRunEvent, AgentRunEventType, PermissionLevel } from "./session.js";
-import { createToolCall, executeToolCall } from "./tool-executor.js";
+import { createToolCall, executeToolCall, type SecurityScopeGate } from "./tool-executor.js";
 
 export type HarnessToolEventInput = {
   type: AgentRunEventType;
@@ -31,6 +31,8 @@ export type ExecuteHarnessToolStepInput = {
   permissionLevel: PermissionLevel;
   toolName: string;
   toolInput: Record<string, unknown>;
+  /** When set, high-risk/network tools are gated against this scope. */
+  securityScope?: SecurityScopeGate;
   emit(event: HarnessToolEventInput): Promise<AgentRunEvent>;
   emitEvidence(event: HarnessEvidenceEventInput): Promise<AgentRunEvent>;
 };
@@ -64,6 +66,7 @@ export async function* executeHarnessToolStep(
     workspaceRoot: input.workspaceRoot,
     permissionLevel: input.permissionLevel,
     approvalGranted: !toolCall.requiresApproval || input.permissionLevel === "security-active",
+    ...(input.securityScope ? { securityScope: input.securityScope } : {}),
     runId: input.runId,
     sessionId: input.sessionId,
   });
