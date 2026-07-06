@@ -12,6 +12,8 @@ Common commands:
 pnpm install
 pnpm build
 pnpm test
+pnpm typecheck
+pnpm eval:smoke
 pnpm lint
 pnpm smoke
 pnpm ego -- --help
@@ -38,6 +40,11 @@ Agent Kernel development checkpoints:
 - Keep every file write behind workspace policy, diff preview, Patch approval, checks, and audit.
 - Emit Hermes events for meaningful runtime decisions.
 - Register new tools through declared permissions and tests for both allowed and denied paths.
+- Keep TUI/API run-control surfaces aligned: `/cancel`, `/btw`, `/policy`, and the matching
+  `/agent/harness/*` API routes.
+- New tool execution behavior should have a failing test first, then implementation, then a focused
+  green test run.
+- Do not update docs with "all tests pass" unless the full command was freshly run in this branch.
 
 Enable the MiniMax M3 planner locally:
 

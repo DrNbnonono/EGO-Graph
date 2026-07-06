@@ -5,6 +5,11 @@ import { promisify } from "node:util";
 import { z } from "zod";
 import type { ToolDefinition } from "./tool-definition.js";
 import { ToolRegistry } from "./tool-registry.js";
+import {
+  createLspDefinitionTool,
+  createLspDiagnosticsTool,
+  createLspReferencesTool,
+} from "./lsp-tools.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -32,16 +37,22 @@ const readOutputSchema = z.object({
 
 const grepInputSchema = z.object({
   query: z.string().min(1),
+  regex: z.boolean().optional().describe("Treat the query as a regular expression."),
+  ignoreCase: z.boolean().optional().describe("Case-insensitive matching."),
+  contextBefore: z.number().int().min(0).max(5).optional().describe("Lines of context before each match."),
+  contextAfter: z.number().int().min(0).max(5).optional().describe("Lines of context after each match."),
   limit: z.number().int().min(1).max(100).optional(),
 });
 
 const grepOutputSchema = z.object({
   query: z.string(),
+  regex: z.boolean(),
   matches: z.array(
     z.object({
       path: z.string(),
       line: z.number().int().positive(),
       text: z.string(),
+      context: z.string().optional().describe("Snippet spanning before+match+after lines, if contextBefore or contextAfter was requested."),
     }),
   ),
   findings: z.array(z.string()),
@@ -124,6 +135,11 @@ export function createTerminalAgentToolRegistry(): TerminalAgentToolRegistry {
   registry.register(createEvidenceWriteTool());
   registry.register(createSecurityManifestAuditTool());
   registry.register(createSecuritySemgrepTool());
+  registry.register(createWorkspaceGlobTool());
+  registry.register(createShellWriteTool());
+  registry.register(createLspDiagnosticsTool());
+  registry.register(createLspDefinitionTool());
+  registry.register(createLspReferencesTool());
   return registry;
 }
 
@@ -205,16 +221,27 @@ export function createWorkspaceGrepTool(): ToolDefinition<
 > {
   return {
     name: "workspace.grep",
-    description: "Search workspace text files for a literal query.",
+    description:
+      "Search workspace text files. Supports literal or regex queries with optional " +
+      "case-insensitive matching and context lines (before/after).",
     inputSchema: grepInputSchema,
     outputSchema: grepOutputSchema,
     permission: { scope: "file", risk: "low", requiresSandbox: false },
     riskLevel: "low",
     sandboxProfile: "none",
     async execute(input, context) {
-      const matches = await grepWorkspace(context.workspaceRoot, input.query, input.limit ?? 30);
+      const matches = await grepWorkspace({
+        workspaceRoot: context.workspaceRoot,
+        query: input.query,
+        regex: input.regex ?? false,
+        ignoreCase: input.ignoreCase ?? false,
+        contextBefore: input.contextBefore ?? 0,
+        contextAfter: input.contextAfter ?? 0,
+        limit: input.limit ?? 30,
+      });
       return {
         query: input.query,
+        regex: input.regex ?? false,
         matches,
         findings:
           matches.length > 0
@@ -462,6 +489,127 @@ export function createSecuritySemgrepTool(): ToolDefinition<
   };
 }
 
+const globInputSchema = z.object({
+  pattern: z.string().min(1).describe("Glob pattern, e.g. '**/*.ts' or 'src/*.test.ts'."),
+  limit: z.number().int().min(1).max(500).optional(),
+});
+
+const globOutputSchema = z.object({
+  pattern: z.string(),
+  files: z.array(z.string()),
+  findings: z.array(z.string()),
+});
+
+export function createWorkspaceGlobTool(): ToolDefinition<
+  typeof globInputSchema,
+  typeof globOutputSchema
+> {
+  return {
+    name: "workspace.glob",
+    description:
+      "Find workspace files matching a glob pattern (supports **, *, ?). Fast file discovery for targeted context gathering.",
+    inputSchema: globInputSchema,
+    outputSchema: globOutputSchema,
+    permission: { scope: "file", risk: "low", requiresSandbox: false },
+    riskLevel: "low",
+    sandboxProfile: "none",
+    async execute(input, context) {
+      const root = resolve(context.workspaceRoot);
+      const candidates = await listWorkspaceFiles(root, 800, 8);
+      const files = candidates.filter((file) => matchGlob(file, input.pattern));
+      const result = files.slice(0, input.limit ?? 80);
+      return {
+        pattern: input.pattern,
+        files: result,
+        findings:
+          result.length > 0
+            ? [`Found ${result.length} file(s) matching "${input.pattern}".`]
+            : [`No files matched "${input.pattern}".`],
+      };
+    },
+    evidenceMapper(output) {
+      return output.findings.map((summary) => ({
+        summary,
+        kind: "artifact",
+        confidence: 0.8,
+        raw: { pattern: output.pattern, files: output.files.slice(0, 20) },
+      }));
+    },
+  };
+}
+
+const shellWriteInputSchema = z.object({
+  command: z.string().min(1).describe("Shell command with arguments, e.g. 'pnpm build' or 'git status'."),
+  timeoutMs: z.number().int().min(250).max(120_000).optional(),
+});
+
+const shellWriteOutputSchema = z.object({
+  command: z.string(),
+  status: z.enum(["passed", "failed"]),
+  exitCode: z.number().int(),
+  stdout: z.string(),
+  stderr: z.string(),
+  findings: z.array(z.string()),
+});
+
+export function createShellWriteTool(): ToolDefinition<
+  typeof shellWriteInputSchema,
+  typeof shellWriteOutputSchema
+> {
+  return {
+    name: "shell.write",
+    description:
+      "Run an arbitrary shell command inside the workspace. Gated behind security-active permission and approval.",
+    inputSchema: shellWriteInputSchema,
+    outputSchema: shellWriteOutputSchema,
+    permission: { scope: "file", risk: "high", requiresSandbox: false },
+    riskLevel: "high",
+    sandboxProfile: "process",
+    timeoutMs: 120_000,
+    requiresApproval: true,
+    async execute(input, context) {
+      const rendered = input.command;
+      try {
+        const result = await execFileAsync(
+          process.platform === "win32" ? "cmd.exe" : "/bin/sh",
+          process.platform === "win32" ? ["/c", input.command] : ["-c", input.command],
+          {
+            cwd: context.workspaceRoot,
+            maxBuffer: 4_000_000,
+            timeout: input.timeoutMs ?? 30_000,
+          },
+        );
+        return {
+          command: rendered,
+          status: "passed",
+          exitCode: 0,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          findings: [`Command passed: ${rendered}`],
+        };
+      } catch (error) {
+        const failed = error as { stdout?: string; stderr?: string; exitCode?: number; code?: number };
+        return {
+          command: rendered,
+          status: "failed",
+          exitCode: failed.exitCode ?? failed.code ?? 1,
+          stdout: failed.stdout ?? "",
+          stderr: failed.stderr ?? String(error),
+          findings: [`Command failed: ${rendered}`],
+        };
+      }
+    },
+    evidenceMapper(output) {
+      return output.findings.map((summary) => ({
+        summary,
+        kind: "artifact",
+        confidence: output.status === "passed" ? 0.85 : 0.5,
+        raw: { command: output.command, exitCode: output.exitCode },
+      }));
+    },
+  };
+}
+
 const ignoredNames = new Set([
   ".ego",
   ".git",
@@ -509,27 +657,48 @@ async function walk(
   }
 }
 
-async function grepWorkspace(
-  workspaceRoot: string,
-  query: string,
-  limit: number,
-): Promise<Array<{ path: string; line: number; text: string }>> {
-  const root = resolve(workspaceRoot);
+type GrepMatch = { path: string; line: number; text: string; context?: string };
+
+async function grepWorkspace(input: {
+  workspaceRoot: string;
+  query: string;
+  regex: boolean;
+  ignoreCase: boolean;
+  contextBefore: number;
+  contextAfter: number;
+  limit: number;
+}): Promise<GrepMatch[]> {
+  const root = resolve(input.workspaceRoot);
   const files = await listWorkspaceFiles(root, 400, 6);
-  const matches: Array<{ path: string; line: number; text: string }> = [];
+  const matches: GrepMatch[] = [];
+  let pattern: RegExp | string = input.query;
+  if (input.regex) {
+    pattern = new RegExp(input.query, input.ignoreCase ? "gi" : "g");
+  } else if (input.ignoreCase) {
+    pattern = input.query.toLowerCase();
+  }
+  const hasContext = input.contextBefore > 0 || input.contextAfter > 0;
   for (const file of files) {
-    if (matches.length >= limit || !isLikelyTextFile(file)) {
+    if (matches.length >= input.limit || !isLikelyTextFile(file)) {
       continue;
     }
     try {
       const content = await readFile(resolveWorkspacePath(root, file), "utf8");
       const lines = content.split(/\r?\n/u);
       for (const [index, line] of lines.entries()) {
-        if (line.includes(query)) {
-          matches.push({ path: file, line: index + 1, text: line.slice(0, 300) });
-          if (matches.length >= limit) {
-            break;
-          }
+        const matched = isMatch(line, pattern, input.ignoreCase, input.regex);
+        if (!matched) {
+          continue;
+        }
+        const entry: GrepMatch = { path: file, line: index + 1, text: line.slice(0, 300) };
+        if (hasContext) {
+          const start = Math.max(0, index - input.contextBefore);
+          const end = Math.min(lines.length, index + 1 + input.contextAfter);
+          entry.context = lines.slice(start, end).join("\n").slice(0, 600);
+        }
+        matches.push(entry);
+        if (matches.length >= input.limit) {
+          break;
         }
       }
     } catch {
@@ -537,6 +706,16 @@ async function grepWorkspace(
     }
   }
   return matches;
+}
+
+function isMatch(line: string, pattern: RegExp | string, ignoreCase: boolean, isRegex: boolean): boolean {
+  if (isRegex) {
+    (pattern as RegExp).lastIndex = 0;
+    return (pattern as RegExp).test(line);
+  }
+  return ignoreCase
+    ? line.toLowerCase().includes(pattern as string)
+    : line.includes(pattern as string);
 }
 
 function assertReadonlyCommand(command: string, args: string[]): void {
@@ -749,4 +928,27 @@ function summarizeSemgrepResults(results: Array<Record<string, unknown>>): strin
           : "unknown";
     return `${checkId} in ${path}`;
   });
+}
+
+/**
+ * Simple glob pattern matching for workspace.glob. Supports:
+ * - **  for multi-directory match
+ * - *   for single-segment match
+ * - ?   for single-character match
+ */
+function matchGlob(filePath: string, pattern: string): boolean {
+  // Normalize to forward slashes
+  const normalizedPath = filePath.replace(/\\/g, "/");
+  const normalizedPattern = pattern.replace(/\\/g, "/");
+
+  // Convert glob pattern to regex
+  const regexStr = normalizedPattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&") // Escape except glob chars
+    .replace(/\*\*\/?/g, "___GLOBSTAR___") // Temporary placeholder for **
+    .replace(/\*/g, "[^/]*") // * -> match anything except /
+    .replace(/\?/g, "[^/]") // ? -> match single non-slash char
+    .replace(/___GLOBSTAR___/g, ".*") // ** -> match anything including /
+    .replace(/\//g, "\\/"); // Literal / in path
+
+  return new RegExp(`^${regexStr}$`).test(normalizedPath);
 }

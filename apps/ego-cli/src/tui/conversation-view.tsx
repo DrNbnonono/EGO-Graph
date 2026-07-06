@@ -1,7 +1,6 @@
+/** @jsxImportSource @opentui/solid */
 import type { AgentRunEvent } from "@ego-graph/agent-harness";
-import { Box, Text } from "ink";
-import React from "react";
-import type { ReactElement } from "react";
+import type { JSX } from "solid-js";
 import { renderConversationLines } from "./tui-events.js";
 
 export type ConversationWindowInput = {
@@ -77,7 +76,7 @@ export function ConversationView({
   debug: boolean;
   thinkingExpanded: boolean;
   replayMode: boolean;
-}): ReactElement {
+}): JSX.Element {
   const window = createConversationWindow({
     events,
     width,
@@ -89,23 +88,17 @@ export function ConversationView({
   });
 
   return (
-    <Box flexDirection="column" paddingX={1} height={height}>
-      {window.visibleLines.map((line, index) =>
-        isUserPromptLine(line) ? (
-          <Text key={`${window.scrollOffset}-${index}`} backgroundColor="black" color="white">
-            {line}
-          </Text>
-        ) : (
-          <Text key={`${window.scrollOffset}-${index}`}>{line}</Text>
-        ),
+    <box flexDirection="column" paddingLeft={1} paddingRight={1} height={height}>
+      {window.visibleLines.map((line) =>
+        isUserPromptLine(line) ? <text bg="black">{line || " "}</text> : <text>{line || " "}</text>,
       )}
       {window.maxScroll > 0 ? (
-        <Text color="gray">
+        <text>
           {window.scrollOffset > 0
             ? `Viewing earlier output ${window.scrollOffset}/${window.maxScroll} · wheel/PageDown returns`
             : "Wheel/PageUp to review earlier output"}
-        </Text>
+        </text>
       ) : null}
-    </Box>
+    </box>
   );
 }

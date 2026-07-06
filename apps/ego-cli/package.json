@@ -8,7 +8,9 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "dev:tui": "bun run --conditions=browser src/index.ts",
     "test": "cd ../.. && vitest run apps/ego-cli/test",
+    "test:tui:visual": "bun test --preload @opentui/solid/preload --conditions=browser ./test/tui/opentui-smoke.bun.tsx",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -24,9 +26,11 @@
     "@ego-graph/terminal-agent": "workspace:*",
     "@ego-graph/workbench": "workspace:*",
     "@hono/node-server": "^1.13.7",
+    "@opentui/core": "0.3.4",
+    "@opentui/keymap": "0.3.4",
+    "@opentui/solid": "0.3.4",
     "commander": "^12.1.0",
-    "ink": "^5.1.0",
-    "react": "^18.3.1"
+    "solid-js": "1.9.12"
   },
   "devDependencies": {}
 }

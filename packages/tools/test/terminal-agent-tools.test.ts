@@ -74,4 +74,26 @@ describe("terminal agent tools", () => {
     expect(result.findings.join("\n")).toContain("remote dependency spec");
     expect(result.findings.join("\n")).toContain("unbounded dependency version");
   });
+
+  it("provides lightweight TypeScript diagnostics, definitions, and references", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-terminal-lsp-"));
+    await writeFile(join(root, "a.ts"), "export function lotus() { return 1; }\n", "utf8");
+    await writeFile(join(root, "b.ts"), "import { lotus } from './a';\nlotus();\n", "utf8");
+    await writeFile(join(root, "bad.ts"), "const value: string = 1;\n", "utf8");
+    const registry = createTerminalAgentToolRegistry();
+
+    const diagnostics = await registry
+      .get("lsp.diagnostics")
+      .execute({ path: "bad.ts" }, { workspaceRoot: root });
+    const definition = await registry
+      .get("lsp.definition")
+      .execute({ path: "b.ts", symbol: "lotus" }, { workspaceRoot: root });
+    const references = await registry
+      .get("lsp.references")
+      .execute({ path: "b.ts", symbol: "lotus" }, { workspaceRoot: root });
+
+    expect(JSON.stringify(diagnostics.diagnostics)).toContain("string");
+    expect(definition.locations[0]?.path).toBe("a.ts");
+    expect(references.locations.map((location: { path: string }) => location.path)).toContain("b.ts");
+  });
 });

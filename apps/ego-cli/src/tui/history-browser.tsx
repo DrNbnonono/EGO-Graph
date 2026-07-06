@@ -1,7 +1,6 @@
+/** @jsxImportSource @opentui/solid */
 import type { RunIndexRecord } from "@ego-graph/storage";
-import { Box, Text } from "ink";
-import React from "react";
-import type { ReactElement } from "react";
+import type { JSX } from "solid-js";
 import { truncateDisplay } from "./cjk.js";
 
 export type HistoryRunRecord = Pick<
@@ -51,20 +50,20 @@ export function HistoryBrowser({
   items: HistoryItem[];
   selectedIndex: number;
   width: number;
-}): ReactElement {
+}): JSX.Element {
   return (
-    <Box flexDirection="column" paddingX={1}>
-      <Text color="yellow">History - persisted runs</Text>
-      {items.length === 0 ? <Text color="gray">No persisted runs yet.</Text> : null}
+    <box flexDirection="column" paddingLeft={1} paddingRight={1}>
+      <text>History - persisted runs</text>
+      {items.length === 0 ? <text>No persisted runs yet.</text> : null}
       {items.slice(0, 12).map((item, index) => (
-        <Text key={item.runId} color={index === selectedIndex ? "magentaBright" : "white"}>
+        <text>
           {index === selectedIndex ? "> " : "  "}
           {item.index}. {truncateDisplay(item.timeLabel, 8)} {item.status} {item.eventCount}e{" "}
           {truncateDisplay(item.title, Math.max(12, width - 34))}
-        </Text>
+        </text>
       ))}
-      <Text color="gray">Enter replay /replay 1 /switch 1 Esc close</Text>
-    </Box>
+      <text>Enter replay /replay 1 /switch 1 Esc close</text>
+    </box>
   );
 }
 

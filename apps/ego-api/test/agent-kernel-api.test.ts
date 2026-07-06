@@ -284,4 +284,35 @@ process.stdin.on("data", (chunk) => {
     expect(body.events.map((event: { type: string }) => event.type)).toContain("tool.completed");
     expect(JSON.stringify(body.events)).toContain("lookup:lotus");
   });
+
+  it("exposes harness policy, cancel, and btw control endpoints", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "ego-harness-control-workspace-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-harness-control-home-"));
+    await writeFile(join(workspaceRoot, "package.json"), '{"name":"control-fixture"}', "utf8");
+    const app = createServer({ workspaceRoot, egoHome, modelProvider: null });
+
+    const before = await app.request("/agent/harness/policy").then((response) => response.json());
+    const patchResponse = await app.request("/agent/harness/policy", {
+      method: "PATCH",
+      body: JSON.stringify({ maxSteps: 7, tokenBudgetPerTurn: 2048 }),
+      headers: { "content-type": "application/json" },
+    });
+    const patched = await patchResponse.json();
+    const cancel = await app
+      .request("/agent/harness/runs/not-active/cancel", { method: "POST" })
+      .then((response) => response.json());
+    const btw = await app
+      .request("/agent/harness/runs/not-active/btw", {
+        method: "POST",
+        body: JSON.stringify({ message: "narrow to README" }),
+        headers: { "content-type": "application/json" },
+      })
+      .then((response) => response.json());
+
+    expect(before.ok).toBe(true);
+    expect(patchResponse.status).toBe(200);
+    expect(patched.policy).toMatchObject({ maxSteps: 7, tokenBudgetPerTurn: 2048 });
+    expect(cancel).toMatchObject({ ok: true, runId: "not-active", cancelled: false });
+    expect(btw).toMatchObject({ ok: true, runId: "not-active", queued: false });
+  });
 });

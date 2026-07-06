@@ -39,3 +39,4 @@ docker/*.tar
 output/playwright
 .playwright-cli/
 opencode/
+.zread/

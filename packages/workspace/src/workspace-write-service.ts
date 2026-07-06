@@ -3,8 +3,23 @@ import { access, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/pr
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import {
+  applyPatchPreview,
+  proposePatch,
+  renderUnifiedDiff,
+  type PatchOperation,
+  type PatchPlan,
+  type PatchPreview,
+} from "./patch-engine.js";
 
 const execFileAsync = promisify(execFile);
+
+function toPatchPlan(plan: WorkspaceEditPlan): PatchPlan {
+  return {
+    goal: plan.goal,
+    operations: plan.operations as PatchOperation[],
+  };
+}
 
 export type WorkspaceEditOperation =
   | {
@@ -121,26 +136,29 @@ export function createWorkspaceWriteService(
         throw new WorkspaceEditPolicyError("Edit plan must contain at least one operation");
       }
 
-      const diffs: string[] = [];
-      const files: string[] = [];
+      // Delegate to the new patch engine so callers automatically benefit
+      // from cross-operation conflict detection and the snapshot pipeline,
+      // without changing the WorkspaceEditPreview surface they depend on.
+      const patchPreview = await proposePatch(root, toPatchPlan(plan), policy);
 
-      for (const operation of plan.operations) {
-        const target = resolveEditPath(root, operation.path, policy);
-        files.push(toWorkspacePath(root, target));
-        if ("newPath" in operation) {
-          files.push(toWorkspacePath(root, resolveEditPath(root, operation.newPath, policy)));
-        }
-        const current = await readCurrentContent(target);
-        const next = await previewNextContent(operation, current, target, policy);
-        diffs.push(renderOperationDiff(root, target, operation, current, next));
+      // Surface conflicts raised during preview as a policy error so the
+      // existing coding-agent error path (which reports "blocked by policy")
+      // stays accurate. Callers that want per-conflict detail can migrate to
+      // proposePatch directly; this wrapper keeps the old contract.
+      if (patchPreview.conflicts.length > 0) {
+        throw new WorkspaceEditPolicyError(
+          patchPreview.conflicts
+            .map((conflict) => `${conflict.path}: ${conflict.reason}`)
+            .join("; "),
+        );
       }
 
       return {
-        id: `edit-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        goal: plan.goal,
-        operations: plan.operations,
-        files: [...new Set(files)],
-        diff: diffs.join("\n"),
+        id: patchPreview.id,
+        goal: patchPreview.goal,
+        operations: patchPreview.operations as WorkspaceEditOperation[],
+        files: patchPreview.files,
+        diff: patchPreview.diff,
         approvalRequired: true,
       };
     },
@@ -150,32 +168,30 @@ export function createWorkspaceWriteService(
         throw new WorkspaceEditPolicyError("Workspace edit requires explicit approval");
       }
 
-      for (const operation of preview.operations) {
-        const target = resolveEditPath(root, operation.path, policy);
-        if (operation.type === "delete_file") {
-          if (!policy.allowDelete) {
-            throw new WorkspaceEditPolicyError("delete_file is disabled by workspace policy");
-          }
-          await rm(target, { force: true });
-          continue;
-        }
-        if (operation.type === "rename_file" || operation.type === "move_file") {
-          const nextPath = resolveEditPath(root, operation.newPath, policy);
-          await assertExistingFileSize(target, policy);
-          await mkdir(dirname(nextPath), { recursive: true });
-          await rename(target, nextPath);
-          continue;
-        }
-        const current = await readCurrentContent(target);
-        const next = await previewNextContent(operation, current, target, policy);
-        await mkdir(dirname(target), { recursive: true });
-        await writeFile(target, next, "utf8");
+      const patchPreview: PatchPreview = {
+        id: preview.id,
+        goal: preview.goal,
+        files: preview.files,
+        operations: preview.operations as PatchOperation[],
+        diff: preview.diff,
+        conflicts: [],
+        approvalRequired: true,
+      };
+      const result = await applyPatchPreview(root, patchPreview, { approved: true }, policy);
+
+      // applyPatchPreview restores the snapshot and reports rolledBack when an
+      // operation failed mid-apply. Re-throw so the caller learns the patch
+      // did not land; the workspace has already been restored.
+      if (result.rolledBack) {
+        throw new WorkspaceEditPolicyError(
+          `Patch apply failed and was rolled back: ${result.rolledBack.reason}`,
+        );
       }
 
       return {
-        previewId: preview.id,
-        applied: true,
-        files: preview.files,
+        previewId: result.previewId,
+        applied: result.applied,
+        files: result.files,
         ...(approval.approvalId ? { approvalId: approval.approvalId } : {}),
       };
     },
@@ -374,19 +390,6 @@ function assertContentSize(content: string, policy: WorkspaceWritePolicy): void 
   if (Buffer.byteLength(content, "utf8") > policy.maxFileBytes) {
     throw new WorkspaceEditPolicyError(`New file content exceeds ${policy.maxFileBytes} bytes`);
   }
-}
-
-function renderUnifiedDiff(path: string, before: string, after: string): string {
-  const oldLines = before.split("\n");
-  const newLines = after.split("\n");
-  return [
-    `--- a/${path}`,
-    `+++ b/${path}`,
-    "@@",
-    ...oldLines.map((line) => `-${line}`),
-    ...newLines.map((line) => `+${line}`),
-    "",
-  ].join("\n");
 }
 
 function renderOperationDiff(

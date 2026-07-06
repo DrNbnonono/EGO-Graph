@@ -89,7 +89,7 @@ describe("patch engine", () => {
 
     expect(
       preview.conflicts.some((conflict) =>
-        conflict.reason.includes("Multiple operations target the same path"),
+        conflict.reason.includes("Multiple whole-file operations target the same path"),
       ),
     ).toBe(true);
   });
@@ -114,5 +114,24 @@ describe("patch engine", () => {
     const result = await applyPatchPreview(root, preview, { approved: true });
     expect(result.applied).toBe(true);
     expect(await readFile(join(root, "doc.md"), "utf8")).toBe("ALPHA\nBETA\n");
+  });
+
+  it("allows localized edits followed by a rename on the same file", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-patch-edit-then-rename-"));
+    await writeFile(join(root, "note.txt"), "alpha\nbeta\ngamma\n", "utf8");
+
+    const preview = await proposePatch(root, {
+      goal: "edit then rename",
+      operations: [
+        { type: "insert_after", path: "note.txt", anchorText: "alpha\n", content: "inserted\n" },
+        { type: "delete_text", path: "note.txt", text: "gamma\n" },
+        { type: "rename_file", path: "note.txt", newPath: "renamed.txt" },
+      ],
+    });
+
+    expect(preview.conflicts).toHaveLength(0);
+    const result = await applyPatchPreview(root, preview, { approved: true });
+    expect(result.applied).toBe(true);
+    expect(await readFile(join(root, "renamed.txt"), "utf8")).toBe("alpha\ninserted\nbeta\n");
   });
 });

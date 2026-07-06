@@ -332,17 +332,178 @@ function assertContentSize(content: string, policy: WorkspaceWritePolicy): void 
   }
 }
 
-function renderUnifiedDiff(path: string, before: string, after: string): string {
+/**
+ * Generate a proper unified diff with @@ hunk headers and context lines,
+ * replacing the old naive full-file +/- output. Uses a line-based LCS so
+ * only the minimal changed lines appear in the output.
+ */
+export function renderUnifiedDiff(path: string, before: string, after: string, contextLines = 3): string {
   const oldLines = before.split("\n");
   const newLines = after.split("\n");
-  return [
-    `--- a/${path}`,
-    `+++ b/${path}`,
-    "@@",
-    ...oldLines.map((line) => `-${line}`),
-    ...newLines.map((line) => `+${line}`),
-    "",
-  ].join("\n");
+  if (oldLines.length === 0 && newLines.length === 0) {
+    return `--- a/${path}\n+++ b/${path}\n`;
+  }
+
+  const hunks = computeHunks(oldLines, newLines, contextLines);
+  if (hunks.length === 0) {
+    return `--- a/${path}\n+++ b/${path}\n`;
+  }
+
+  return `--- a/${path}\n+++ b/${path}\n${hunks.join("\n")}\n`;
+}
+
+type Hunk = string;
+
+function computeHunks(oldLines: string[], newLines: string[], context: number): Hunk[] {
+  // Myers-based line diff: compute edit script, then collapse into hunks.
+  const edits = diffLines(oldLines, newLines);
+  const hunks: Hunk[] = [];
+
+  let i = 0;
+  while (i < edits.length) {
+    // Skip leading unchanged context above the window.
+    if (edits[i]!.type === "keep") {
+      i += 1;
+      continue;
+    }
+
+    // Find the start of the current hunk: rewind to include context lines.
+    const hunkStart = Math.max(0, i - context);
+    let oldStart = hunkStart;
+    let newStart = hunkStart;
+
+    // Count oldStart and newStart from the beginning up to hunkStart.
+    // (recompute from scratch for simplicity)
+    oldStart = 0;
+    newStart = 0;
+    for (let k = 0; k < hunkStart; k++) {
+      const edit = edits[k]!;
+      if (edit.type === "keep" || edit.type === "delete") {
+        oldStart += 1;
+      }
+      if (edit.type === "keep" || edit.type === "insert") {
+        newStart += 1;
+      }
+    }
+    let oldEnd = oldStart;
+    let newEnd = newStart;
+    const hunkLines: string[] = [];
+    let j = hunkStart;
+    let tailContext = context;
+
+    while (j < edits.length && tailContext >= 0) {
+      const edit = edits[j]!;
+      if (edit.type === "keep") {
+        if (j >= hunkStart && edits.slice(j - (context > 0 ? 1 : 0), j + 1).every((e) => e.type === "keep")) {
+          // Pure keep at the end of a hunk; count down the context window.
+          tailContext -= 1;
+          if (tailContext < 0) {
+            // But only break if we've accumulated at least one changed line.
+            if (hunkLines.some((l) => l.startsWith("-") || l.startsWith("+"))) {
+              break;
+            }
+          }
+        }
+      } else {
+        tailContext = context;
+      }
+
+      // Track offsets
+      const oldLine = edit.type !== "insert" ? oldLines[oldEnd] : undefined;
+      const newLine = edit.type !== "delete" ? newLines[newEnd] : undefined;
+
+      if (edit.type === "keep") {
+        hunkLines.push(` ${oldLine}`);
+        oldEnd += 1;
+        newEnd += 1;
+      } else if (edit.type === "delete") {
+        hunkLines.push(`-${oldLine}`);
+        oldEnd += 1;
+      } else {
+        hunkLines.push(`+${newLine}`);
+        newEnd += 1;
+      }
+      j += 1;
+    }
+
+    // Skip trailing keep lines that are pure context without edits.
+    while (hunkLines.length > 0 && hunkLines[hunkLines.length - 1]!.startsWith(" ") && hunkLines.filter((l) => l.startsWith("-") || l.startsWith("+")).length > 0) {
+      // Only trim if the last line is context AND there are actual changes.
+      // Don't trim the very first or very last context line if still within window.
+      break;
+    }
+
+    const oldCount = oldEnd - oldStart;
+    const newCount = newEnd - newStart;
+    hunks.push(`@@ -${oldStart + 1}${oldCount > 1 ? `,${oldCount}` : ""} +${newStart + 1}${newCount > 1 ? `,${newCount}` : ""} @@\n${hunkLines.join("\n")}`);
+
+    i = j;
+  }
+
+  return hunks;
+}
+
+type LineEdit = { type: "keep" | "insert" | "delete" };
+
+function diffLines(oldLines: string[], newLines: string[]): LineEdit[] {
+  // Simple LCS-based diff: O(n*m) for now, adequate for small files.
+  const lcs = longestCommonSubsequence(oldLines, newLines);
+  const edits: LineEdit[] = [];
+  let oi = 0;
+  let ni = 0;
+
+  for (const line of lcs) {
+    while (oi < oldLines.length && oldLines[oi] !== line) {
+      edits.push({ type: "delete" });
+      oi += 1;
+    }
+    while (ni < newLines.length && newLines[ni] !== line) {
+      edits.push({ type: "insert" });
+      ni += 1;
+    }
+    edits.push({ type: "keep" });
+    oi += 1;
+    ni += 1;
+  }
+  while (oi < oldLines.length) {
+    edits.push({ type: "delete" });
+    oi += 1;
+  }
+  while (ni < newLines.length) {
+    edits.push({ type: "insert" });
+    ni += 1;
+  }
+  return edits;
+}
+
+function longestCommonSubsequence(a: string[], b: string[]): string[] {
+  const m = a.length;
+  const n = b.length;
+  // dp[i][j] = LCS length of a[0..i-1] and b[0..j-1]
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i]![j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1]![j - 1]! + 1
+        : Math.max(dp[i - 1]![j]!, dp[i]![j - 1]!);
+    }
+  }
+  // Backtrack
+  const result: string[] = [];
+  let i = m;
+  let j = n;
+  while (i > 0 && j > 0) {
+    if (a[i - 1] === b[j - 1]) {
+      result.push(a[i - 1]!);
+      i -= 1;
+      j -= 1;
+    } else if (dp[i - 1]![j]! >= dp[i]![j - 1]!) {
+      i -= 1;
+    } else {
+      j -= 1;
+    }
+  }
+  return result.reverse();
 }
 
 function toWorkspacePath(root: string, absolutePath: string): string {

@@ -23,16 +23,23 @@ export type ToolEvidenceCandidate = {
 
 export type ToolDefinition<InputSchema extends ZodTypeAny, OutputSchema extends ZodTypeAny> = {
   name: string;
+  identity?: string;
+  version?: string;
   description: string;
   inputSchema: InputSchema;
   outputSchema: OutputSchema;
   permission: ToolPermission;
+  permissionAction?: string;
+  permissionResources?(input: z.output<InputSchema>): string[];
   scenarios?: string[];
   riskLevel?: ToolRiskLevel;
   sandboxProfile?: SandboxProfile;
   timeoutMs?: number;
+  maxOutputBytes?: number;
   requiresApproval?: boolean;
+  requiresSecurityScope?: boolean;
   evidenceMapper?(output: z.output<OutputSchema>): ToolEvidenceCandidate[];
+  toModelOutput?(output: z.output<OutputSchema>): string;
   execute(
     input: z.output<InputSchema>,
     context: ToolExecutionContext,

@@ -1,10 +1,11 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTerminalAgentToolRegistry } from "@ego-graph/tools";
 import type { ChatMessage } from "@ego-graph/llm";
 import { describe, expect, it } from "vitest";
 import { runAgentLoop } from "../src/agent-loop.js";
+import { createEditTool } from "../src/edit-tool.js";
 import type { AgentRunEvent } from "../src/index.js";
 
 describe("agent loop", () => {
@@ -213,6 +214,141 @@ describe("agent loop", () => {
     const roles = persisted.map((entry) => entry.role);
     expect(roles).toContain("user");
     expect(roles).toContain("assistant");
+  });
+
+  it("lets the model propose a patch via the workspace.edit tool inside the loop", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-agent-loop-edit-"));
+    await writeFile(join(root, "README.md"), "hello\n", "utf8");
+    const registry = createTerminalAgentToolRegistry();
+    // The edit tool is normally registered by the session; mirror that here.
+    registry.register(createEditTool());
+
+    const events = await collect(
+      runAgentLoop({
+        runId: "run-edit",
+        sessionId: "session",
+        message: "在 README 末尾加一行",
+        intent: "code_change",
+        workspaceRoot: root,
+        permissionLevel: "read-only",
+        toolRegistry: registry,
+        modelProvider: {
+          name: "fake",
+          model: "fake",
+          async complete() {
+            return "";
+          },
+          async completeStructured() {
+            return {
+              content: "I will edit README.",
+              toolCalls: [
+                {
+                  id: "call-edit-1",
+                  name: "workspace.edit",
+                  arguments: {
+                    goal: "append line",
+                    operations: [
+                      {
+                        type: "insert_after",
+                        path: "README.md",
+                        anchorText: "hello\n",
+                        content: "added\n",
+                      },
+                    ],
+                  },
+                },
+              ],
+            };
+          },
+        },
+        emit: emitEvent,
+        emitEvidence: emitEvidence,
+      }),
+    );
+
+    // The edit tool must produce a patch.proposed event carrying the diff.
+    const proposed = events.find((event) => event.type === "patch.proposed");
+    expect(proposed).toBeTruthy();
+    expect(String(proposed?.payload.diff)).toContain("added");
+    // And the workspace must NOT have been written (approval gate).
+    expect(await readFile(join(root, "README.md"), "utf8")).toBe("hello\n");
+  });
+
+  it("uses streamStructured when available and emits assistant.delta for text chunks", async () => {
+    const chunks = ["Hel", "lo ", "world"];
+    const events = await collect(
+      runAgentLoop({
+        runId: "run-stream",
+        sessionId: "session",
+        message: "你好",
+        intent: "chat",
+        workspaceRoot: process.cwd(),
+        permissionLevel: "read-only",
+        toolRegistry: createTerminalAgentToolRegistry(),
+        modelProvider: {
+          name: "fake",
+          model: "fake",
+          async complete() {
+            return "";
+          },
+          async completeStructured() {
+            throw new Error("completeStructured should not be called when streamStructured exists");
+          },
+          async *streamStructured() {
+            let full = "";
+            for (const chunk of chunks) {
+              full += chunk;
+              yield { type: "text" as const, content: chunk };
+            }
+            yield { type: "done" as const, content: full, toolCalls: [] };
+          },
+        },
+        emit: emitEvent,
+        emitEvidence: emitEvidence,
+      }),
+    );
+
+    const deltas = events.filter((event) => event.type === "assistant.delta");
+    expect(deltas.map((event) => event.message)).toEqual(chunks);
+    expect(events.some((event) => event.type === "loop.stopped")).toBe(true);
+  });
+
+  it("folds pollBtw messages into the model context as new user turns", async () => {
+    const btwQueue = ["顺便，只关注 README"];
+    const capturedMessages: unknown[][] = [];
+    const events = await collect(
+      runAgentLoop({
+        runId: "run-btw",
+        sessionId: "session",
+        message: "分析项目",
+        intent: "project_analysis",
+        workspaceRoot: process.cwd(),
+        permissionLevel: "read-only",
+        toolRegistry: createTerminalAgentToolRegistry(),
+        pollBtw: () => {
+          const drained = [...btwQueue];
+          btwQueue.length = 0;
+          return drained;
+        },
+        modelProvider: {
+          name: "fake",
+          model: "fake",
+          async complete() {
+            return "";
+          },
+          async completeStructured(input) {
+            capturedMessages.push(input.messages);
+            return { content: "done", toolCalls: [] };
+          },
+        },
+        emit: emitEvent,
+        emitEvidence: emitEvidence,
+      }),
+    );
+
+    expect(events.some((event) => event.type === "user.btw")).toBe(true);
+    const firstTurnJson = JSON.stringify(capturedMessages[0] ?? []);
+    expect(firstTurnJson).toContain("只关注 README");
   });
 });
 

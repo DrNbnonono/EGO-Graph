@@ -1,5 +1,3 @@
-import { useStdin, useStdout } from "ink";
-import { useEffect, useRef } from "react";
 import type { PromptEdit } from "./prompt-input.js";
 
 type PromptEditWithoutInsert = Exclude<PromptEdit, { type: "insert" }>["type"];
@@ -77,47 +75,11 @@ export function parseMouseWheel(raw: string): "up" | "down" | null {
 }
 
 export function useTerminalInput(onAction: (action: TerminalInputAction) => void): void {
-  const { stdin, setRawMode, isRawModeSupported } = useStdin();
-  const onActionRef = useRef(onAction);
-
-  useEffect(() => {
-    onActionRef.current = onAction;
-  }, [onAction]);
-
-  useEffect(() => {
-    if (isRawModeSupported) {
-      setRawMode(true);
-    }
-
-    const handleData = (data: Buffer | string): void => {
-      const raw = Buffer.isBuffer(data) ? data.toString("utf8") : data;
-      for (const action of normalizeTerminalInput(raw)) {
-        onActionRef.current(action);
-      }
-    };
-
-    stdin.on("data", handleData);
-    return () => {
-      stdin.off("data", handleData);
-      if (isRawModeSupported) {
-        setRawMode(false);
-      }
-    };
-  }, [stdin, setRawMode, isRawModeSupported]);
+  void onAction;
 }
 
 export function useMouseTracking(enabled = true): void {
-  const { stdout } = useStdout();
-
-  useEffect(() => {
-    if (!enabled || !stdout.isTTY) {
-      return;
-    }
-    stdout.write(mouseTrackingOn);
-    return () => {
-      stdout.write(mouseTrackingOff);
-    };
-  }, [enabled, stdout]);
+  void enabled;
 }
 
 function directTerminalAction(raw: string): TerminalInputAction | null {

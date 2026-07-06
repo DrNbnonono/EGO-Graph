@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   getCommandPaletteMatches,
-  resolveDiffFileIndex,
   resolvePaletteInput,
+} from "../src/tui/command-palette.js";
+import {
+  resolveDiffFileIndex,
   splitDiffByFile,
-} from "../src/tui.js";
+} from "../src/tui/diff-view.js";
 
 describe("TUI helpers", () => {
   it("splits a unified diff into independent file pages", () => {

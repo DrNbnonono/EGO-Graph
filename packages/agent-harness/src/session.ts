@@ -47,6 +47,12 @@ import {
 import { z, type ZodTypeAny } from "zod";
 import { hasPermission, type PermissionLevel as HarnessPermissionLevel } from "./safety-policy.js";
 import { runAgentLoop } from "./agent-loop.js";
+import { createEditTool } from "./edit-tool.js";
+import {
+  loadPersistedLoopPolicy,
+  savePersistedLoopPolicy,
+} from "./policy-config.js";
+import { mergeLoopPolicy, type LoopPolicy } from "./loop-policy.js";
 import {
   localizeCheckFailure,
   renderFailureLocalizationForPrompt,
@@ -59,8 +65,10 @@ export type PermissionLevel = HarnessPermissionLevel;
 
 export type AgentRunEventType =
   | "user.message"
+  | "user.btw"
   | "assistant.message"
   | "assistant.delta"
+  | "assistant.thinking"
   | "assistant.completed"
   | "run.started"
   | "context.loaded"
@@ -71,6 +79,7 @@ export type AgentRunEventType =
   | "planner.decision"
   | "loop.step.started"
   | "loop.step.completed"
+  | "loop.budget.warning"
   | "loop.stopped"
   | "plan.proposed"
   | "plan.approved"
@@ -81,6 +90,9 @@ export type AgentRunEventType =
   | "tool.failed"
   | "tool.timeout"
   | "tool.blocked"
+  | "tool.output.truncated"
+  | "permission.requested"
+  | "permission.replied"
   | "observation.created"
   | "evidence.created"
   | "reflection.created"
@@ -185,6 +197,23 @@ export type TerminalAgentSession = {
   discoverMcpTools(): Promise<AgentRunEvent[]>;
   callMcpTool(name: string, args?: Record<string, unknown>): AsyncIterable<AgentRunEvent>;
   getRunState(runId: string): TerminalAgentRunState | undefined;
+  /**
+   * Abort an in-flight run. Returns true if a matching active run was found
+   * and its AbortController was triggered; false if the run is not active
+   * (already finished, never started, or unknown runId).
+   */
+  cancel(runId: string): boolean;
+  /**
+   * Queue a "by the way" message to be folded into the next loop step of an
+   * in-flight run, without cancelling it. Returns true if the run is active
+   * (has a registered abort controller); false otherwise (message is not
+   * queued).
+   */
+  btw(runId: string, message: string): boolean;
+  /** Read the effective loop policy (persisted .ego/policy.json merged with defaults). */
+  getPolicy(): Promise<LoopPolicy>;
+  /** Persist a partial policy override to .ego/policy.json and return the merged result. */
+  setPolicy(policy: Partial<LoopPolicy>): Promise<LoopPolicy>;
 };
 
 export type TerminalAgentRunState = {
@@ -225,10 +254,23 @@ export function createTerminalAgentSession(
   const egoHome = options.egoHome ?? defaultEgoHome();
   const store = new SqliteEgoStore(sqlitePath(egoHome));
   const toolRegistry = options.toolRegistry ?? createTerminalAgentToolRegistry();
+  // Register the loop-level edit tool so the model can propose workspace
+  // patches from inside the agent loop (Codex apply_patch style). Safe to
+  // ignore a duplicate-registration error when the caller already added it.
+  try {
+    toolRegistry.register(createEditTool());
+  } catch {
+    // already registered (e.g. caller passed a custom registry that has it)
+  }
   const mcpPool = createMcpClientPool();
   const pendingRuns = new Map<string, PendingRun>();
   const plannerProvider = resolvePlannerProvider(options);
   let permissionLevel = options.permissionLevel ?? "read-only";
+  // Per-run abort controllers so cancel(runId) can interrupt an in-flight
+  // model request inside the agent loop.
+  const activeControllers = new Map<string, AbortController>();
+  // Per-run queues for btw() injections, drained by the loop's pollBtw hook.
+  const pendingBtw = new Map<string, string[]>();
   // Stable per-TUI-session id so conversation history accumulates across
   // turns. Reset by clearConversation() (the /clear command).
   let activeSessionId = `tui-session-${Date.now()}`;
@@ -265,6 +307,8 @@ export function createTerminalAgentSession(
           pendingRuns,
           plannerProvider,
           sessionId,
+          activeControllers,
+          pendingBtw,
           getPermissionLevel: () => permissionLevel,
         });
       }
@@ -278,6 +322,8 @@ export function createTerminalAgentSession(
         intent,
         plannerProvider,
         sessionId,
+        activeControllers,
+        pendingBtw,
         modelProvider: options.modelProvider,
         getPermissionLevel: () => permissionLevel,
       });
@@ -289,6 +335,8 @@ export function createTerminalAgentSession(
         workspaceRoot,
         store,
         toolRegistry,
+        activeControllers,
+        pendingBtw,
         mcpPool,
         pendingRuns,
         plannerProvider,
@@ -354,6 +402,33 @@ export function createTerminalAgentSession(
     getRunState(runId) {
       return pendingRuns.get(runId);
     },
+    cancel(runId) {
+      const controller = activeControllers.get(runId);
+      if (!controller) {
+        return false;
+      }
+      controller.abort();
+      return true;
+    },
+    btw(runId, message) {
+      if (!activeControllers.has(runId)) {
+        return false;
+      }
+      const queue = pendingBtw.get(runId);
+      if (queue) {
+        queue.push(message);
+      } else {
+        pendingBtw.set(runId, [message]);
+      }
+      return true;
+    },
+    async getPolicy() {
+      const persisted = await loadPersistedLoopPolicy(workspaceRoot);
+      return mergeLoopPolicy(persisted);
+    },
+    async setPolicy(policy) {
+      return savePersistedLoopPolicy(workspaceRoot, policy);
+    },
   };
 }
 
@@ -367,11 +442,15 @@ async function* streamChatTurn(input: {
   plannerProvider: ChatModelProvider | null | undefined;
   modelProvider: TerminalAgentSessionOptions["modelProvider"];
   sessionId: string;
+  activeControllers: Map<string, AbortController>;
+  pendingBtw: Map<string, string[]>;
   getPermissionLevel(): PermissionLevel;
 }): AsyncIterable<AgentRunEvent> {
   const now = new Date().toISOString();
   const runId = `tui-chat-${now.replace(/\D/g, "")}-${Math.random().toString(36).slice(2, 8)}`;
   const sessionId = input.sessionId;
+  const controller = new AbortController();
+  input.activeControllers.set(runId, controller);
   input.pendingRuns.set(runId, {
     runId,
     sessionId,
@@ -397,6 +476,7 @@ async function* streamChatTurn(input: {
   });
 
   const memoryHits = await recallStoreMemories(input.store, input.message);
+  try {
   if (input.intent === "project_analysis" || input.intent === "chat") {
     if (input.intent === "project_analysis") {
       const contextPack = await createWorkspaceContextPack({
@@ -428,6 +508,7 @@ async function* streamChatTurn(input: {
     // tool exchanges, not just the current user turn. Persist every new
     // message produced inside the loop back into the store.
     const seedMessages = await recallChatSeedMessages(input.store, sessionId);
+    const persistedPolicy = await loadPersistedLoopPolicy(input.workspaceRoot);
     yield* runAgentLoop({
       runId,
       sessionId,
@@ -437,6 +518,9 @@ async function* streamChatTurn(input: {
       permissionLevel: input.getPermissionLevel(),
       toolRegistry: input.toolRegistry,
       seedMessages,
+      signal: controller.signal,
+      policy: persistedPolicy,
+      pollBtw: () => drainBtwQueue(input.pendingBtw, runId),
       onMessage: (message) => {
         void persistChatMessage(input.store, sessionId, runId, message);
       },
@@ -446,7 +530,7 @@ async function* streamChatTurn(input: {
     });
   }
 
-  try {
+  {
     let finalTurn: Awaited<ReturnType<typeof runAssistantChatTurn>> | undefined;
     for await (const event of streamAssistantChatTurn({
       message: input.message,
@@ -519,6 +603,7 @@ async function* streamChatTurn(input: {
         },
       });
     }
+  }
   } catch (error) {
     const debug = error instanceof Error ? error.message : String(error);
     input.pendingRuns.set(runId, {
@@ -535,6 +620,9 @@ async function* streamChatTurn(input: {
       message: "模型回答失败，已保留调试信息。请检查模型配置或使用 /debug 查看详情。",
       payload: { debug },
     });
+  } finally {
+    input.activeControllers.delete(runId);
+    input.pendingBtw.delete(runId);
   }
 }
 
@@ -547,11 +635,16 @@ async function* streamStartTask(input: {
   pendingRuns: Map<string, PendingRun>;
   plannerProvider: ChatModelProvider | null | undefined;
   sessionId: string;
+  activeControllers: Map<string, AbortController>;
+  pendingBtw: Map<string, string[]>;
   getPermissionLevel(): PermissionLevel;
 }): AsyncIterable<AgentRunEvent> {
   const now = new Date().toISOString();
   const runId = `tui-run-${now.replace(/\D/g, "")}-${Math.random().toString(36).slice(2, 8)}`;
   const sessionId = input.sessionId;
+  const controller = new AbortController();
+  input.activeControllers.set(runId, controller);
+  try {
   const createdAt = new Date().toISOString();
   input.pendingRuns.set(runId, {
     runId,
@@ -649,6 +742,7 @@ async function* streamStartTask(input: {
   const loopIntent = classifiedIntent === "chat" ? "project_analysis" : classifiedIntent;
 
   const seedMessages = await recallChatSeedMessages(input.store, sessionId);
+  const persistedPolicy = await loadPersistedLoopPolicy(input.workspaceRoot);
   yield* runAgentLoop({
     runId,
     sessionId,
@@ -658,6 +752,9 @@ async function* streamStartTask(input: {
     permissionLevel: input.getPermissionLevel(),
     toolRegistry: input.toolRegistry,
     seedMessages,
+    signal: controller.signal,
+    policy: persistedPolicy,
+    pollBtw: () => drainBtwQueue(input.pendingBtw, runId),
     onMessage: (message) => {
       void persistChatMessage(input.store, sessionId, runId, message);
     },
@@ -786,6 +883,10 @@ async function* streamStartTask(input: {
     message: "Evidence-gap plan proposed. Approve it before generating a Patch.",
     payload: { planId: draft.planId, plan },
   });
+  } finally {
+    input.activeControllers.delete(runId);
+    input.pendingBtw.delete(runId);
+  }
 }
 
 async function* streamApprovePlan(input: {
@@ -1346,6 +1447,8 @@ function mapTrajectoryType(type: AgentRunEventType): TrajectoryEvent["type"] | u
       return "run.completed";
     case "run.blocked":
       return "run.blocked";
+    case "run.cancelled":
+      return "run.cancelled";
     default:
       return undefined;
   }
@@ -1910,6 +2013,19 @@ function buildFinalSummary(checks: Array<{ status: string; command: string }>): 
 
 function readString(value: unknown, fallback: string): string {
   return typeof value === "string" ? value : fallback;
+}
+
+/**
+ * Atomically drain and clear the btw() queue for a run. Called by the loop's
+ * pollBtw hook once per step so injected messages are consumed exactly once.
+ */
+function drainBtwQueue(pendingBtw: Map<string, string[]>, runId: string): string[] {
+  const queue = pendingBtw.get(runId);
+  if (!queue || queue.length === 0) {
+    return [];
+  }
+  pendingBtw.delete(runId);
+  return queue;
 }
 
 /**

@@ -50,8 +50,17 @@ export function detectCrossOperationConflicts(
 ): EditConflict[] {
   const conflicts: EditConflict[] = [];
 
-  // Group operations by the path they write to (source path for edits, target
-  // for rename/move). delete_text is treated as an edit of the source file.
+  // Localized edits mutate part of a file and compose safely when applied in
+  // order. Whole-file operations replace/create/delete the entire file and
+  // conflict with each other or with localized edits on the same path.
+  const isLocalized = (type: string): boolean =>
+    type === "replace_text" ||
+    type === "delete_text" ||
+    type === "insert_after" ||
+    type === "insert_before";
+
+  // Group by the path each operation ultimately writes to. rename/move key
+  // on their target newPath; everything else keys on the source path.
   const byPath = new Map<string, CrossConflictOperation[]>();
   for (const operation of operations) {
     const key = operation.type === "rename_file" || operation.type === "move_file"
@@ -69,16 +78,26 @@ export function detectCrossOperationConflicts(
     if (bucket.length <= 1) {
       continue;
     }
-    // Multiple replace_text/delete_text against the same file are allowed.
-    const nonTextual = bucket.filter((op) => op.type !== "replace_text" && op.type !== "delete_text");
-    if (nonTextual.length <= 1 && bucket.every((op) => op.type === "replace_text" || op.type === "delete_text")) {
+    const wholeFileOps = bucket.filter((op) => !isLocalized(op.type));
+    // Two or more whole-file ops on the same path clobber each other.
+    if (wholeFileOps.length >= 2) {
+      conflicts.push({
+        path,
+        operation: wholeFileOps.map((op) => op.type).join("+"),
+        reason: `Multiple whole-file operations target the same path (${wholeFileOps.length}); merge them.`,
+      });
       continue;
     }
-    conflicts.push({
-      path,
-      operation: bucket.map((op) => op.type).join("+"),
-      reason: `Multiple operations target the same path (${bucket.length}); merge them or split into distinct files.`,
-    });
+    // A single whole-file op combined with localized edits on the same path:
+    // the whole-file write would overwrite the localized edits' results.
+    if (wholeFileOps.length === 1 && bucket.some((op) => isLocalized(op.type))) {
+      conflicts.push({
+        path,
+        operation: bucket.map((op) => op.type).join("+"),
+        reason: "A whole-file operation conflicts with localized edits on the same path.",
+      });
+    }
+    // Pure localized edits (insert/replace_text/delete_text) compose safely.
   }
 
   // delete_file vs edits/creates of the same path.

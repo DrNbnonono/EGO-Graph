@@ -1,6 +1,5 @@
-import { Box, Text } from "ink";
-import React from "react";
-import type { ReactElement } from "react";
+/** @jsxImportSource @opentui/solid */
+import type { JSX } from "solid-js";
 import {
   getCommandAvailability,
   type CommandAvailabilityContext,
@@ -16,32 +15,19 @@ export function CommandPaletteView({
   state: CommandPaletteState;
   width: number;
   activeRun?: CommandAvailabilityContext["activeRun"];
-}): ReactElement | null {
-  if (!state.open) {
-    return null;
-  }
+}): JSX.Element | null {
+  if (!state.open) return null;
   const panelWidth = Math.max(42, Math.min(width - 4, 96));
   return (
-    <Box
-      borderStyle="round"
-      borderColor="magenta"
-      width={panelWidth}
-      flexDirection="column"
-      paddingX={1}
-    >
-      <Text color="magentaBright">Command Palette</Text>
-      <Text color="gray">
-        query {state.query || "/"} · Tab/Arrow select · Enter run · Esc close
-      </Text>
-      {state.matches.length === 0 ? <Text color="gray">No command matched.</Text> : null}
+    <box width={panelWidth} flexDirection="column" paddingLeft={1} paddingRight={1}>
+      <text>Command Palette</text>
+      <text>query {state.query || "/"} · Tab/Arrow select · Enter run · Esc close</text>
+      {state.matches.length === 0 ? <text>No command matched.</text> : null}
       {state.matches.slice(0, 10).map((command, index) => {
         const availability = getCommandAvailability(command, { activeRun });
         const unavailable = !availability.available;
         return (
-          <Text
-            key={command.name}
-            color={unavailable ? "gray" : index === state.selectedIndex ? "magentaBright" : "white"}
-          >
+          <text>
             {index === state.selectedIndex ? "❯ " : "  "}
             {truncateDisplay(command.name, 22)} {truncateDisplay(command.category, 12)}{" "}
             {truncateDisplay(
@@ -50,9 +36,9 @@ export function CommandPaletteView({
                 : command.description,
               Math.max(10, panelWidth - 46),
             )}
-          </Text>
+          </text>
         );
       })}
-    </Box>
+    </box>
   );
 }

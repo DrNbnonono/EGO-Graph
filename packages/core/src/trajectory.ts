@@ -27,6 +27,7 @@ export const trajectoryEventSchema = z.object({
     "agent.check.completed",
     "run.completed",
     "run.blocked",
+    "run.cancelled",
   ]),
   message: z.string().min(1),
   data: z.record(z.unknown()).default({}),

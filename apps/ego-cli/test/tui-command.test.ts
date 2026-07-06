@@ -1,5 +1,9 @@
+import { createRequire } from "node:module";
 import { execa } from "execa";
 import { describe, expect, it } from "vitest";
+
+const require = createRequire(import.meta.url);
+const tsxCli = require.resolve("tsx/cli");
 
 describe("ego default TUI", () => {
   it("prints the non-interactive TUI summary when CI is true", async () => {
@@ -22,18 +26,19 @@ describe("ego default TUI", () => {
   });
 
   it("starts the source TUI entry without a React runtime crash", async () => {
-    const result = await execa("pnpm", ["exec", "tsx", "apps/ego-cli/src/index.ts"], {
+    const result = await execa("node", [tsxCli, "apps/ego-cli/src/index.ts"], {
       reject: false,
       timeout: 5000,
-      env: { FORCE_COLOR: "0" },
+      env: { FORCE_COLOR: "0", TMPDIR: "/tmp" },
     });
     const output = `${result.stdout}\n${result.stderr}`;
 
     expect(result.exitCode === 0 || result.timedOut).toBe(true);
     expect(output).not.toContain("React is not defined");
     if (output.trim().length > 0) {
-      expect(output).toContain("PURPLE LOTUS");
-      expect(output).toContain("/history  /model  /permissions  /mcp  /memory  /help");
+      expect(output).toContain("EGO-Graph Purple Lotus Agent Workbench");
+      expect(output).toContain("Interactive TUI");
+      expect(output).toContain("Terminal approvals");
     }
   });
 });

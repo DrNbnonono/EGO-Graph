@@ -277,12 +277,16 @@ describe("terminal agent session", () => {
       egoHome,
       permissionLevel: "security-active",
     });
-    const scopedWithoutAuthorizationEvents = await collect(allowed.startTask("做一次依赖漏洞审计"));
+    // Local static manifest analysis reads workspace files only, so
+    // security-active permission is sufficient — it must NOT require a network
+    // SecurityScope. (Network/intrusive security tools are still gated; this
+    // local tool is not.)
+    const localAuditEvents = await collect(allowed.startTask("做一次依赖漏洞审计"));
     expect(
-      scopedWithoutAuthorizationEvents.some(
+      localAuditEvents.some(
         (event) =>
-          event.type === "tool.blocked" &&
-          String(event.message).includes("authorization scope"),
+          event.type === "tool.completed" &&
+          readPayloadToolName(event) === "security.package_manifest_audit",
       ),
     ).toBe(true);
 
@@ -553,6 +557,71 @@ process.stdin.on("data", (chunk) => {
     const secondTurnJson = JSON.stringify(capturedMessages.at(-1) ?? []);
     expect(secondTurnJson).toContain("第一次问题");
     expect(secondTurnJson).toContain("answered");
+  });
+
+  it("cancels an in-flight run and stops the loop with run.cancelled", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-terminal-agent-cancel-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-terminal-agent-home-cancel-"));
+    await writeFile(join(root, "README.md"), "cancel fixture\n", "utf8");
+
+    let capturedRunId: string | undefined;
+    const session = createTerminalAgentSession({
+      workspaceRoot: root,
+      egoHome,
+      modelProvider: {
+        name: "fake",
+        model: "fake",
+        async complete() {
+          return "ok";
+        },
+        async completeStructured(input) {
+          // Simulate a slow model call; abort should interrupt this wait via
+          // the signal passed through from the loop.
+          if (input.signal) {
+            await new Promise<void>((resolve, reject) => {
+              const onAbort = () => reject(new DOMException("aborted", "AbortError"));
+              if (input.signal!.aborted) {
+                onAbort();
+                return;
+              }
+              input.signal!.addEventListener("abort", onAbort, { once: true });
+              setTimeout(resolve, 5000);
+            });
+          }
+          return { content: "should not reach here", toolCalls: [] };
+        },
+      },
+    });
+
+    const events: AgentRunEvent[] = [];
+    const stream = session.submitMessage("你好");
+    const iterator = stream[Symbol.asyncIterator]();
+
+    // Drain the first event (user.message) to learn the runId, then cancel.
+    const first = await iterator.next();
+    if (!first.done) {
+      events.push(first.value);
+      capturedRunId = first.value.runId;
+    }
+    expect(capturedRunId).toBeTruthy();
+    const cancelled = session.cancel(capturedRunId!);
+    expect(cancelled).toBe(true);
+
+    // Draining the rest must complete quickly (not wait out the 5s timer).
+    let next = await iterator.next();
+    while (!next.done) {
+      events.push(next.value);
+      next = await iterator.next();
+    }
+
+    expect(events.some((event) => event.type === "run.cancelled")).toBe(true);
+  }, 10_000);
+
+  it("cancel() returns false for an unknown or already-finished runId", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-terminal-agent-cancel-unknown-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-terminal-agent-home-cancel-unknown-"));
+    const session = createTerminalAgentSession({ workspaceRoot: root, egoHome });
+    expect(session.cancel("no-such-run")).toBe(false);
   });
 });
 

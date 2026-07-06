@@ -1,6 +1,5 @@
-import { Box, Text } from "ink";
-import React from "react";
-import type { ReactElement } from "react";
+/** @jsxImportSource @opentui/solid */
+import type { JSX } from "solid-js";
 import { truncateDisplay } from "./cjk.js";
 
 export function splitDiffByFile(diff: string): Array<{ header: string; lines: string[] }> {
@@ -81,9 +80,9 @@ export function DiffView({
   width: number;
   height: number;
   scrollOffset?: number;
-}): ReactElement {
+}): JSX.Element {
   if (!diff) {
-    return <Text color="gray">No pending diff.</Text>;
+    return <text fg="gray">No pending diff.</text>;
   }
   const files = splitDiffByFile(diff);
   const safeIndex = Math.min(fileIndex, Math.max(0, files.length - 1));
@@ -94,25 +93,25 @@ export function DiffView({
   const diffWidth = wide ? width - listWidth - 4 : width;
   const visibleLines = getVisibleDiffLines(file.lines, scrollOffset, Math.max(4, height - 4));
   const diffPane = (
-    <Box flexDirection="column" paddingX={wide ? 0 : 1} width={diffWidth}>
-      <Text color="yellow">
+    <box flexDirection="column" paddingLeft={wide ? 0 : 1} paddingRight={wide ? 0 : 1} width={diffWidth}>
+      <text fg="yellow">
         Diff {safeIndex + 1}/{files.length} -{" "}
         {truncateDisplay(file.header, Math.max(12, diffWidth - 30))}{" "}
-        <Text color="green">+{stats.additions}</Text> <Text color="red">-{stats.deletions}</Text>
-      </Text>
+        <text fg="green">+{stats.additions}</text> <text fg="red">-{stats.deletions}</text>
+      </text>
       {visibleLines.map((line, index) => {
         const color = diffLineColor(line);
         const text = truncateDisplay(line || " ", Math.max(10, diffWidth - 2));
         return color ? (
-          <Text key={`${safeIndex}-${scrollOffset}-${index}`} color={color}>
+          <text fg={color}>
             {text}
-          </Text>
+          </text>
         ) : (
-          <Text key={`${safeIndex}-${scrollOffset}-${index}`}>{text}</Text>
+          <text>{text}</text>
         );
       })}
-      <Text color="gray">n/p file | PgUp/PgDn scroll | y approve patch | r reject patch</Text>
-    </Box>
+      <text fg="gray">n/p file | PgUp/PgDn scroll | y approve patch | r reject patch</text>
+    </box>
   );
 
   if (!wide) {
@@ -120,22 +119,22 @@ export function DiffView({
   }
 
   return (
-    <Box flexDirection="row" paddingX={1}>
-      <Box flexDirection="column" width={listWidth} paddingRight={1}>
-        <Text color="yellow">Files</Text>
+    <box flexDirection="row" paddingLeft={1} paddingRight={1}>
+      <box flexDirection="column" width={listWidth} paddingRight={1}>
+        <text fg="yellow">Files</text>
         {files.slice(0, Math.max(4, height - 2)).map((candidate, index) => {
           const candidateStats = getDiffFileStats(candidate.lines);
           const prefix = index === safeIndex ? ">" : " ";
           return (
-            <Text key={candidate.header} color={index === safeIndex ? "magentaBright" : "gray"}>
+            <text fg={index === safeIndex ? "magentaBright" : "gray"}>
               {prefix} {truncateDisplay(candidate.header, Math.max(8, listWidth - 12))} +
               {candidateStats.additions} -{candidateStats.deletions}
-            </Text>
+            </text>
           );
         })}
-      </Box>
+      </box>
       {diffPane}
-    </Box>
+    </box>
   );
 }
 

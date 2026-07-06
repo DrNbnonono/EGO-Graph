@@ -31,6 +31,12 @@ Use a TypeScript-first stack aligned with terminal agent tools such as OpenCode,
 - MCP HTTP/OAuth: bearer-token support, protected-resource metadata discovery, long-lived client pooling, and per-tool permission overrides are implemented; full interactive OAuth authorization is future work
 - Workspace inspection: `packages/workspace` provides safe repository summary, text reads, file listing, and command suggestions
 - Tool execution: TypeScript orchestration with Docker sandbox and external security tools
+- Agent control plane: Harness exposes `cancel(runId)`, `btw(runId, message)`, `getPolicy()`,
+  and `setPolicy(partialPolicy)` through both TUI commands and local API endpoints.
+- Permission rules: permission levels are presets; tool execution also evaluates
+  action/resource rules with `allow | ask | deny` decisions.
+- Code intelligence: terminal tools include lightweight TypeScript diagnostics, definition, and
+  references helpers under `lsp.*`.
 - Tests: Vitest, with Playwright reserved for future web console checks
 
 ## Architecture Invariants
@@ -77,6 +83,10 @@ curl http://127.0.0.1:4317/api/config/system-prompt
 curl http://127.0.0.1:4317/api/mcp/servers
 curl http://127.0.0.1:4317/api/mcp/tools
 curl http://127.0.0.1:4317/api/runtime/metrics
+curl http://127.0.0.1:4317/agent/harness/policy
+curl -X PATCH http://127.0.0.1:4317/agent/harness/policy -H "content-type: application/json" -d "{\"maxSteps\":8}"
+curl -X POST http://127.0.0.1:4317/agent/harness/runs/<run-id>/cancel
+curl -X POST http://127.0.0.1:4317/agent/harness/runs/<run-id>/btw -H "content-type: application/json" -d "{\"message\":\"narrow to README\"}"
 ego config model --provider openai-compatible --base-url https://api.example.com --api-key sk-... --model your-model
 ego run --scenario web_pentest --task "..."
 ego run --scenario incident_response --input ./case.zip
@@ -178,6 +188,12 @@ memory, Hermes timeline, skills/plugins, MCP stdio v1, and controlled web search
 - `packages/agent-harness` is now modularized: `index.ts` is public exports, `session.ts` owns the
   live session, and focused modules cover run state, events, planner, context bridge, memory/MCP
   bridges, safety policy, tool executor, patch/check/repair helpers.
+- `packages/agent-harness` exports PermissionRule/PermissionDecision/PermissionRequest/PermissionReply
+  plus the evaluator that applies OpenCode-style action/resource rules.
+- `packages/tools` now includes real local fixture security bridge tools
+  (`local_fixture.http_request`, `local_fixture.crawl`, `local_fixture.fingerprint`,
+  `report.vulnerability_draft`) and lightweight `lsp.diagnostics`, `lsp.definition`,
+  `lsp.references` helpers.
 - `packages/memory` Memory v2 persists kind, importance, confidence, summary/rawContent, source run,
   evidence refs, status, last access, and access count; raw content must not be injected into prompts.
 - `packages/agent` can generate a model-backed `WorkspaceEditPlan` from natural language through `generateWorkspaceEditPlan`.
@@ -187,6 +203,8 @@ memory, Hermes timeline, skills/plugins, MCP stdio v1, and controlled web search
 - API exposes `/api/memory`, `/api/hermes/timeline`, `/api/skills`, and `/api/mcp/tools` for kernel observability.
 - API exposes `/api/config/model`, `/api/config/model/test`, and profile routes under `/api/config/models` for local model settings and connectivity checks.
 - API exposes `/api/commands`, `/api/config/system-prompt`, `/api/mcp/servers`, `/api/runtime/metrics`, and `/chat/stream` for the productized Workbench shell.
+- API exposes `/agent/harness/policy`, `/agent/harness/runs/:id/cancel`, and
+  `/agent/harness/runs/:id/btw` for the terminal-agent control plane.
 - Web has three modes: `对话` calls `/chat`, `生成 Patch` calls `/agent/plans` before Patch generation, and `安全任务` runs controlled fixtures.
 - Web keeps Plan preview, Patch preview, affected files, Approve, and checks in the right-side approval panel.
 - Web shows Agent Kernel status for memory, plans, skills, MCP, command palette, system prompt, runtime metrics, and search.
@@ -195,7 +213,17 @@ memory, Hermes timeline, skills/plugins, MCP stdio v1, and controlled web search
 - CLI exposes `ego config model` for persistent provider/baseUrl/model/API key setup.
 - TUI is now split under `apps/ego-cli/src/tui/`: `app.tsx`, `conversation-view.tsx`, `prompt-input.tsx`, `command-palette.ts`, `history-browser.tsx`, `diff-view.tsx`, `plan-view.tsx`, `checks-view.tsx`, `debug-view.tsx`, `layout.tsx`, `terminal-input.ts`, `terminal-size.ts`, `cjk.ts`, `text-wrap.ts`, and support modules.
 - TUI keeps a conversation-first Agent Kernel view, concept-style purple lotus startup card, fixed prompt input, mouse-wheel/PageUp review, Ctrl+O thinking expansion, overlay slash command palette, persisted history/replay browsing, multi-file diff browsing, MCP discovery, and approval shortcuts while still pointing users to `ego serve` for full management pages.
+- TUI command palette includes `/cancel`, `/btw <message>`, `/policy`, and `/policy set key=value`
+  for live run steering and budget control.
 - Model-unavailable fallback is `needs_model`: no pending edit, no diff, no file write.
 - Active public SRC/vulnerability scanning and exploit automation remain disabled by default. Security tools require explicit authorization scope, permission elevation, approval, sandbox/audit, and controlled targets.
 
-The vertical slice is complete when `pnpm build`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`, `pnpm test`, `pnpm smoke`, `ego --help`, `ego doctor`, `ego run`, `ego replay`, and `ego eval` pass against the controlled `web_pentest` fixture.
+Current verified commands in this update:
+
+- `CI=true pnpm typecheck`
+- `CI=true pnpm test` (`70` test files, `260` tests passed)
+- `CI=true pnpm build`
+- `CI=true pnpm smoke`
+- `CI=true pnpm eval:smoke` (`12/12` smoke eval passed)
+
+Release readiness still requires rerunning these commands fresh on the final release branch.

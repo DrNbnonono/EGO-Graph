@@ -40,6 +40,8 @@ export type LoopState = {
   reflections: string[];
   status: "running" | "stopped" | "blocked";
   stopReason?: string;
+  /** True once loop.budget.warning has been emitted for this run. */
+  budgetWarningEmitted: boolean;
 };
 
 export function createLoopState(input: {
@@ -61,5 +63,6 @@ export function createLoopState(input: {
     observations: [],
     reflections: [],
     status: "running",
+    budgetWarningEmitted: false,
   };
 }

@@ -6,6 +6,11 @@ import {
   requiredPermissionForTool,
   type PermissionLevel,
 } from "./safety-policy.js";
+import {
+  evaluatePermissionRules,
+  permissionRulesForLevel,
+  type PermissionRule,
+} from "./permission-rules.js";
 
 export type ToolCallProtocol = {
   id: string;
@@ -16,6 +21,9 @@ export type ToolCallProtocol = {
   requiresApproval: boolean;
   sandboxProfile: SandboxProfile;
   timeoutMs: number;
+  toolIdentity?: string;
+  permissionAction?: string;
+  permissionResources?: string[];
   /**
    * Security action this tool performs (e.g. "inspect", "exploit", "report").
    * High-risk and network-scoped tools are gated against the active
@@ -39,7 +47,14 @@ export type SecurityScopeGate = {
 
 export type ToolExecutorEvent = {
   id: string;
-  type: "tool.completed" | "tool.failed" | "tool.timeout" | "tool.blocked";
+  type:
+    | "tool.completed"
+    | "tool.failed"
+    | "tool.timeout"
+    | "tool.blocked"
+    | "permission.requested"
+    | "permission.replied"
+    | "tool.output.truncated";
   runId: string;
   sessionId: string;
   createdAt: string;
@@ -66,6 +81,7 @@ export type ExecuteToolCallInput<
   workspaceRoot: string;
   permissionLevel: PermissionLevel;
   approvalGranted?: boolean;
+  permissionRules?: PermissionRule[];
   /** When provided, high-risk/network tools are gated against this scope. */
   securityScope?: SecurityScopeGate;
   runId: string;
@@ -86,6 +102,8 @@ export function createToolCall(
     requiresApproval: tool.requiresApproval ?? tool.permission.risk === "high",
     sandboxProfile: tool.sandboxProfile ?? "none",
     timeoutMs: tool.timeoutMs ?? 30_000,
+    toolIdentity: toolIdentity(tool),
+    permissionAction: tool.permissionAction ?? tool.name,
   };
 }
 
@@ -102,6 +120,15 @@ export async function executeToolCall<
     sandboxProfile: call.sandboxProfile,
   };
 
+  const currentIdentity = toolIdentity(input.tool);
+  if (call.toolIdentity && call.toolIdentity !== currentIdentity) {
+    return failResult(input, call, "tool.blocked", "Refusing stale tool call identity.", {
+      ...basePayload,
+      recoveryHint: "Refresh the tool manifest and retry the call.",
+      debug: { expectedIdentity: currentIdentity, receivedIdentity: call.toolIdentity },
+    });
+  }
+
   const parsedInput = input.tool.inputSchema.safeParse(input.input);
   if (!parsedInput.success) {
     return failResult(input, call, "tool.failed", "Tool input schema validation failed.", {
@@ -115,6 +142,36 @@ export async function executeToolCall<
     return failResult(input, call, "tool.blocked", "Tool blocked by permission policy.", {
       ...basePayload,
       recoveryHint: buildPermissionRecoveryHint(call.permissionRequired),
+    });
+  }
+
+  const permissionAction = call.permissionAction ?? input.tool.permissionAction ?? input.tool.name;
+  const permissionResources =
+    call.permissionResources ??
+    input.tool.permissionResources?.(parsedInput.data as z.output<InputSchema>) ??
+    inferPermissionResources(parsedInput.data);
+  const permissionDecision = evaluatePermissionRules({
+    action: permissionAction,
+    resources: permissionResources,
+    rules: input.permissionRules ?? permissionRulesForLevel(input.permissionLevel),
+  });
+  if (permissionDecision.effect === "deny") {
+    return failResult(input, call, "tool.blocked", "Tool blocked by permission rule.", {
+      ...basePayload,
+      action: permissionAction,
+      resources: permissionResources,
+      matchedRule: permissionDecision.matchedRule,
+      recoveryHint: "Adjust the permission policy only if this action is authorized.",
+    });
+  }
+  if (permissionDecision.effect === "ask" && !input.approvalGranted) {
+    return failResult(input, call, "permission.requested", "Tool requires permission approval.", {
+      ...basePayload,
+      action: permissionAction,
+      resources: permissionResources,
+      matchedRule: permissionDecision.matchedRule,
+      savePolicy: permissionResources,
+      recoveryHint: "Approve or deny the pending permission request.",
     });
   }
 
@@ -154,10 +211,13 @@ export async function executeToolCall<
     }
 
     const outputRecord = parsedOutput.data as Record<string, unknown>;
+    const maxOutputChars = input.maxOutputChars ?? input.tool.maxOutputBytes ?? 12_000;
+    const truncatedOutput = truncateToolOutput(outputRecord, maxOutputChars);
     if (outputRecord.status === "failed") {
       return failResult(input, call, "tool.failed", `Tool failed: ${call.name}`, {
         ...basePayload,
-        output: truncateToolOutput(outputRecord, input.maxOutputChars),
+        output: truncatedOutput.output,
+        truncated: truncatedOutput.truncated,
         recoveryHint: buildToolRecoveryHint(call.name, "failed"),
         debug: { fullOutput: outputRecord },
       });
@@ -178,7 +238,8 @@ export async function executeToolCall<
         message: `Tool completed: ${call.name}`,
         payload: {
           ...basePayload,
-          output: truncateToolOutput(outputRecord, input.maxOutputChars),
+          output: truncatedOutput.output,
+          truncated: truncatedOutput.truncated,
           debug: { fullOutput: outputRecord },
         },
       },
@@ -206,12 +267,17 @@ export async function executeToolCall<
 function failResult<InputSchema extends ZodTypeAny, OutputSchema extends ZodTypeAny>(
   input: ExecuteToolCallInput<InputSchema, OutputSchema>,
   call: ToolCallProtocol,
-  type: "tool.failed" | "tool.timeout" | "tool.blocked",
+  type: "tool.failed" | "tool.timeout" | "tool.blocked" | "permission.requested",
   message: string,
   payload: Record<string, unknown>,
 ): ToolExecutorResult {
   return {
-    status: type === "tool.timeout" ? "timeout" : type === "tool.blocked" ? "blocked" : "failed",
+    status:
+      type === "tool.timeout"
+        ? "timeout"
+        : type === "tool.blocked" || type === "permission.requested"
+          ? "blocked"
+          : "failed",
     call,
     event: {
       id: `${call.id}-${type.split(".")[1]}`,
@@ -219,12 +285,30 @@ function failResult<InputSchema extends ZodTypeAny, OutputSchema extends ZodType
       runId: input.runId,
       sessionId: input.sessionId,
       createdAt: new Date().toISOString(),
-      phase: type === "tool.blocked" ? "blocked" : "tool_running",
+      phase: type === "tool.blocked" || type === "permission.requested" ? "blocked" : "tool_running",
       permissionLevel: input.permissionLevel,
       message,
       payload,
     },
   };
+}
+
+function toolIdentity(tool: ToolDefinition<ZodTypeAny, ZodTypeAny>): string {
+  return tool.identity ?? `${tool.name}@${tool.version ?? "1"}`;
+}
+
+function inferPermissionResources(input: unknown): string[] {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return [String(input ?? "")];
+  }
+  const record = input as Record<string, unknown>;
+  for (const key of ["command", "path", "url", "target", "value", "pattern"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return [value];
+    }
+  }
+  return ["*"];
 }
 
 class ToolTimeoutError extends Error {
@@ -252,17 +336,27 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
 function truncateToolOutput(
   output: Record<string, unknown>,
   maxChars = 12_000,
-): Record<string, unknown> {
-  return Object.fromEntries(
+): { output: Record<string, unknown>; truncated: boolean } {
+  let truncated = false;
+  const visible = Object.fromEntries(
     Object.entries(output).map(([key, value]) => [
       key,
-      typeof value === "string" ? truncateText(value, maxChars) : value,
+      typeof value === "string"
+        ? truncateText(value, maxChars, () => {
+            truncated = true;
+          })
+        : value,
     ]),
   );
+  return { output: visible, truncated };
 }
 
-function truncateText(value: string, maxChars: number): string {
-  return value.length <= maxChars ? value : `${value.slice(0, Math.max(0, maxChars))}...`;
+function truncateText(value: string, maxChars: number, onTruncate: () => void): string {
+  if (value.length <= maxChars) {
+    return value;
+  }
+  onTruncate();
+  return `${value.slice(0, Math.max(0, maxChars))}...`;
 }
 
 function buildToolRecoveryHint(toolName: string, reason: "failed" | "timeout"): string {
@@ -290,9 +384,14 @@ function evaluateSecurityScopeGate(
   call: ToolCallProtocol,
 ): { message: string; recoveryHint: string } | undefined {
   const tool = input.tool;
-  const isHighRisk = call.riskLevel === "high" || tool.permission.risk === "high";
+  // The SecurityScope gate only applies to tools that reach outside the
+  // workspace (network scope) or explicitly declare they need a scope. Local
+  // high-risk tools that only read workspace files (e.g. a local package
+  // manifest audit) are bounded by the permission/approval gates instead —
+  // forcing a scope on them would block legitimate local static analysis.
   const isNetwork = tool.permission.scope === "network";
-  if (!isHighRisk && !isNetwork) {
+  const requiresScope = Boolean((tool as { requiresSecurityScope?: boolean }).requiresSecurityScope);
+  if (!isNetwork && !requiresScope) {
     return undefined;
   }
 

@@ -41,20 +41,26 @@ export type CommandAvailabilityContext = {
 export const commandPalette: CommandManifest[] = [
   { name: "/help", category: "Help", description: "Show terminal commands.", shortcut: "?" },
   { name: "/status", category: "Session", description: "Open status overlay." },
+  { name: "/init", category: "Session", description: "Initialize workspace guidance." },
   { name: "/new", category: "Session", description: "Start a clean local conversation." },
   { name: "/history", category: "Session", description: "Browse persisted runs from SQLite." },
   { name: "/sessions", category: "Session", description: "List runs in the current process." },
   { name: "/replay", category: "Session", description: "Replay by number or runId." },
   { name: "/switch", category: "Session", description: "Switch by number or runId." },
+  { name: "/cancel", category: "Session", description: "Cancel the active run.", requiresActiveRun: true },
+  { name: "/btw", category: "Session", description: "Inject a by-the-way message into the active run.", requiresActiveRun: true },
   { name: "/clear", category: "Session", description: "Clear the visible conversation." },
   { name: "/exit", category: "Session", description: "Exit the terminal UI.", shortcut: "Esc" },
   { name: "/model", category: "Model", description: "Show active model guidance." },
   { name: "/models", category: "Model", description: "Open model profiles guidance." },
   { name: "/mcp", category: "MCP", description: "Discover configured MCP tools." },
+  { name: "/tools", category: "MCP", description: "Discover available tools." },
   { name: "/skills", category: "MCP", description: "Show skill management guidance." },
   { name: "/prompt", category: "Model", description: "Show system prompt location." },
   { name: "/thinking", category: "Help", description: "Toggle folded reasoning and tool events." },
   { name: "/permissions", category: "Permission", description: "Show permission levels." },
+  { name: "/policy", category: "Permission", description: "Show loop policy." },
+  { name: "/policy set", category: "Permission", description: "Set loop policy, e.g. /policy set maxSteps=8." },
   { name: "/allow read-only", category: "Permission", description: "Use read-only mode." },
   {
     name: "/allow workspace-write",
@@ -154,6 +160,8 @@ export const commandPalette: CommandManifest[] = [
   { name: "/memory forget", category: "Memory", description: "Forget memory by id." },
   { name: "/debug", category: "Help", description: "Toggle debug payload details." },
   { name: "/scan", category: "Security", description: "Explain authorized scan requirements." },
+  { name: "/analyze", category: "Security", description: "Explain evidence-analysis workflow." },
+  { name: "/report", category: "Help", description: "Explain report generation workflow." },
 ];
 
 export function createCommandPaletteState(query: string): CommandPaletteState {

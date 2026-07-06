@@ -22,6 +22,10 @@ Terminal shortcuts:
 - Use `/history` to browse persisted runs, then `/replay 1` or `/switch 1` to open a run by number.
 - Use `/plan approve`, `/diff`, `/diff next`, `/patch approve`, and `/checks` for the approval flow.
 - Use `/debug` only when you need full folded tool payloads and technical details.
+- Use `/cancel` to request cancellation for the active run.
+- Use `/btw <message>` to inject a mid-run correction without starting over.
+- Use `/policy` to inspect loop budgets, and `/policy set maxSteps=8 maxToolCalls=12` to persist
+  local policy overrides in `.ego/policy.json`.
 
 Start the browser visualization:
 
@@ -89,6 +93,10 @@ Runtime API endpoints:
 - `POST /agent/runs/:id/approve`
 - `GET /agent/runs/:id/diff`
 - `GET /agent/runs/:id/checks`
+- `GET /agent/harness/policy`
+- `PATCH /agent/harness/policy`
+- `POST /agent/harness/runs/:id/cancel`
+- `POST /agent/harness/runs/:id/btw`
 - `POST /runs`
 - `GET /runs/:id`
 - `GET /runs/:id/events`
@@ -154,7 +162,18 @@ Use:
 
 Tool calls normalize through a `ToolCall` protocol with schema validation, permission checks,
 approval gates, timeout, output truncation, and output validation. Policy denials show
-`tool.blocked`, runtime failures show `tool.failed`, and timeout failures show `tool.timeout`.
+`tool.blocked`, permission prompts show `permission.requested`, runtime failures show
+`tool.failed`, timeout failures show `tool.timeout`, and truncated previews show
+`tool.output.truncated`.
+
+Useful built-in tools for agent runs:
+
+- `workspace.grep` supports regex, ignore-case, and context lines.
+- `workspace.glob` finds files by glob pattern.
+- `lsp.diagnostics`, `lsp.definition`, and `lsp.references` provide read-only TypeScript code
+  intelligence.
+- `local_fixture.http_request`, `local_fixture.crawl`, `local_fixture.fingerprint`, and
+  `report.vulnerability_draft` support controlled local security demos.
 
 Advanced overrides:
 

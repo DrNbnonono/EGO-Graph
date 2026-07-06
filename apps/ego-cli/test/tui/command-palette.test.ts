@@ -22,6 +22,16 @@ describe("command palette", () => {
     );
   });
 
+  it("exposes run control and policy commands", () => {
+    expect(getCommandPaletteMatches("/cancel").map((command) => command.name)).toContain(
+      "/cancel",
+    );
+    expect(getCommandPaletteMatches("/btw").map((command) => command.name)).toContain("/btw");
+    expect(getCommandPaletteMatches("/policy").map((command) => command.name)).toEqual(
+      expect.arrayContaining(["/policy", "/policy set"]),
+    );
+  });
+
   it("moves selection with arrow-like deltas and tab-like next", () => {
     const state = createCommandPaletteState("/m");
     const moved = moveCommandPaletteSelection(state, 1);

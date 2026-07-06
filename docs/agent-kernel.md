@@ -49,6 +49,18 @@ proposal. The Patch still needs explicit diff approval before files are written.
 
 `POST /chat` remains read-only and must never create pending edits.
 
+## Live Control Plane
+
+The Harness exposes the same run-control surface to TUI and API callers:
+
+- `cancel(runId)` aborts an active run and emits `run.cancelled`.
+- `btw(runId, message)` queues an in-flight user interjection; the loop injects it as a new user
+  turn and emits `user.btw`.
+- `getPolicy()` and `setPolicy(partialPolicy)` read/write `.ego/policy.json`.
+- API endpoints: `GET/PATCH /agent/harness/policy`,
+  `POST /agent/harness/runs/:id/cancel`, and `POST /agent/harness/runs/:id/btw`.
+- TUI commands: `/cancel`, `/btw <message>`, `/policy`, and `/policy set key=value`.
+
 ## Packages
 
 - `packages/hermes`: internal event bus with `emit`, `subscribe`, `getTimeline`, and `replay`.
@@ -74,6 +86,8 @@ split into focused modules so the terminal UI can remain a thin renderer:
 - `planner.ts`: intent routing and structured planner decision facade.
 - `tool-executor.ts`: normalized `ToolCall` execution with schema validation, permission gates,
   approval gates, timeout, truncation, output validation, and failure events.
+- `permission-rules.ts`: OpenCode-style action/resource rules. Permission levels are presets;
+  the final decision is `allow`, `ask`, or `deny` with the last matching rule winning.
 - `memory-bridge.ts`: Memory v2 helper exports for decisions, failures, tool results, scopes, and
   run summaries.
 - `mcp-bridge.ts`: MCP discovery/call facade over stdio and Streamable HTTP transports.
@@ -211,13 +225,23 @@ type ToolCall = {
 The required path is:
 
 ```text
-schema validate -> permission gate -> approval gate -> execute with timeout
-  -> stdout/stderr truncate -> output schema validate -> evidence/memory candidates
-  -> event emit
+schema validate -> permission level gate -> action/resource rule gate -> approval gate
+  -> execute with timeout -> stdout/stderr truncate -> output schema validate
+  -> evidence/memory candidates -> event emit
 ```
 
 Failures must emit `tool.failed`, timeouts must emit `tool.timeout`, and policy denials must emit
-`tool.blocked`. They must not be disguised as `tool.completed`.
+`tool.blocked` or `permission.requested`. Truncated previews must be marked with
+`tool.output.truncated`. They must not be disguised as `tool.completed`.
+
+Built-in terminal tools now include:
+
+- `workspace.grep` with regex, case-insensitive search, and context lines.
+- `workspace.glob` for targeted file discovery.
+- `shell.write`, approval-gated and high risk.
+- `lsp.diagnostics`, `lsp.definition`, and `lsp.references` for read-only TypeScript code intelligence.
+- `local_fixture.http_request`, `local_fixture.crawl`, `local_fixture.fingerprint`, and
+  `report.vulnerability_draft` for controlled local security demonstrations.
 
 ## Terminal And Web
 
@@ -234,6 +258,7 @@ The terminal TUI is the primary Codex-like surface. It shows:
 - `/model` model management guidance
 - `/memory` recall/compact/archive/forget
 - `/replay <runId>` from persisted Hermes events
+- `/cancel`, `/btw <message>`, `/policy`, and `/policy set key=value`
 
 The Web Workbench remains a local dashboard and approval surface. It shows:
 

@@ -1,5 +1,3 @@
-import { useEffect, useState } from "react";
-
 export type TerminalSize = {
   columns: number;
   rows: number;
@@ -34,18 +32,5 @@ export function calculateBodyHeight({
 }
 
 export function useTerminalSize(stdout: TerminalSizeSource): TerminalSize {
-  const [size, setSize] = useState<TerminalSize>(() => createTerminalSize(stdout));
-
-  useEffect(() => {
-    const update = (): void => {
-      setSize(createTerminalSize(stdout));
-    };
-    update();
-    stdout.on?.("resize", update);
-    return () => {
-      stdout.off?.("resize", update);
-    };
-  }, [stdout]);
-
-  return size;
+  return createTerminalSize(stdout);
 }

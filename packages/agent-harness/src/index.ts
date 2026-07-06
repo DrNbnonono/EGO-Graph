@@ -25,6 +25,15 @@ export {
   requiredPermissionForTool as requiredPermissionForHarnessTool,
 } from "./safety-policy.js";
 export {
+  evaluatePermissionRules,
+  permissionRulesForLevel,
+  type PermissionDecision,
+  type PermissionEffect,
+  type PermissionReply,
+  type PermissionRequest,
+  type PermissionRule,
+} from "./permission-rules.js";
+export {
   createHarnessEvent,
   debugPayload,
   type HarnessEvent,
@@ -53,3 +62,17 @@ export {
   summarizeHarnessTool,
   type ExecuteHarnessToolStepInput,
 } from "./tool-flow.js";
+export { createEditTool, type EditToolInput, type EditToolOutput } from "./edit-tool.js";
+export {
+  loadPersistedLoopPolicy,
+  savePersistedLoopPolicy,
+  policyConfigPath,
+} from "./policy-config.js";
+export {
+  runAgentLoop,
+  type AgentLoopInput,
+} from "./agent-loop.js";
+export { mergeLoopPolicy, defaultLoopPolicy, type LoopPolicy } from "./loop-policy.js";
+export { evaluateBudgetWarning, type BudgetWarning } from "./stop-condition.js";
+export { createLoopState, type LoopState, type LoopIntent, type PlannerAction } from "./loop-state.js";
+export { type SecurityScopeGate } from "./tool-executor.js";

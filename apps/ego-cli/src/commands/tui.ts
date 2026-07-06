@@ -24,5 +24,5 @@ export async function handleTuiCommand(): Promise<void> {
   }
 
   const { renderTui } = await import("../tui.js");
-  renderTui();
+  await renderTui();
 }

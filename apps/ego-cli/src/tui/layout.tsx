@@ -1,8 +1,7 @@
+/** @jsxImportSource @opentui/solid */
 import type { PermissionLevel } from "@ego-graph/agent-harness";
 import type { WorkbenchState } from "@ego-graph/workbench";
-import { Box, Text } from "ink";
-import React from "react";
-import type { ReactElement } from "react";
+import type { JSX } from "solid-js";
 import { truncateDisplay } from "./cjk.js";
 
 export type TuiLayout = {
@@ -38,7 +37,7 @@ export function StatusLine({
   busy: boolean;
   thinkingExpanded: boolean;
   width: number;
-}): ReactElement {
+}): JSX.Element {
   const label = [
     "EGO-Graph",
     workbench.model.label,
@@ -51,10 +50,8 @@ export function StatusLine({
   ].join(" · ");
 
   return (
-    <Box paddingX={1}>
-      <Text color={busy ? "yellow" : "gray"}>
-        {truncateDisplay(label, Math.max(20, width - 2))}
-      </Text>
-    </Box>
+    <box paddingLeft={1} paddingRight={1}>
+      <text>{truncateDisplay(label, Math.max(20, width - 2))}</text>
+    </box>
   );
 }

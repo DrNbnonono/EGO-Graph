@@ -1,6 +1,5 @@
-import { Box, Text } from "ink";
-import React from "react";
-import type { ReactElement } from "react";
+/** @jsxImportSource @opentui/solid */
+import type { JSX } from "solid-js";
 import { truncateDisplay } from "./cjk.js";
 import { wrapDisplay } from "./text-wrap.js";
 
@@ -161,10 +160,10 @@ export function addPromptHistory(state: PromptState, submitted: string): PromptS
 
 export function createPromptChrome(width: number, busy: boolean): PromptChrome {
   return {
-    separator: "─".repeat(Math.max(8, width - 2)),
-    footer: "? for shortcuts  |  /help 查看所有命令",
-    promptPrefix: "❯ ",
-    status: busy ? "Stop hook running · Ctrl+O 展开思考过程" : "",
+    separator: " ".repeat(Math.max(8, width - 2)),
+    footer: "ctrl+p commands  /help status",
+    promptPrefix: "> ",
+    status: busy ? "ctrl+c interrupt  ctrl+o details" : "",
   };
 }
 
@@ -195,21 +194,21 @@ export function PromptInput({
   state: PromptState;
   busy: boolean;
   width: number;
-}): ReactElement {
+}): JSX.Element {
   const metrics = getPromptRenderMetrics(state, width);
   const chrome = createPromptChrome(width, busy);
 
   return (
-    <Box flexDirection="column" paddingX={1} height={metrics.height}>
-      <Text color="gray">{chrome.separator}</Text>
+    <box flexDirection="column" paddingLeft={1} paddingRight={1} height={metrics.height}>
+      <text>{chrome.separator}</text>
       {metrics.lines.map((line, index) => (
-        <Text key={index} color="white">
-          <Text color="white">{index === 0 ? chrome.promptPrefix : "  "}</Text>
+        <text>
+          <text>{index === 0 ? chrome.promptPrefix : "  "}</text>
           {line}
-        </Text>
+        </text>
       ))}
-      <Text color="gray">{chrome.separator}</Text>
-      <Text color={busy ? "yellow" : "gray"}>{busy ? chrome.status : chrome.footer}</Text>
-    </Box>
+      <text>{chrome.separator}</text>
+      <text>{busy ? chrome.status : chrome.footer}</text>
+    </box>
   );
 }

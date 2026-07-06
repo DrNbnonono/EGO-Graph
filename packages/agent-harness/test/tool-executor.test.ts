@@ -70,6 +70,63 @@ describe("tool executor", () => {
     expect(result.event.payload.recoveryHint).toContain("/allow security-active");
   });
 
+  it("emits permission.requested when a matching rule asks for approval", async () => {
+    const result = await executeToolCall({
+      tool: createTool({
+        name: "shell.write",
+        riskLevel: "high",
+        permission: { scope: "file", risk: "high", requiresSandbox: false },
+      }),
+      input: { value: "pnpm test" },
+      workspaceRoot: process.cwd(),
+      permissionLevel: "security-active",
+      approvalGranted: false,
+      permissionRules: [
+        { action: "*", resource: "*", effect: "deny" },
+        { action: "shell.write", resource: "pnpm test", effect: "ask" },
+      ],
+      runId: "run-permission-ask",
+      sessionId: "session-permission-ask",
+    });
+
+    expect(result.status).toBe("blocked");
+    expect(result.event.type).toBe("permission.requested");
+    expect(result.event.payload).toMatchObject({
+      action: "shell.write",
+      resources: ["pnpm test"],
+      savePolicy: ["pnpm test"],
+    });
+  });
+
+  it("rejects stale tool calls when the call identity no longer matches the tool", async () => {
+    const result = await executeToolCall({
+      tool: createTool({
+        name: "workspace.read",
+        identity: "workspace.read@2",
+      }),
+      input: { value: "README.md" },
+      call: {
+        id: "tool-call-stale",
+        name: "workspace.read",
+        input: { value: "README.md" },
+        permissionRequired: "read-only",
+        riskLevel: "low",
+        requiresApproval: false,
+        sandboxProfile: "none",
+        timeoutMs: 1_000,
+        toolIdentity: "workspace.read@1",
+      },
+      workspaceRoot: process.cwd(),
+      permissionLevel: "read-only",
+      approvalGranted: true,
+      runId: "run-stale",
+      sessionId: "session-stale",
+    });
+
+    expect(result.status).toBe("blocked");
+    expect(result.event.message).toContain("stale");
+  });
+
   it("emits tool.failed instead of tool.completed when execution throws", async () => {
     const result = await executeToolCall({
       tool: createTool({
@@ -133,15 +190,20 @@ describe("tool executor", () => {
 
     expect(completed.status).toBe("completed");
     expect(completed.event.type).toBe("tool.completed");
+    expect(completed.event.payload.truncated).toBe(true);
     expect(String(completed.event.payload.output.stdout)).toHaveLength(23);
     expect(completed.event.payload.debug).toMatchObject({
       fullOutput: expect.objectContaining({ result: "ok" }),
     });
   });
 
-  it("blocks high-risk tools when no SecurityScope is provided", async () => {
+  it("blocks network security tools when no SecurityScope is provided", async () => {
     const result = await executeToolCall({
-      tool: createTool({ name: "security.scan", riskLevel: "high" }),
+      tool: createTool({
+        name: "security.scan",
+        riskLevel: "high",
+        permission: { scope: "network", risk: "high", requiresSandbox: false },
+      }),
       input: { value: "x" },
       workspaceRoot: process.cwd(),
       permissionLevel: "security-active",
@@ -154,9 +216,13 @@ describe("tool executor", () => {
     expect(result.event.message).toContain("authorization scope");
   });
 
-  it("blocks high-risk tools when the SecurityScope has expired", async () => {
+  it("blocks network security tools when the SecurityScope has expired", async () => {
     const result = await executeToolCall({
-      tool: createTool({ name: "security.scan", riskLevel: "high" }),
+      tool: createTool({
+        name: "security.scan",
+        riskLevel: "high",
+        permission: { scope: "network", risk: "high", requiresSandbox: false },
+      }),
       input: { value: "x" },
       workspaceRoot: process.cwd(),
       permissionLevel: "security-active",
@@ -174,9 +240,13 @@ describe("tool executor", () => {
     expect(result.event.message).toContain("expired");
   });
 
-  it("runs a high-risk tool when the scope authorizes the action", async () => {
+  it("runs a network security tool when the scope authorizes the action", async () => {
     const result = await executeToolCall({
-      tool: createTool({ name: "security.fingerprint", riskLevel: "high" }),
+      tool: createTool({
+        name: "security.fingerprint",
+        riskLevel: "high",
+        permission: { scope: "network", risk: "high", requiresSandbox: false },
+      }),
       input: { value: "x" },
       workspaceRoot: process.cwd(),
       permissionLevel: "security-active",
@@ -195,7 +265,11 @@ describe("tool executor", () => {
 
   it("blocks when the required action is forbidden even if the scope is otherwise valid", async () => {
     const result = await executeToolCall({
-      tool: createTool({ name: "security.exploit_target", riskLevel: "high" }),
+      tool: createTool({
+        name: "security.exploit_target",
+        riskLevel: "high",
+        permission: { scope: "network", risk: "high", requiresSandbox: false },
+      }),
       input: { value: "x" },
       workspaceRoot: process.cwd(),
       permissionLevel: "security-active",
@@ -211,5 +285,25 @@ describe("tool executor", () => {
     });
     expect(result.status).toBe("blocked");
     expect(result.event.message).toContain("forbidden");
+  });
+
+  it("does not gate local high-risk tools (e.g. manifest audit) on SecurityScope", async () => {
+    // Local static analysis reads workspace files only; it must remain usable
+    // with security-active permission even when no network scope is declared.
+    const result = await executeToolCall({
+      tool: createTool({
+        name: "security.package_manifest_audit",
+        riskLevel: "high",
+        permission: { scope: "file", risk: "high", requiresSandbox: false },
+      }),
+      input: { value: "x" },
+      workspaceRoot: process.cwd(),
+      permissionLevel: "security-active",
+      approvalGranted: true,
+      runId: "run-scope-5",
+      sessionId: "session-scope-5",
+      // no securityScope — must still run
+    });
+    expect(result.status).toBe("completed");
   });
 });

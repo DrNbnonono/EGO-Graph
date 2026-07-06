@@ -13,7 +13,9 @@ import {
 import {
   createTerminalAgentSession,
   type AgentRunEvent,
+  type LoopPolicy,
   type PermissionLevel,
+  type TerminalAgentSession,
 } from "@ego-graph/agent-harness";
 import {
   createModelBackedPlanner,
@@ -96,6 +98,7 @@ export function createServer(options: CreateServerOptions = {}): Hono {
     : findWorkspaceRoot(process.cwd());
   const egoHome = options.egoHome ?? defaultEgoHome();
   const metricsSampler = createRuntimeMetricsSampler();
+  const activeHarnessSessions = new Map<string, TerminalAgentSession>();
 
   app.get("/health", (context) => {
     return context.json({ ok: true, service: "ego-api" });
@@ -846,14 +849,24 @@ export function createServer(options: CreateServerOptions = {}): Hono {
       ...(options.modelProvider !== undefined ? { modelProvider: options.modelProvider } : {}),
     });
     await session.hydratePendingRuns();
-    const events = await collectHarnessEvents(session.submitMessage(message));
-    const runId = events[0]?.runId;
-    return context.json({
-      ok: true,
-      runId,
-      events,
-      state: runId ? session.getRunState(runId) : undefined,
-    });
+    let activeRunId: string | undefined;
+    try {
+      const events = await collectHarnessEvents(session.submitMessage(message), (event) => {
+        activeRunId ??= event.runId;
+        activeHarnessSessions.set(event.runId, session);
+      });
+      const runId = events[0]?.runId;
+      return context.json({
+        ok: true,
+        runId,
+        events,
+        state: runId ? session.getRunState(runId) : undefined,
+      });
+    } finally {
+      if (activeRunId) {
+        activeHarnessSessions.delete(activeRunId);
+      }
+    }
   });
 
   app.post("/agent/harness/runs/:id/plan/approve", async (context) => {
@@ -886,6 +899,42 @@ export function createServer(options: CreateServerOptions = {}): Hono {
     const runId = context.req.param("id");
     const events = await collectHarnessEvents(session.approvePatch(runId));
     return context.json({ ok: true, runId, events, state: session.getRunState(runId) });
+  });
+
+  app.post("/agent/harness/runs/:id/cancel", async (context) => {
+    const runId = context.req.param("id");
+    const session = activeHarnessSessions.get(runId);
+    return context.json({
+      ok: true,
+      runId,
+      cancelled: session ? session.cancel(runId) : false,
+    });
+  });
+
+  app.post("/agent/harness/runs/:id/btw", async (context) => {
+    const runId = context.req.param("id");
+    const body = (await context.req.json().catch(() => ({}))) as { message?: string };
+    const message = body.message?.trim();
+    if (!message) {
+      return context.json({ ok: false, error: "message is required" }, 400);
+    }
+    const session = activeHarnessSessions.get(runId);
+    return context.json({
+      ok: true,
+      runId,
+      queued: session ? session.btw(runId, message) : false,
+    });
+  });
+
+  app.get("/agent/harness/policy", async (context) => {
+    const session = createTerminalAgentSession({ workspaceRoot, egoHome });
+    return context.json({ ok: true, policy: await session.getPolicy() });
+  });
+
+  app.patch("/agent/harness/policy", async (context) => {
+    const body = (await context.req.json().catch(() => ({}))) as Partial<LoopPolicy>;
+    const session = createTerminalAgentSession({ workspaceRoot, egoHome });
+    return context.json({ ok: true, policy: await session.setPolicy(body) });
   });
 
   app.get("/agent/harness/runs/:id/replay", async (context) => {
@@ -1317,9 +1366,11 @@ function parseAgentPlanMode(mode: string | undefined): AgentPlanMode | undefined
 
 async function collectHarnessEvents(
   stream: AsyncIterable<AgentRunEvent>,
+  onEvent?: (event: AgentRunEvent) => void,
 ): Promise<AgentRunEvent[]> {
   const events: AgentRunEvent[] = [];
   for await (const event of stream) {
+    onEvent?.(event);
     events.push(event);
   }
   return events;

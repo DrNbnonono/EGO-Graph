@@ -1,4 +1,9 @@
-import { zodToJsonSchema, type ChatMessage, type ChatModelProvider } from "@ego-graph/llm";
+import {
+  zodToJsonSchema,
+  type ChatMessage,
+  type ChatModelProvider,
+  type StructuredChatCompletion,
+} from "@ego-graph/llm";
 import type { createTerminalAgentToolRegistry } from "@ego-graph/tools";
 import {
   executeHarnessToolStep,
@@ -8,7 +13,7 @@ import {
 import { mergeLoopPolicy, type LoopPolicy } from "./loop-policy.js";
 import { createLoopState, type LoopIntent, type PlannerAction } from "./loop-state.js";
 import { buildLoopReflection } from "./reflection.js";
-import { evaluateStopCondition } from "./stop-condition.js";
+import { evaluateBudgetWarning, evaluateStopCondition } from "./stop-condition.js";
 import type { SecurityScopeGate } from "./tool-executor.js";
 import type { AgentRunEvent, PermissionLevel } from "./session.js";
 
@@ -35,6 +40,20 @@ export type AgentLoopInput = {
    * to persist the conversation. Keeping the loop decoupled from storage.
    */
   onMessage?(message: ChatMessage): void;
+  /**
+   * Polled once per loop step. Returns any "by the way" messages the user
+   * injected while the run was in flight, and clears them from the queue.
+   * Each returned message is appended as a new user turn before the next
+   * planner decision, letting the user redirect a running task without
+   * cancelling it (Codex-style mid-run interjection).
+   */
+  pollBtw?(): string[];
+  /**
+   * When aborted, the loop emits run.cancelled at the next check point and
+   * stops. The signal is also forwarded to the provider so an in-flight model
+   * request is aborted rather than waited out.
+   */
+  signal?: AbortSignal;
   emit(event: HarnessToolEventInput): Promise<AgentRunEvent>;
   emitEvidence(event: HarnessEvidenceEventInput): Promise<AgentRunEvent>;
 };
@@ -83,6 +102,19 @@ export async function* runAgentLoop(input: AgentLoopInput): AsyncIterable<AgentR
   input.onMessage?.(userTurn);
 
   while (state.status === "running") {
+    if (input.signal?.aborted) {
+      state.status = "stopped";
+      state.stopReason = "Run cancelled by user.";
+      yield await input.emit({
+        type: "run.cancelled",
+        runId: input.runId,
+        sessionId: input.sessionId,
+        message: "Run cancelled by user.",
+        payload: { reason: "user-cancel" },
+      });
+      return;
+    }
+
     const stop = evaluateStopCondition(state, effectivePolicy);
     if (stop.shouldStop) {
       state.status = stop.status;
@@ -95,6 +127,42 @@ export async function* runAgentLoop(input: AgentLoopInput): AsyncIterable<AgentR
         payload: { loop: state },
       });
       return;
+    }
+
+    // Warn once before the loop actually blocks on budget, so the user has a
+    // chance to /continue with a higher policy or /btw a correction instead
+    // of the run just stopping without warning.
+    if (!state.budgetWarningEmitted) {
+      const warning = evaluateBudgetWarning(state, effectivePolicy);
+      if (warning) {
+        state.budgetWarningEmitted = true;
+        yield await input.emit({
+          type: "loop.budget.warning",
+          runId: input.runId,
+          sessionId: input.sessionId,
+          message: warning.reason,
+          payload: {
+            remainingSteps: warning.remainingSteps,
+            remainingToolCalls: warning.remainingToolCalls,
+          },
+        });
+      }
+    }
+
+    // Fold in any "by the way" messages the user injected while this run was
+    // in flight, as new user turns, before the planner decides the next step.
+    const btwMessages = input.pollBtw?.() ?? [];
+    for (const btw of btwMessages) {
+      const btwTurn: ChatMessage = { role: "user", content: `(btw) ${btw}` };
+      modelMessages.push(btwTurn);
+      input.onMessage?.(btwTurn);
+      yield await input.emit({
+        type: "user.btw",
+        runId: input.runId,
+        sessionId: input.sessionId,
+        message: btw,
+        payload: { step: state.stepCount },
+      });
     }
 
     state.stepCount += 1;
@@ -111,7 +179,17 @@ export async function* runAgentLoop(input: AgentLoopInput): AsyncIterable<AgentR
       },
     });
 
-    const action = await choosePlannerAction(input, state, effectivePolicy, modelMessages);
+    let action: PlannerAction | undefined;
+    for await (const step of choosePlannerAction(input, state, effectivePolicy, modelMessages)) {
+      if (step.type === "delta") {
+        yield step.event;
+      } else {
+        action = step.action;
+      }
+    }
+    if (!action) {
+      action = deterministicAction(input, state);
+    }
     yield await input.emit({
       type: "planner.decision",
       runId: input.runId,
@@ -222,27 +300,33 @@ export async function* runAgentLoop(input: AgentLoopInput): AsyncIterable<AgentR
   }
 }
 
-async function choosePlannerAction(
+type PlannerStep = { type: "delta"; event: AgentRunEvent } | { type: "action"; action: PlannerAction };
+
+async function* choosePlannerAction(
   input: AgentLoopInput,
   state: ReturnType<typeof createLoopState>,
   policy: LoopPolicy,
   modelMessages: ChatMessage[],
-): Promise<PlannerAction> {
-  const structured = await tryStructuredModelAction(input, state, policy, modelMessages);
-  if (structured) {
-    return structured;
+): AsyncIterable<PlannerStep> {
+  let structured: PlannerAction | undefined;
+  for await (const step of tryStructuredModelAction(input, state, policy, modelMessages)) {
+    if (step.type === "delta") {
+      yield step;
+    } else {
+      structured = step.action;
+    }
   }
-  return deterministicAction(input, state);
+  yield { type: "action", action: structured ?? deterministicAction(input, state) };
 }
 
-async function tryStructuredModelAction(
+async function* tryStructuredModelAction(
   input: AgentLoopInput,
   state: ReturnType<typeof createLoopState>,
   policy: LoopPolicy,
   modelMessages: ChatMessage[],
-): Promise<PlannerAction | undefined> {
+): AsyncIterable<PlannerStep> {
   if (!input.modelProvider?.completeStructured) {
-    return undefined;
+    return;
   }
   // Chat intent is restricted to read-only tools so small questions can still
   // grep/list the repo without risking writes or shell execution.
@@ -280,10 +364,24 @@ async function tryStructuredModelAction(
       inputSchema: tool.inputSchema,
     }));
     const remainingTools = Math.max(0, policy.maxToolCalls - state.toolCallCount);
-    const result = await input.modelProvider.completeStructured({
+    // Emit a thinking heartbeat before the (possibly multi-second) model call
+    // so the UI shows activity instead of going silent, without exposing any
+    // hidden chain-of-thought content.
+    yield {
+      type: "delta",
+      event: await input.emit({
+        type: "assistant.thinking",
+        runId: input.runId,
+        sessionId: input.sessionId,
+        message: "Thinking...",
+        payload: { step: state.stepCount },
+      }),
+    };
+    const request = {
       temperature: 0,
       maxTokens: 1200,
       ...(tools.length > 0 ? { toolChoice: "auto" as const, tools } : {}),
+      ...(input.signal ? { signal: input.signal } : {}),
       messages: [
         ...modelMessages,
         {
@@ -299,7 +397,32 @@ async function tryStructuredModelAction(
           ].join("\n"),
         },
       ],
-    });
+    };
+    let result: StructuredChatCompletion;
+    if (input.modelProvider.streamStructured) {
+      let content = "";
+      let toolCalls: StructuredChatCompletion["toolCalls"] = [];
+      for await (const event of input.modelProvider.streamStructured(request)) {
+        if (event.type === "text") {
+          yield {
+            type: "delta",
+            event: await input.emit({
+              type: "assistant.delta",
+              runId: input.runId,
+              sessionId: input.sessionId,
+              message: event.content,
+              payload: { modelStreaming: true },
+            }),
+          };
+        } else if (event.type === "done") {
+          content = event.content;
+          toolCalls = event.toolCalls;
+        }
+      }
+      result = { content, toolCalls };
+    } else {
+      result = await input.modelProvider.completeStructured(request);
+    }
     const call = result.toolCalls[0];
     if (!call) {
       // No tool call: treat the model's text content as the final answer and
@@ -308,30 +431,37 @@ async function tryStructuredModelAction(
       if (answer) {
         input.onMessage?.({ role: "assistant", content: answer });
       }
-      return {
-        thoughtSummary: answer || "Model produced no tool call.",
+      yield {
+        type: "action",
+        action: {
+          thoughtSummary: answer || "Model produced no tool call.",
+          intent: input.intent,
+          nextAction: "answer",
+          riskLevel: "low",
+          requiredPermission: "read-only",
+          userVisibleMessage: answer || "模型未给出明确回答。",
+          expectedObservation: "No further tool required.",
+          stopCondition: "Model produced a final text answer.",
+        },
+      };
+      return;
+    }
+    yield {
+      type: "action",
+      action: {
+        thoughtSummary: result.content || `Model selected ${call.name}.`,
         intent: input.intent,
-        nextAction: "answer",
+        nextAction: "call_tool",
+        toolCall: { name: call.name, arguments: call.arguments },
         riskLevel: "low",
         requiredPermission: "read-only",
-        userVisibleMessage: answer || "模型未给出明确回答。",
-        expectedObservation: "No further tool required.",
-        stopCondition: "Model produced a final text answer.",
-      };
-    }
-    return {
-      thoughtSummary: result.content || `Model selected ${call.name}.`,
-      intent: input.intent,
-      nextAction: "call_tool",
-      toolCall: { name: call.name, arguments: call.arguments },
-      riskLevel: "low",
-      requiredPermission: "read-only",
-      userVisibleMessage: `模型选择调用工具：${call.name}`,
-      expectedObservation: "Tool returns additional evidence for the current task.",
-      stopCondition: "Stop when enough evidence is collected or a plan is ready.",
+        userVisibleMessage: `模型选择调用工具：${call.name}`,
+        expectedObservation: "Tool returns additional evidence for the current task.",
+        stopCondition: "Stop when enough evidence is collected or a plan is ready.",
+      },
     };
   } catch {
-    return undefined;
+    return;
   }
 }
 

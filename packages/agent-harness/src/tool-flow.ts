@@ -99,6 +99,20 @@ export async function* executeHarnessToolStep(
     return;
   }
 
+  if (result.event.payload.truncated === true) {
+    yield await input.emit({
+      type: "tool.output.truncated",
+      runId: input.runId,
+      sessionId: input.sessionId,
+      message: `Output truncated for ${tool.name}.`,
+      payload: {
+        tool: tool.name,
+        toolCall,
+        maxOutputBytes: tool.maxOutputBytes,
+      },
+    });
+  }
+
   const output = result.output ?? {};
   const findings = Array.isArray(output.findings) ? output.findings.map(String) : [];
   yield await input.emit({
@@ -108,6 +122,34 @@ export async function* executeHarnessToolStep(
     message: findings[0] ?? `Observed ${tool.name} output.`,
     payload: { tool: tool.name, findings, output },
   });
+
+  // When the model proposes a patch via the workspace.edit tool inside the
+  // loop, surface it as a patch.proposed event so the session can pause for
+  // human approval — mirroring how plan-driven patches already flow.
+  if (
+    tool.name === "workspace.edit" &&
+    typeof (output as { status?: string }).status === "string" &&
+    (output as { status?: string }).status === "proposed"
+  ) {
+    const editOutput = output as {
+      previewId: string;
+      goal: string;
+      files: string[];
+      diff: string;
+    };
+    yield await input.emit({
+      type: "patch.proposed",
+      runId: input.runId,
+      sessionId: input.sessionId,
+      message: `Model-proposed patch ready for ${editOutput.files.length} file(s).`,
+      payload: {
+        approvalId: `approval-${editOutput.previewId}`,
+        diff: editOutput.diff,
+        files: editOutput.files,
+        source: "loop-edit-tool",
+      },
+    });
+  }
 
   const candidates =
     tool.evidenceMapper?.(output as z.output<ZodTypeAny>) ??

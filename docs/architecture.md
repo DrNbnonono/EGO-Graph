@@ -14,6 +14,16 @@ stays direct; project analysis runs bounded read-only tools; code changes must
 pass plan and patch approval; active security tasks require an explicit
 SecurityScope.
 
+The vNext control plane adds Codex/OpenCode-style live steering without replacing the existing
+Harness. `cancel`, `btw`, and policy updates are session methods surfaced through TUI commands and
+local API routes. The loop forwards `AbortSignal` to providers, emits `assistant.thinking` before
+model calls, streams `assistant.delta`, and warns with `loop.budget.warning` before hard budget
+stops.
+
+Permission enforcement is two-layered. Existing permission levels remain presets, then
+OpenCode-style action/resource rules decide `allow`, `ask`, or `deny`; the last matching rule wins.
+Tool calls carry stable identities so stale model-advertised calls can be rejected.
+
 Workspace context is selected by the Repo Index and Context Engine: file
 metadata, lightweight symbols, dependency hints, likely tests, recent events,
 memory hits, and token budget. Secret-like files, `.git`, `.ego`,
@@ -28,6 +38,10 @@ SecurityScope and low-risk local fixture / CTF / API-doc tools. Public scanning,
 bruteforce, exploit automation, credential access, DDoS, and destructive
 payloads remain out of scope unless future authorized tooling adds explicit
 scope, risk, sandbox, approval, and audit handling.
+
+Local fixture tools are executable for demos: request, crawl, fingerprint, and vulnerability draft
+report generation. They refuse non-local fixture URLs in the bridge and still pass through Harness
+scope/approval gates when executed by the agent.
 
 EGO-Graph means Evidence-Guided Orchestration Graph. The system converts an authorized security task into a typed `TaskSpec`, creates a `MissionGraph`, executes scenario tools through a deny-by-default policy, stores JSONL trajectory events, indexes them in SQLite, and renders reports/replay views.
 
@@ -84,6 +98,8 @@ Primary packages:
 - `packages/core`: task specs, mission graph, trajectory events, and runner.
 - `packages/llm`: MiniMax M3 Anthropic Messages provider plus OpenAI-compatible model abstraction.
 - `packages/tools`: tool registry, permission policy, skills/plugins, and `web.search`.
+- `packages/tools`: also owns terminal workspace tools, `shell.write`, security-tool bridging, and
+  lightweight TypeScript code-intelligence tools under `lsp.*`.
 - `packages/overlays`: scenario overlays.
 - `packages/storage`: JSONL trajectory storage plus SQLite run/evidence/artifact/report index.
 - `packages/report`: report generation.

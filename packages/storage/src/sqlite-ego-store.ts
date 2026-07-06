@@ -255,13 +255,22 @@ type AgentPlanRow = {
 
 type DatabaseSyncConstructor = new (path: string) => DatabaseSyncType;
 
+function loadDatabaseSyncConstructor(): DatabaseSyncConstructor {
+  const require = createRequire(import.meta.url);
+  if ((process.versions as Record<string, string | undefined>).bun) {
+    const { Database } = require("bun:sqlite") as { Database: DatabaseSyncConstructor };
+    return Database;
+  }
+  const { DatabaseSync } = require("node:sqlite") as { DatabaseSync: DatabaseSyncConstructor };
+  return DatabaseSync;
+}
+
 export class SqliteEgoStore implements ConversationStore {
   private readonly db: DatabaseSyncType;
 
   constructor(private readonly path: string) {
     mkdirSync(dirname(path), { recursive: true });
-    const require = createRequire(import.meta.url);
-    const { DatabaseSync } = require("node:sqlite") as { DatabaseSync: DatabaseSyncConstructor };
+    const DatabaseSync = loadDatabaseSyncConstructor();
     this.db = new DatabaseSync(path);
     this.migrate();
   }
