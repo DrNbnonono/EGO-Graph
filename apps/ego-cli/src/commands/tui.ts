@@ -1,9 +1,12 @@
 import { isModelConfigured, loadModelConfig } from "@ego-graph/llm";
-import { defaultEgoHome, sqlitePath } from "@ego-graph/storage";
+import { sqlitePath } from "@ego-graph/storage";
+import { resolveWorkspaceEgoHome, resolveWorkspaceRoot } from "../workspace-root.js";
 
 export async function handleTuiCommand(): Promise<void> {
   if (process.env.CI === "true") {
-    const model = loadModelConfig({ workspaceRoot: process.cwd() });
+    const workspaceRoot = resolveWorkspaceRoot();
+    const egoHome = resolveWorkspaceEgoHome(workspaceRoot);
+    const model = loadModelConfig({ workspaceRoot });
     const modelLabel = isModelConfigured(model)
       ? (model.model ?? model.provider)
       : "deterministic fallback";
@@ -18,7 +21,7 @@ export async function handleTuiCommand(): Promise<void> {
     console.log(
       "Terminal approvals: review Plan, inspect Diff, approve/reject Patch, apply and check",
     );
-    console.log(`SQLite: ${sqlitePath(defaultEgoHome())}`);
+    console.log(`SQLite: ${sqlitePath(egoHome)}`);
     console.log("ego run --scenario web_pentest --input scenarios/web_pentest/basic/task.json");
     return;
   }

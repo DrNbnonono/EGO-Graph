@@ -129,15 +129,31 @@ function renderMarkdownLine(line: string): string {
 
 function isFoldedEvent(type: AgentRunEvent["type"]): boolean {
   return (
+    type.includes("context") ||
+    type.includes("memory") ||
+    type.includes("planner") ||
+    type.includes("loop") ||
+    type.includes("plan") ||
     type.includes("tool") ||
     type.includes("evidence") ||
     type.includes("reflection") ||
     type.includes("model.failed") ||
-    type.includes("check")
+    type.includes("check") ||
+    type.includes("patch") ||
+    type.includes("permission")
   );
 }
 
 function readCompactEventLabel(type: AgentRunEvent["type"]): string {
+  if (type.includes("context")) {
+    return "context pack";
+  }
+  if (type.includes("planner") || type.includes("plan")) {
+    return "plan event";
+  }
+  if (type.includes("loop")) {
+    return "agent loop";
+  }
   if (type.includes("tool")) {
     return "tool event";
   }
@@ -152,6 +168,12 @@ function readCompactEventLabel(type: AgentRunEvent["type"]): string {
   }
   if (type.includes("model")) {
     return "model event";
+  }
+  if (type.includes("patch")) {
+    return "patch event";
+  }
+  if (type.includes("permission")) {
+    return "permission event";
   }
   return "runtime event";
 }
@@ -190,8 +212,20 @@ function eventIcon(type: AgentRunEvent["type"]): string {
   if (type.includes("memory")) {
     return "memory";
   }
+  if (type.includes("planner") || type.includes("plan")) {
+    return "plan";
+  }
+  if (type.includes("loop")) {
+    return "agent";
+  }
   if (type.includes("model")) {
     return "model";
+  }
+  if (type.includes("patch")) {
+    return "patch";
+  }
+  if (type.includes("permission")) {
+    return "permission";
   }
   return "agent";
 }

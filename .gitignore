@@ -40,3 +40,4 @@ output/playwright
 .playwright-cli/
 opencode/
 .zread/
+prompt.md

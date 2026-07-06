@@ -6,6 +6,7 @@ import {
   type TerminalAgentRunState,
   type TerminalAgentSession,
 } from "@ego-graph/agent-harness";
+import { listModelProfiles, saveModelConfig, selectModelProfile, type ModelProfilesState, type PersistedModelConfig } from "@ego-graph/llm";
 import { readWorkbenchState, type WorkbenchState } from "@ego-graph/workbench";
 import { TextareaRenderable, TextAttributes, type ScrollBoxRenderable } from "@opentui/core";
 import { useBindings } from "@opentui/keymap/solid";
@@ -34,6 +35,7 @@ import { TuiRuntimeProvider } from "./runtime.js";
 import { TuiThemeProvider, useTuiTheme } from "./theme.js";
 import { renderConversationLines } from "./tui-events.js";
 import type { TuiRunSession } from "./tui-state.js";
+import { resolveWorkspaceEgoHome, resolveWorkspaceRoot } from "../workspace-root.js";
 
 const permissionLevels: PermissionLevel[] = [
   "read-only",
@@ -50,20 +52,22 @@ function keymapCommandName(command: string): string {
 }
 
 export function EgoTuiApp(props: { onExit: () => void }): JSX.Element {
-  const session = createTerminalAgentSession({ workspaceRoot: process.cwd() });
+  const workspaceRoot = resolveWorkspaceRoot();
+  const egoHome = resolveWorkspaceEgoHome(workspaceRoot);
+  const session = createTerminalAgentSession({ workspaceRoot, egoHome });
   const [workbench, setWorkbench] = createSignal<WorkbenchState>();
   const [permissionLevel, setPermissionLevel] = createSignal<PermissionLevel>(
     session.getPermissionLevel(),
   );
 
   onMount(() => {
-    void refreshWorkbench(setWorkbench, () => undefined, () => undefined);
+    void refreshWorkbench(workspaceRoot, egoHome, setWorkbench, () => undefined, () => undefined);
   });
 
   return (
     <TuiThemeProvider>
       <TuiRuntimeProvider
-        cwd={process.cwd()}
+        cwd={workspaceRoot}
         session={session}
         workbench={workbench}
         permissionLevel={permissionLevel}
@@ -71,6 +75,8 @@ export function EgoTuiApp(props: { onExit: () => void }): JSX.Element {
         <TuiDialogProvider>
           <EgoTuiShell
             session={session}
+            workspaceRoot={workspaceRoot}
+            egoHome={egoHome}
             workbench={workbench}
             setWorkbench={setWorkbench}
             permissionLevel={permissionLevel}
@@ -85,6 +91,8 @@ export function EgoTuiApp(props: { onExit: () => void }): JSX.Element {
 
 function EgoTuiShell(props: {
   session: TerminalAgentSession;
+  workspaceRoot: string;
+  egoHome: string;
   workbench: () => WorkbenchState | undefined;
   setWorkbench: Setter<WorkbenchState | undefined>;
   permissionLevel: () => PermissionLevel;
@@ -106,6 +114,7 @@ function EgoTuiShell(props: {
   const [showScrollbar, setShowScrollbar] = createSignal(false);
   const [sidebarOpen, setSidebarOpen] = createSignal(false);
   const [diffFileIndex, setDiffFileIndex] = createSignal(0);
+  const [interruptCount, setInterruptCount] = createSignal(0);
   const [promptText, setPromptText] = createSignal("");
   const [promptHistory, setPromptHistory] = createSignal<string[]>([]);
   const [historyIndex, setHistoryIndex] = createSignal<number | undefined>();
@@ -143,6 +152,8 @@ function EgoTuiShell(props: {
       );
     });
     void refreshWorkbench(
+      props.workspaceRoot,
+      props.egoHome,
       props.setWorkbench,
       setHistoryItems,
       appendSystemEvent(setEvents),
@@ -176,7 +187,11 @@ function EgoTuiShell(props: {
         title: "Close dialog",
         run: () => {
           if (dialog.state.type !== "none") {
-            dialog.clear();
+          dialog.clear();
+          return;
+        }
+          if (busy()) {
+            requestInterrupt();
             return;
           }
           props.onExit();
@@ -204,6 +219,10 @@ function EgoTuiShell(props: {
           if (input && input.plainText.length > 0) {
             input.setText("");
             setPromptText("");
+            return;
+          }
+          if (busy()) {
+            requestInterrupt();
             return;
           }
           props.onExit();
@@ -268,7 +287,33 @@ function EgoTuiShell(props: {
       setReplayMode,
       toggleThinking: () => setThinkingExpanded((previous) => !previous),
       exit: props.onExit,
+      workspaceRoot: props.workspaceRoot,
+      egoHome: props.egoHome,
     });
+  }
+
+  function requestInterrupt(): void {
+    const runId = activeRunId();
+    if (!runId) {
+      setEvents((previous) => [...previous, localEvent("No active run to interrupt.")]);
+      return;
+    }
+    const next = interruptCount() + 1;
+    setInterruptCount(next);
+    setTimeout(() => setInterruptCount(0), 5_000);
+    if (next < 2) {
+      setEvents((previous) => [
+        ...previous,
+        localEvent("Interrupt requested. Press again within 5s to abort the active run."),
+      ]);
+      return;
+    }
+    const cancelled = props.session.cancel(runId);
+    setInterruptCount(0);
+    setEvents((previous) => [
+      ...previous,
+      localEvent(cancelled ? `Abort requested for ${runId}.` : `Run is not active: ${runId}`),
+    ]);
   }
 
   function movePromptHistory(delta: -1 | 1): void {
@@ -481,31 +526,33 @@ function HomeRoute(props: {
 function LotusLogo(): JSX.Element {
   const theme = useTuiTheme();
   const lines = [
-    "        PURPLE LOTUS / 紫莲花        ",
-    "             ▄▄   ▄▄             ",
-    "          ▄████▄ ▄████▄          ",
-    "       ▄████████████████▄       ",
-    "    ▄██████▀  ██  ▀██████▄    ",
-    "      ▀██▀   ▄██▄   ▀██▀      ",
-    "          ▀▄██████▄▀          ",
-    "             ▀████▀             ",
+    "                 ▄█▄                 ",
+    "              ▄█████▄              ",
+    "           ▄███▀███▀███▄           ",
+    "        ▄███▀   ███   ▀███▄        ",
+    "     ▄███▀   ▄███████▄   ▀███▄     ",
+    "   ▄███▀  ▄███▀  ███  ▀███▄  ▀███▄   ",
+    "  ████   ███     ███     ███   ████  ",
+    "   ▀███▄  ▀███▄  ███  ▄███▀  ▄███▀   ",
+    "     ▀███▄   ▀███████▀   ▄███▀     ",
+    "        ▀███▄   ▀█▀   ▄███▀        ",
+    "           ▀███▄▄█▄▄███▀           ",
+    "              ▀█████▀              ",
+    "                 ▀                 ",
   ];
+  const colorFor = (index: number) => {
+    if (index <= 2) return theme.accent;
+    if (index <= 7) return theme.primary;
+    if (index <= 10) return theme.secondary;
+    return theme.borderActive;
+  };
   return (
     <box alignItems="center">
       <For each={lines}>
         {(line, index) => (
-          <Show
-            when={index() === 0}
-            fallback={
-              <text fg={theme.primaryDim} selectable={false}>
-                {line}
-              </text>
-            }
-          >
-            <text fg={theme.primary} attributes={TextAttributes.BOLD} selectable={false}>
-              {line}
-            </text>
-          </Show>
+          <text fg={colorFor(index())} attributes={TextAttributes.BOLD} selectable={false}>
+            {line}
+          </text>
         )}
       </For>
     </box>
@@ -680,9 +727,10 @@ function Footer(props: {
   const theme = useTuiTheme();
   const mcpConnected = () => props.workbench?.mcp.status === "connected";
   const pending = () => props.activeRun?.status === "plan_pending" || props.activeRun?.status === "patch_pending";
+  const directory = createMemo(() => compactPath(props.workbench?.cwd ?? process.cwd(), 34));
   return (
     <box flexDirection="row" justifyContent="space-between" gap={1} flexShrink={0} paddingLeft={1} paddingRight={1}>
-      <text fg={theme.textMuted}>cwd {props.workbench?.cwd ?? process.cwd()}</text>
+      <text fg={theme.textMuted}>dir {directory()}</text>
       <box gap={2} flexDirection="row" flexShrink={0}>
         <Show when={pending()}>
           <text fg={theme.warning}>△ permission</text>
@@ -698,6 +746,14 @@ function Footer(props: {
       </box>
     </box>
   );
+}
+
+function compactPath(value: string, maxLength: number): string {
+  const normalized = value.replace(process.env.HOME ?? "", "~");
+  if (normalized.length <= maxLength) return normalized;
+  const parts = normalized.split(/[\\/]/).filter(Boolean);
+  const leaf = parts.slice(-2).join("/");
+  return `.../${leaf}`.slice(-maxLength);
 }
 
 function DialogOverlay(props: {
@@ -725,6 +781,9 @@ function DialogOverlay(props: {
       </Show>
       <Show when={props.state.type === "permissions"}>
         <PermissionsDialog current={props.permissionLevel} onCommand={props.onCommand} />
+      </Show>
+      <Show when={props.state.type === "models"}>
+        <ModelsDialog onCommand={props.onCommand} />
       </Show>
       <Show when={props.state.type === "plan"}>
         <PlanDialog plan={props.activeRun?.plan ?? []} />
@@ -778,6 +837,58 @@ function CommandDialog(props: {
         };
       })}
     />
+  );
+}
+
+function ModelsDialog(props: { onCommand(command: string): void }): JSX.Element {
+  const [state, setState] = createSignal<ModelProfilesState>();
+  const [error, setError] = createSignal<string>();
+  onMount(() => {
+    void listModelProfiles({ workspaceRoot: resolveWorkspaceRoot(), env: {} })
+      .then(setState)
+      .catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
+  });
+
+  const options = createMemo(() =>
+    (state()?.profiles ?? []).map((profile) => ({
+      title: profile.name,
+      value: profile.id,
+      category: profile.id === state()?.activeProfileId ? "Active" : "Profiles",
+      description: [
+        profile.config.provider ?? "provider",
+        profile.config.model ?? "model",
+        profile.apiKeyConfigured ? "key configured" : "missing key",
+      ].join(" · "),
+      footer: profile.id,
+      onSelect: () => props.onCommand(`/model select ${profile.id}`),
+    })),
+  );
+
+  return (
+    <Show
+      when={!error()}
+      fallback={<TextDialog title="Models" lines={[error() ?? "Failed to load model profiles."]} />}
+    >
+      <Show
+        when={options().length > 0}
+        fallback={
+          <TextDialog
+            title="Models"
+            lines={[
+              "No model profiles found.",
+              "Use Web Workbench Models page or `ego config model` to create .ego/config.json.",
+            ]}
+          />
+        }
+      >
+        <DialogSelect
+          title="Models"
+          placeholder="Select model profile"
+          options={options()}
+          footer={<text>/model shows active config · enter selects</text>}
+        />
+      </Show>
+    </Show>
   );
 }
 
@@ -922,6 +1033,8 @@ function TextDialog(props: { title: string; lines: string[] }): JSX.Element {
 type SubmitInputOptions = {
   submitted: string;
   session: TerminalAgentSession;
+  workspaceRoot: string;
+  egoHome: string;
   activeRun: TerminalAgentRunState | undefined;
   activeRunId: string | undefined;
   setActiveRunId: Setter<string | undefined>;
@@ -982,7 +1095,7 @@ async function submitInput(input: SubmitInputOptions): Promise<void> {
     return;
   }
   if (normalized === "/init") {
-    await refreshWorkbench(input.setWorkbench, input.setHistoryItems, appendSystemEvent(input.setEvents));
+    await refreshWorkbench(input.workspaceRoot, input.egoHome, input.setWorkbench, input.setHistoryItems, appendSystemEvent(input.setEvents));
     input.setEvents((previous) => [
       ...previous,
       localEvent("工作区已就绪。可以直接输入自然语言任务，或使用 /scan 查看授权要求。"),
@@ -990,7 +1103,7 @@ async function submitInput(input: SubmitInputOptions): Promise<void> {
     return;
   }
   if (normalized === "/history") {
-    await refreshWorkbench(input.setWorkbench, input.setHistoryItems, appendSystemEvent(input.setEvents));
+    await refreshWorkbench(input.workspaceRoot, input.egoHome, input.setWorkbench, input.setHistoryItems, appendSystemEvent(input.setEvents));
     input.setDialog({ type: "history" });
     return;
   }
@@ -1067,10 +1180,78 @@ async function submitInput(input: SubmitInputOptions): Promise<void> {
     input.setEvents((previous) => [...previous, localEvent(`Policy updated: ${JSON.stringify(policy)}`)]);
     return;
   }
-  if (normalized === "/model" || normalized === "/models") {
+  if (normalized === "/model") {
+    await refreshWorkbench(input.workspaceRoot, input.egoHome, input.setWorkbench, input.setHistoryItems, appendSystemEvent(input.setEvents));
+    const state = await readWorkbenchState({ workspaceRoot: input.workspaceRoot, egoHome: input.egoHome });
     input.setEvents((previous) => [
       ...previous,
-      localEvent("模型管理请打开 ego serve 的 Models 页面；TUI 顶部会同步显示当前 active profile。"),
+      localEvent(
+        [
+          `model ${state.model.label}`,
+          `provider ${state.model.provider}`,
+          `configured ${state.model.configured ? "yes" : "no"}`,
+          `source ${state.model.source}${state.model.sourcePath ? ` (${state.model.sourcePath})` : ""}`,
+          `profiles ${state.model.profiles.length}`,
+          "Use /models to select an existing profile.",
+        ].join("\n"),
+      ),
+    ]);
+    return;
+  }
+  if (normalized === "/models") {
+    input.setDialog({ type: "models" });
+    return;
+  }
+  if (normalized.startsWith("/model select ")) {
+    const id = input.submitted.replace(/^\/model\s+select\s+/iu, "").trim();
+    try {
+      const loaded = await selectModelProfile({ workspaceRoot: input.workspaceRoot, id });
+      await refreshWorkbench(input.workspaceRoot, input.egoHome, input.setWorkbench, input.setHistoryItems, appendSystemEvent(input.setEvents));
+      input.clearDialog();
+      input.setEvents((previous) => [
+        ...previous,
+        localEvent(`模型 profile 已切换为 ${id}: ${loaded.config.model ?? loaded.config.provider}`),
+      ]);
+    } catch (error) {
+      input.setEvents((previous) => [
+        ...previous,
+        localEvent(`模型 profile 切换失败：${error instanceof Error ? error.message : String(error)}`),
+      ]);
+    }
+    return;
+  }
+  if (normalized.startsWith("/model set ")) {
+    const config = parseModelConfigOverrides(input.submitted.replace(/^\/model\s+set\s*/iu, ""));
+    if (Object.keys(config).length === 0) {
+      input.setEvents((previous) => [
+        ...previous,
+        localEvent("Usage: /model set provider=minimax baseUrl=https://... model=MiniMax-M3 apiKey=..."),
+      ]);
+      return;
+    }
+    try {
+      const loaded = await saveModelConfig({ workspaceRoot: input.workspaceRoot, ...config });
+      await refreshWorkbench(input.workspaceRoot, input.egoHome, input.setWorkbench, input.setHistoryItems, appendSystemEvent(input.setEvents));
+      input.setEvents((previous) => [
+        ...previous,
+        localEvent(
+          `模型配置已保存到 ${loaded.path ?? ".ego/config.json"}: ${loaded.config.provider} / ${
+            loaded.config.model ?? "deterministic"
+          }`,
+        ),
+      ]);
+    } catch (error) {
+      input.setEvents((previous) => [
+        ...previous,
+        localEvent(`模型配置保存失败：${error instanceof Error ? error.message : String(error)}`),
+      ]);
+    }
+    return;
+  }
+  if (normalized === "/model configure") {
+    input.setEvents((previous) => [
+      ...previous,
+      localEvent("Usage: /model set provider=minimax baseUrl=https://api.minimaxi.com/anthropic chatPath=/v1/messages wireApi=anthropic-messages model=MiniMax-M3 apiKey=..."),
     ]);
     return;
   }
@@ -1082,7 +1263,7 @@ async function submitInput(input: SubmitInputOptions): Promise<void> {
     const mcpEvents = await input.session.discoverMcpTools();
     input.setEvents((previous) => [...previous, ...mcpEvents].slice(-240));
     input.setDialog({ type: "debug" });
-    await refreshWorkbench(input.setWorkbench, input.setHistoryItems, appendSystemEvent(input.setEvents));
+    await refreshWorkbench(input.workspaceRoot, input.egoHome, input.setWorkbench, input.setHistoryItems, appendSystemEvent(input.setEvents));
     return;
   }
   if (normalized === "/prompt") {
@@ -1214,11 +1395,34 @@ function parsePolicyOverrides(value: string): Record<string, number> {
   return overrides;
 }
 
+function parseModelConfigOverrides(value: string): PersistedModelConfig {
+  const result: Record<string, unknown> = {};
+  const allowed = new Set([
+    "provider",
+    "baseUrl",
+    "apiKey",
+    "model",
+    "chatPath",
+    "wireApi",
+    "maxTokens",
+    "timeoutMs",
+  ]);
+  for (const part of value.trim().split(/\s+/u)) {
+    const separator = part.indexOf("=");
+    if (separator <= 0) continue;
+    const key = part.slice(0, separator);
+    const raw = part.slice(separator + 1);
+    if (!allowed.has(key) || raw.length === 0) continue;
+    result[key] = key === "maxTokens" || key === "timeoutMs" ? Number(raw) : raw;
+  }
+  return result as PersistedModelConfig;
+}
+
 async function runStream(
   stream: AsyncIterable<AgentRunEvent>,
   input: Pick<
     SubmitInputOptions,
-    "setEvents" | "setBusy" | "setWorkbench" | "setHistoryItems"
+    "workspaceRoot" | "egoHome" | "setEvents" | "setBusy" | "setWorkbench" | "setHistoryItems"
   > & {
     onEvent?(event: AgentRunEvent): void;
   },
@@ -1229,7 +1433,7 @@ async function runStream(
       input.onEvent?.(event);
       input.setEvents((previous) => [...previous, event].slice(-240));
     }
-    await refreshWorkbench(input.setWorkbench, input.setHistoryItems, appendSystemEvent(input.setEvents));
+    await refreshWorkbench(input.workspaceRoot, input.egoHome, input.setWorkbench, input.setHistoryItems, appendSystemEvent(input.setEvents));
   } catch (error) {
     input.setEvents((previous) => [
       ...previous,
@@ -1241,12 +1445,14 @@ async function runStream(
 }
 
 async function refreshWorkbench(
+  workspaceRoot: string,
+  egoHome: string,
   setWorkbench: Setter<WorkbenchState | undefined>,
   setHistoryItems: Setter<HistoryItem[]>,
   onError: (message: string) => void,
 ): Promise<void> {
   try {
-    const state = await readWorkbenchState({ workspaceRoot: process.cwd() });
+    const state = await readWorkbenchState({ workspaceRoot, egoHome });
     setWorkbench(state);
     setHistoryItems(createHistoryItems(state.recentRuns));
   } catch (error) {

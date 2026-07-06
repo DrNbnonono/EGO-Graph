@@ -34,6 +34,16 @@ export {
   type PermissionRule,
 } from "./permission-rules.js";
 export {
+  createPermissionLifecycleState,
+  enqueuePermissionRequest,
+  expirePermissionRequests,
+  replyToPermissionRequest,
+  type PermissionGrantMode,
+  type PermissionLifecycleEntry,
+  type PermissionLifecycleState,
+  type PermissionRequestStatus,
+} from "./permissions/permission-lifecycle.js";
+export {
   createHarnessEvent,
   debugPayload,
   type HarnessEvent,
@@ -69,10 +79,37 @@ export {
   policyConfigPath,
 } from "./policy-config.js";
 export {
-  runAgentLoop,
-  type AgentLoopInput,
-} from "./agent-loop.js";
+  analyzeContextBudget,
+  renderContextBudgetHint,
+  type ContextBudgetDecision,
+} from "./context/context-budget.js";
+export {
+  baselineHardnessScenarios,
+  scoreHardnessTrace,
+  type HardnessCapability,
+  type HardnessLevel,
+  type HardnessScenario,
+  type HardnessScore,
+} from "./hardness/hardness-suite.js";
+export { runAgentLoop, type AgentLoopInput } from "./agent-loop.js";
 export { mergeLoopPolicy, defaultLoopPolicy, type LoopPolicy } from "./loop-policy.js";
 export { evaluateBudgetWarning, type BudgetWarning } from "./stop-condition.js";
-export { createLoopState, type LoopState, type LoopIntent, type PlannerAction } from "./loop-state.js";
+export {
+  createLoopState,
+  type LoopState,
+  type LoopIntent,
+  type PlannerAction,
+} from "./loop-state.js";
+export {
+  createInitialStrategyGraph,
+  strategyGraphToPrompt,
+  summarizeStrategyGraph,
+  type StrategyDomain,
+  type StrategyEvidenceGap,
+  type StrategyGraph,
+  type StrategyHypothesis,
+  type StrategyRiskPosture,
+  type StrategyStage,
+  type StrategyToolSummary,
+} from "./strategy/strategy-graph.js";
 export { type SecurityScopeGate } from "./tool-executor.js";

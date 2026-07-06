@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { mkdtempSync } from "node:fs";
 import {
   getCommandPaletteMatches,
   resolvePaletteInput,
@@ -7,6 +11,7 @@ import {
   resolveDiffFileIndex,
   splitDiffByFile,
 } from "../src/tui/diff-view.js";
+import { resolveWorkspaceRoot } from "../src/workspace-root.js";
 
 describe("TUI helpers", () => {
   it("splits a unified diff into independent file pages", () => {
@@ -65,5 +70,15 @@ describe("TUI helpers", () => {
     expect(resolveDiffFileIndex("/diff first", 2, 3)).toBe(0);
     expect(resolveDiffFileIndex("/diff last", 0, 3)).toBe(2);
     expect(resolveDiffFileIndex("/diff 2", 0, 3)).toBe(1);
+  });
+
+  it("resolves the workspace root from nested package directories", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ego-cli-root-"));
+    const nested = join(root, "apps", "ego-cli");
+    await mkdir(join(root, ".ego"), { recursive: true });
+    await mkdir(nested, { recursive: true });
+    await writeFile(join(root, ".ego", "config.json"), JSON.stringify({ model: { provider: "disabled" } }), "utf8");
+
+    expect(resolveWorkspaceRoot(nested)).toBe(root);
   });
 });

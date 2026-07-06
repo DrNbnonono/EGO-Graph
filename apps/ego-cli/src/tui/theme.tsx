@@ -105,19 +105,19 @@ export const SplitBorder = {
 };
 
 export const egoOpencodeTheme: EgoTheme = (() => {
-  const darkStep1 = hex("#0a0a0a");
-  const darkStep2 = hex("#141414");
-  const darkStep3 = hex("#1e1e1e");
-  const darkStep6 = hex("#3c3c3c");
-  const darkStep7 = hex("#484848");
-  const darkStep8 = hex("#606060");
-  const darkStep9 = hex("#fab283");
+  const darkStep1 = hex("#07050d");
+  const darkStep2 = hex("#100b1d");
+  const darkStep3 = hex("#1a1230");
+  const darkStep6 = hex("#3b2a61");
+  const darkStep7 = hex("#5b3c91");
+  const darkStep8 = hex("#7c55c7");
+  const darkStep9 = hex("#a78bfa");
   const darkStep11 = hex("#808080");
   const darkStep12 = hex("#eeeeee");
   const theme = {
     primary: darkStep9,
-    secondary: hex("#5c9cf5"),
-    accent: hex("#9d7cd8"),
+    secondary: hex("#c084fc"),
+    accent: hex("#e879f9"),
     error: hex("#e06c75"),
     warning: hex("#f5a742"),
     success: hex("#7fd88f"),
@@ -128,7 +128,7 @@ export const egoOpencodeTheme: EgoTheme = (() => {
     background: darkStep1,
     backgroundPanel: darkStep2,
     backgroundElement: darkStep3,
-    backgroundMenu: darkStep2,
+    backgroundMenu: hex("#160f28"),
     border: darkStep7,
     borderActive: darkStep8,
     borderSubtle: darkStep6,
@@ -150,8 +150,8 @@ export const egoOpencodeTheme: EgoTheme = (() => {
     markdownLinkText: hex("#56b6c2"),
     markdownCode: hex("#7fd88f"),
     markdownBlockQuote: hex("#e5c07b"),
-    markdownEmph: hex("#e5c07b"),
-    markdownStrong: hex("#f5a742"),
+    markdownEmph: hex("#c084fc"),
+    markdownStrong: hex("#e879f9"),
     markdownHorizontalRule: darkStep11,
     markdownListItem: darkStep9,
     markdownListEnumeration: hex("#56b6c2"),

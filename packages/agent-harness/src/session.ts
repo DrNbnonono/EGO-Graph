@@ -48,15 +48,17 @@ import { z, type ZodTypeAny } from "zod";
 import { hasPermission, type PermissionLevel as HarnessPermissionLevel } from "./safety-policy.js";
 import { runAgentLoop } from "./agent-loop.js";
 import { createEditTool } from "./edit-tool.js";
-import {
-  loadPersistedLoopPolicy,
-  savePersistedLoopPolicy,
-} from "./policy-config.js";
+import { loadPersistedLoopPolicy, savePersistedLoopPolicy } from "./policy-config.js";
 import { mergeLoopPolicy, type LoopPolicy } from "./loop-policy.js";
 import {
   localizeCheckFailure,
   renderFailureLocalizationForPrompt,
 } from "./failure-localization.js";
+import {
+  analyzeContextBudget,
+  renderContextBudgetHint,
+  type ContextBudgetDecision,
+} from "./context/context-budget.js";
 import { hydratePendingRunsFromStore, replayRunFromStore } from "./persistence.js";
 import { executeHarnessToolStep } from "./tool-flow.js";
 import type { SecurityScopeGate, ToolCallProtocol } from "./tool-executor.js";
@@ -72,8 +74,12 @@ export type AgentRunEventType =
   | "assistant.completed"
   | "run.started"
   | "context.loaded"
+  | "context.budget.warning"
+  | "context.compacted"
   | "memory.recalled"
   | "model.failed"
+  | "strategy.graph.created"
+  | "strategy.graph.updated"
   | "planner.fallback"
   | "planner.model.used"
   | "planner.decision"
@@ -477,122 +483,124 @@ async function* streamChatTurn(input: {
 
   const memoryHits = await recallStoreMemories(input.store, input.message);
   try {
-  if (input.intent === "project_analysis" || input.intent === "chat") {
-    if (input.intent === "project_analysis") {
-      const contextPack = await createWorkspaceContextPack({
-        workspaceRoot: input.workspaceRoot,
-        query: input.message,
-        recentEvents: await readRecentEventMessages(input.store),
-        maxFiles: 6,
-        maxCharsPerFile: 6_000,
-      });
-      yield await emit(input.store, {
-        type: "context.loaded",
-        runId,
-        sessionId,
-        message: `已读取项目上下文：${contextPack.summary.apps.length} 个 app、${contextPack.summary.packages.length} 个 package、${contextPack.selectedFiles.length} 个相关文件。`,
-        payload: {
-          repoMap: contextPack.repoMap.slice(0, 12),
-          selectedFiles: contextPack.selectedFiles.map((file) => ({
-            path: file.path,
-            score: file.score,
-            reason: file.reason,
-            truncated: file.truncated,
-          })),
-          recentEventsSummary: contextPack.recentEventsSummary,
-        },
-      });
-    }
-
-    // Recall cross-turn conversation history so the model sees prior Q&A and
-    // tool exchanges, not just the current user turn. Persist every new
-    // message produced inside the loop back into the store.
-    const seedMessages = await recallChatSeedMessages(input.store, sessionId);
-    const persistedPolicy = await loadPersistedLoopPolicy(input.workspaceRoot);
-    yield* runAgentLoop({
-      runId,
-      sessionId,
-      message: input.message,
-      intent: input.intent,
-      workspaceRoot: input.workspaceRoot,
-      permissionLevel: input.getPermissionLevel(),
-      toolRegistry: input.toolRegistry,
-      seedMessages,
-      signal: controller.signal,
-      policy: persistedPolicy,
-      pollBtw: () => drainBtwQueue(input.pendingBtw, runId),
-      onMessage: (message) => {
-        void persistChatMessage(input.store, sessionId, runId, message);
-      },
-      ...(input.plannerProvider !== undefined ? { modelProvider: input.plannerProvider } : {}),
-      emit: (event) => emit(input.store, event),
-      emitEvidence: (event) => emitEvidence(input.store, event),
-    });
-  }
-
-  {
-    let finalTurn: Awaited<ReturnType<typeof runAssistantChatTurn>> | undefined;
-    for await (const event of streamAssistantChatTurn({
-      message: input.message,
-      workspaceRoot: input.workspaceRoot,
-      memoryHints: memoryHits.map((memory) => `[${memory.scope}] ${memory.content}`),
-      ...(input.modelProvider !== undefined ? { modelProvider: input.modelProvider } : {}),
-    })) {
-      if (event.type === "delta") {
+    if (input.intent === "project_analysis" || input.intent === "chat") {
+      if (input.intent === "project_analysis") {
+        const contextPack = await createWorkspaceContextPack({
+          workspaceRoot: input.workspaceRoot,
+          query: input.message,
+          recentEvents: await readRecentEventMessages(input.store),
+          maxFiles: 6,
+          maxCharsPerFile: 6_000,
+        });
         yield await emit(input.store, {
-          type: "assistant.delta",
+          type: "context.loaded",
           runId,
           sessionId,
-          message: event.content,
-          payload: { modelStreaming: true },
+          message: `已读取项目上下文：${contextPack.summary.apps.length} 个 app、${contextPack.summary.packages.length} 个 package、${contextPack.selectedFiles.length} 个相关文件。`,
+          payload: {
+            repoMap: contextPack.repoMap.slice(0, 12),
+            selectedFiles: contextPack.selectedFiles.map((file) => ({
+              path: file.path,
+              score: file.score,
+              reason: file.reason,
+              truncated: file.truncated,
+            })),
+            recentEventsSummary: contextPack.recentEventsSummary,
+          },
         });
-      } else {
-        finalTurn = event.turn;
       }
+
+      // Recall cross-turn conversation history so the model sees prior Q&A and
+      // tool exchanges, not just the current user turn. Persist every new
+      // message produced inside the loop back into the store.
+      const persistedPolicy = await loadPersistedLoopPolicy(input.workspaceRoot);
+      const effectivePolicy = mergeLoopPolicy(persistedPolicy);
+      const seedContext = await recallChatSeedContext(
+        input.store,
+        sessionId,
+        effectivePolicy.tokenBudgetPerTurn,
+      );
+      if (seedContext.decision.status !== "healthy") {
+        yield await emit(input.store, {
+          type: "context.budget.warning",
+          runId,
+          sessionId,
+          message: renderContextBudgetHint(seedContext.decision),
+          payload: { decision: seedContext.decision },
+        });
+      }
+      yield* runAgentLoop({
+        runId,
+        sessionId,
+        message: input.message,
+        intent: input.intent,
+        workspaceRoot: input.workspaceRoot,
+        permissionLevel: input.getPermissionLevel(),
+        toolRegistry: input.toolRegistry,
+        seedMessages: seedContext.messages,
+        signal: controller.signal,
+        policy: persistedPolicy,
+        pollBtw: () => drainBtwQueue(input.pendingBtw, runId),
+        onMessage: (message) => {
+          void persistChatMessage(input.store, sessionId, runId, message);
+        },
+        ...(input.plannerProvider !== undefined ? { modelProvider: input.plannerProvider } : {}),
+        emit: (event) => emit(input.store, event),
+        emitEvidence: (event) => emitEvidence(input.store, event),
+      });
     }
-    const turn =
-      finalTurn ??
-      (await runAssistantChatTurn({
+
+    {
+      let finalTurn: Awaited<ReturnType<typeof runAssistantChatTurn>> | undefined;
+      for await (const event of streamAssistantChatTurn({
         message: input.message,
         workspaceRoot: input.workspaceRoot,
         memoryHints: memoryHits.map((memory) => `[${memory.scope}] ${memory.content}`),
         ...(input.modelProvider !== undefined ? { modelProvider: input.modelProvider } : {}),
-      }));
-    const reply =
-      turn.status === "needs_model"
-        ? buildLocalAssistantFallback(input.message, input.intent, turn.observations)
-        : turn.reply;
+      })) {
+        if (event.type === "delta") {
+          yield await emit(input.store, {
+            type: "assistant.delta",
+            runId,
+            sessionId,
+            message: event.content,
+            payload: { modelStreaming: true },
+          });
+        } else {
+          finalTurn = event.turn;
+        }
+      }
+      const turn =
+        finalTurn ??
+        (await runAssistantChatTurn({
+          message: input.message,
+          workspaceRoot: input.workspaceRoot,
+          memoryHints: memoryHits.map((memory) => `[${memory.scope}] ${memory.content}`),
+          ...(input.modelProvider !== undefined ? { modelProvider: input.modelProvider } : {}),
+        }));
+      const reply =
+        turn.status === "needs_model"
+          ? buildLocalAssistantFallback(input.message, input.intent, turn.observations)
+          : turn.reply;
 
-    input.pendingRuns.set(runId, {
-      runId,
-      sessionId,
-      message: input.message,
-      status: "answered",
-      phase: "complete",
-    });
-    await input.store.saveAgentRun({
-      runId,
-      message: input.message,
-      mode: "terminal-chat",
-      status: "inspect",
-      createdAt: now,
-      updatedAt: new Date().toISOString(),
-    });
+      input.pendingRuns.set(runId, {
+        runId,
+        sessionId,
+        message: input.message,
+        status: "answered",
+        phase: "complete",
+      });
+      await input.store.saveAgentRun({
+        runId,
+        message: input.message,
+        mode: "terminal-chat",
+        status: "inspect",
+        createdAt: now,
+        updatedAt: new Date().toISOString(),
+      });
 
-    yield await emit(input.store, {
-      type: "assistant.message",
-      runId,
-      sessionId,
-      message: reply,
-      payload: {
-        status: turn.status,
-        model: turn.model,
-        suggestedCommands: turn.suggestedCommands,
-      },
-    });
-    if (turn.model.configured && turn.status === "answered") {
       yield await emit(input.store, {
-        type: "assistant.completed",
+        type: "assistant.message",
         runId,
         sessionId,
         message: reply,
@@ -602,8 +610,20 @@ async function* streamChatTurn(input: {
           suggestedCommands: turn.suggestedCommands,
         },
       });
+      if (turn.model.configured && turn.status === "answered") {
+        yield await emit(input.store, {
+          type: "assistant.completed",
+          runId,
+          sessionId,
+          message: reply,
+          payload: {
+            status: turn.status,
+            model: turn.model,
+            suggestedCommands: turn.suggestedCommands,
+          },
+        });
+      }
     }
-  }
   } catch (error) {
     const debug = error instanceof Error ? error.message : String(error);
     input.pendingRuns.set(runId, {
@@ -645,244 +665,258 @@ async function* streamStartTask(input: {
   const controller = new AbortController();
   input.activeControllers.set(runId, controller);
   try {
-  const createdAt = new Date().toISOString();
-  input.pendingRuns.set(runId, {
-    runId,
-    sessionId,
-    message: input.message,
-    status: "planning",
-    phase: "inspect",
-  });
-  await input.store.saveAgentRun({
-    runId,
-    message: input.message,
-    mode: "terminal-agent",
-    status: "inspect",
-    createdAt,
-    updatedAt: createdAt,
-  });
-
-  yield await emit(input.store, {
-    type: "run.started",
-    runId,
-    sessionId,
-    message: `Terminal Agent started with ${input.getPermissionLevel()} permissions.`,
-    payload: { userMessage: input.message, permissionLevel: input.getPermissionLevel() },
-  });
-
-  const contextPack = await createWorkspaceContextPack({
-    workspaceRoot: input.workspaceRoot,
-    query: input.message,
-    recentEvents: await readRecentEventMessages(input.store),
-    maxFiles: 8,
-    maxCharsPerFile: 8_000,
-  });
-  const summary = contextPack.summary;
-  const files = contextPack.selectedFiles.map((file) => file.path);
-  const taskContext = await createContextForTask({
-    workspaceRoot: input.workspaceRoot,
-    goal: input.message,
-    intent: "terminal-agent",
-    recentEvents: await readRecentEventMessages(input.store),
-    tokenBudget: 8_000,
-  });
-  yield await emit(input.store, {
-    type: "context.loaded",
-    runId,
-    sessionId,
-    message: `Loaded repo map and ${contextPack.selectedFiles.length} relevant context file(s).`,
-    payload: {
-      repoMap: contextPack.repoMap.slice(0, 20),
-      selectedFiles: contextPack.selectedFiles.map((file) => ({
-        path: file.path,
-        score: file.score,
-        reason: file.reason,
-        truncated: file.truncated,
-        originalChars: file.originalChars,
-      })),
-      recentEventsSummary: contextPack.recentEventsSummary,
-      budget: contextPack.budget,
-      taskContext: {
-        selectedFiles: taskContext.selectedFiles.map((file) => file.path),
-        relevantTests: taskContext.relevantTests,
-        symbols: taskContext.selectedSymbols.slice(0, 20),
-        budget: taskContext.budget,
-      },
-    },
-  });
-
-  const memoryHits = await recallStoreMemories(input.store, input.message);
-  yield await emit(input.store, {
-    type: "memory.recalled",
-    runId,
-    sessionId,
-    message: `Recalled ${memoryHits.length} relevant memory item(s).`,
-    payload: { memories: memoryHits.map((memory) => memory.content).slice(0, 5) },
-  });
-
-  const mcpDiscovery = await registerMcpRuntimeTools(
-    input.toolRegistry,
-    input.workspaceRoot,
-    input.mcpPool,
-  );
-  if (mcpDiscovery.tools.length > 0 || mcpDiscovery.errors.length > 0) {
-    yield await emit(input.store, {
-      type: "mcp.tools.discovered",
+    const createdAt = new Date().toISOString();
+    input.pendingRuns.set(runId, {
       runId,
       sessionId,
-      message: `Discovered ${mcpDiscovery.tools.length} MCP tool(s) from configured stdio server(s).`,
+      message: input.message,
+      status: "planning",
+      phase: "inspect",
+    });
+    await input.store.saveAgentRun({
+      runId,
+      message: input.message,
+      mode: "terminal-agent",
+      status: "inspect",
+      createdAt,
+      updatedAt: createdAt,
+    });
+
+    yield await emit(input.store, {
+      type: "run.started",
+      runId,
+      sessionId,
+      message: `Terminal Agent started with ${input.getPermissionLevel()} permissions.`,
+      payload: { userMessage: input.message, permissionLevel: input.getPermissionLevel() },
+    });
+
+    const contextPack = await createWorkspaceContextPack({
+      workspaceRoot: input.workspaceRoot,
+      query: input.message,
+      recentEvents: await readRecentEventMessages(input.store),
+      maxFiles: 8,
+      maxCharsPerFile: 8_000,
+    });
+    const summary = contextPack.summary;
+    const files = contextPack.selectedFiles.map((file) => file.path);
+    const taskContext = await createContextForTask({
+      workspaceRoot: input.workspaceRoot,
+      goal: input.message,
+      intent: "terminal-agent",
+      recentEvents: await readRecentEventMessages(input.store),
+      tokenBudget: 8_000,
+    });
+    yield await emit(input.store, {
+      type: "context.loaded",
+      runId,
+      sessionId,
+      message: `Loaded repo map and ${contextPack.selectedFiles.length} relevant context file(s).`,
       payload: {
-        tools: mcpDiscovery.tools,
-        errors: mcpDiscovery.errors,
+        repoMap: contextPack.repoMap.slice(0, 20),
+        selectedFiles: contextPack.selectedFiles.map((file) => ({
+          path: file.path,
+          score: file.score,
+          reason: file.reason,
+          truncated: file.truncated,
+          originalChars: file.originalChars,
+        })),
+        recentEventsSummary: contextPack.recentEventsSummary,
+        budget: contextPack.budget,
+        taskContext: {
+          selectedFiles: taskContext.selectedFiles.map((file) => file.path),
+          relevantTests: taskContext.relevantTests,
+          symbols: taskContext.selectedSymbols.slice(0, 20),
+          budget: taskContext.budget,
+        },
       },
     });
-  }
 
-  const classifiedIntent = classifyTerminalIntent(input.message);
-  const loopIntent = classifiedIntent === "chat" ? "project_analysis" : classifiedIntent;
-
-  const seedMessages = await recallChatSeedMessages(input.store, sessionId);
-  const persistedPolicy = await loadPersistedLoopPolicy(input.workspaceRoot);
-  yield* runAgentLoop({
-    runId,
-    sessionId,
-    message: input.message,
-    intent: loopIntent,
-    workspaceRoot: input.workspaceRoot,
-    permissionLevel: input.getPermissionLevel(),
-    toolRegistry: input.toolRegistry,
-    seedMessages,
-    signal: controller.signal,
-    policy: persistedPolicy,
-    pollBtw: () => drainBtwQueue(input.pendingBtw, runId),
-    onMessage: (message) => {
-      void persistChatMessage(input.store, sessionId, runId, message);
-    },
-    ...(input.plannerProvider !== undefined ? { modelProvider: input.plannerProvider } : {}),
-    ...resolveSecurityScopeGate(memoryHits),
-    emit: (event) => emit(input.store, event),
-    emitEvidence: (event) => emitEvidence(input.store, event),
-  });
-
-  if (loopIntent === "security_task") {
-    const hasSecurityScope = memoryHits.some((memory) => memory.kind === "security_scope");
-    if (!hasSecurityScope) {
-      input.pendingRuns.set(runId, {
-        runId,
-        sessionId,
-        message: input.message,
-        status: "blocked",
-        phase: "blocked",
-        contextPack,
-      });
-      return;
-    }
-  }
-
-  for (const request of buildLegacyReadOnlyToolRequests()) {
-    yield* executeHarnessToolStep({
+    const memoryHits = await recallStoreMemories(input.store, input.message);
+    yield await emit(input.store, {
+      type: "memory.recalled",
       runId,
       sessionId,
+      message: `Recalled ${memoryHits.length} relevant memory item(s).`,
+      payload: { memories: memoryHits.map((memory) => memory.content).slice(0, 5) },
+    });
+
+    const mcpDiscovery = await registerMcpRuntimeTools(
+      input.toolRegistry,
+      input.workspaceRoot,
+      input.mcpPool,
+    );
+    if (mcpDiscovery.tools.length > 0 || mcpDiscovery.errors.length > 0) {
+      yield await emit(input.store, {
+        type: "mcp.tools.discovered",
+        runId,
+        sessionId,
+        message: `Discovered ${mcpDiscovery.tools.length} MCP tool(s) from configured stdio server(s).`,
+        payload: {
+          tools: mcpDiscovery.tools,
+          errors: mcpDiscovery.errors,
+        },
+      });
+    }
+
+    const classifiedIntent = classifyTerminalIntent(input.message);
+    const loopIntent = classifiedIntent === "chat" ? "project_analysis" : classifiedIntent;
+
+    const persistedPolicy = await loadPersistedLoopPolicy(input.workspaceRoot);
+    const effectivePolicy = mergeLoopPolicy(persistedPolicy);
+    const seedContext = await recallChatSeedContext(
+      input.store,
+      sessionId,
+      effectivePolicy.tokenBudgetPerTurn,
+    );
+    if (seedContext.decision.status !== "healthy") {
+      yield await emit(input.store, {
+        type: "context.budget.warning",
+        runId,
+        sessionId,
+        message: renderContextBudgetHint(seedContext.decision),
+        payload: { decision: seedContext.decision },
+      });
+    }
+    yield* runAgentLoop({
+      runId,
+      sessionId,
+      message: input.message,
+      intent: loopIntent,
       workspaceRoot: input.workspaceRoot,
-      toolRegistry: input.toolRegistry,
       permissionLevel: input.getPermissionLevel(),
-      toolName: request.toolName,
-      toolInput: request.input,
+      toolRegistry: input.toolRegistry,
+      seedMessages: seedContext.messages,
+      signal: controller.signal,
+      policy: persistedPolicy,
+      pollBtw: () => drainBtwQueue(input.pendingBtw, runId),
+      onMessage: (message) => {
+        void persistChatMessage(input.store, sessionId, runId, message);
+      },
+      ...(input.plannerProvider !== undefined ? { modelProvider: input.plannerProvider } : {}),
+      ...resolveSecurityScopeGate(memoryHits),
       emit: (event) => emit(input.store, event),
       emitEvidence: (event) => emitEvidence(input.store, event),
     });
-  }
 
-  let plan = buildEvidenceGapPlan(input.message, summary, files, memoryHits);
-  if (input.plannerProvider) {
-    const modelPlan = await generateEvidenceGapPlan({
-      provider: input.plannerProvider,
-      workspaceRoot: input.workspaceRoot,
-      message: input.message,
-      summary,
-      files,
-      taskContext,
-      memories: memoryHits,
-      tools: input.toolRegistry.list().map(summarizeTool),
-    });
-    if (modelPlan.status === "proposed") {
-      plan = modelPlan.plan;
-      yield await emit(input.store, {
-        type: "planner.model.used",
+    if (loopIntent === "security_task") {
+      const hasSecurityScope = memoryHits.some((memory) => memory.kind === "security_scope");
+      if (!hasSecurityScope) {
+        input.pendingRuns.set(runId, {
+          runId,
+          sessionId,
+          message: input.message,
+          status: "blocked",
+          phase: "blocked",
+          contextPack,
+        });
+        return;
+      }
+    }
+
+    for (const request of buildLegacyReadOnlyToolRequests()) {
+      yield* executeHarnessToolStep({
         runId,
         sessionId,
-        message: `Model generated ${plan.length} evidence-gap step(s).`,
-        payload: {
-          provider: input.plannerProvider.name,
-          model: input.plannerProvider.model,
-        },
-      });
-    } else {
-      yield await emit(input.store, {
-        type: "model.failed",
-        runId,
-        sessionId,
-        message: modelPlan.message,
-        payload: {
-          provider: input.plannerProvider.name,
-          model: input.plannerProvider.model,
-          debug: modelPlan.debug,
-        },
-      });
-      yield await emit(input.store, {
-        type: "planner.fallback",
-        runId,
-        sessionId,
-        message: "Fell back to deterministic evidence-gap planner.",
-        payload: {},
+        workspaceRoot: input.workspaceRoot,
+        toolRegistry: input.toolRegistry,
+        permissionLevel: input.getPermissionLevel(),
+        toolName: request.toolName,
+        toolInput: request.input,
+        emit: (event) => emit(input.store, event),
+        emitEvidence: (event) => emitEvidence(input.store, event),
       });
     }
-  }
-  const draft = await draftAgentPlan({
-    message: input.message,
-    workspaceRoot: input.workspaceRoot,
-    sessionId,
-    mode: "coding",
-    memoryHits,
-  });
-  await input.store.saveAgentPlan({
-    planId: draft.planId,
-    sessionId,
-    runId,
-    mode: "coding",
-    message: input.message,
-    status: "draft",
-    plan: plan.map(formatEvidenceGapStep),
-    contextSummary: draft.contextSummary,
-    memoryIds: memoryHits.map((memory) => memory.id),
-    createdAt: draft.createdAt,
-    updatedAt: draft.createdAt,
-  });
-  await input.store.saveApproval({
-    id: `approval-plan-${runId}`,
-    runId,
-    kind: "agent_plan",
-    status: "pending",
-    createdAt: draft.createdAt,
-    updatedAt: draft.createdAt,
-  });
-  input.pendingRuns.set(runId, {
-    runId,
-    sessionId,
-    message: input.message,
-    status: "plan_pending",
-    phase: "approval",
-    plan,
-    contextPack,
-  });
 
-  yield await emit(input.store, {
-    type: "plan.proposed",
-    runId,
-    sessionId,
-    message: "Evidence-gap plan proposed. Approve it before generating a Patch.",
-    payload: { planId: draft.planId, plan },
-  });
+    let plan = buildEvidenceGapPlan(input.message, summary, files, memoryHits);
+    if (input.plannerProvider) {
+      const modelPlan = await generateEvidenceGapPlan({
+        provider: input.plannerProvider,
+        workspaceRoot: input.workspaceRoot,
+        message: input.message,
+        summary,
+        files,
+        taskContext,
+        memories: memoryHits,
+        tools: input.toolRegistry.list().map(summarizeTool),
+      });
+      if (modelPlan.status === "proposed") {
+        plan = modelPlan.plan;
+        yield await emit(input.store, {
+          type: "planner.model.used",
+          runId,
+          sessionId,
+          message: `Model generated ${plan.length} evidence-gap step(s).`,
+          payload: {
+            provider: input.plannerProvider.name,
+            model: input.plannerProvider.model,
+          },
+        });
+      } else {
+        yield await emit(input.store, {
+          type: "model.failed",
+          runId,
+          sessionId,
+          message: modelPlan.message,
+          payload: {
+            provider: input.plannerProvider.name,
+            model: input.plannerProvider.model,
+            debug: modelPlan.debug,
+          },
+        });
+        yield await emit(input.store, {
+          type: "planner.fallback",
+          runId,
+          sessionId,
+          message: "Fell back to deterministic evidence-gap planner.",
+          payload: {},
+        });
+      }
+    }
+    const draft = await draftAgentPlan({
+      message: input.message,
+      workspaceRoot: input.workspaceRoot,
+      sessionId,
+      mode: "coding",
+      memoryHits,
+    });
+    await input.store.saveAgentPlan({
+      planId: draft.planId,
+      sessionId,
+      runId,
+      mode: "coding",
+      message: input.message,
+      status: "draft",
+      plan: plan.map(formatEvidenceGapStep),
+      contextSummary: draft.contextSummary,
+      memoryIds: memoryHits.map((memory) => memory.id),
+      createdAt: draft.createdAt,
+      updatedAt: draft.createdAt,
+    });
+    await input.store.saveApproval({
+      id: `approval-plan-${runId}`,
+      runId,
+      kind: "agent_plan",
+      status: "pending",
+      createdAt: draft.createdAt,
+      updatedAt: draft.createdAt,
+    });
+    input.pendingRuns.set(runId, {
+      runId,
+      sessionId,
+      message: input.message,
+      status: "plan_pending",
+      phase: "approval",
+      plan,
+      contextPack,
+    });
+
+    yield await emit(input.store, {
+      type: "plan.proposed",
+      runId,
+      sessionId,
+      message: "Evidence-gap plan proposed. Approve it before generating a Patch.",
+      payload: { planId: draft.planId, plan },
+    });
   } finally {
     input.activeControllers.delete(runId);
     input.pendingBtw.delete(runId);
@@ -1415,12 +1449,18 @@ function mapTrajectoryType(type: AgentRunEventType): TrajectoryEvent["type"] | u
       return "evidence.created";
     case "model.failed":
       return "model.failed";
+    case "strategy.graph.created":
+      return "graph.created";
+    case "strategy.graph.updated":
+      return "graph.updated";
     case "planner.fallback":
       return "planner.fallback";
     case "planner.decision":
     case "loop.step.started":
     case "loop.step.completed":
     case "loop.stopped":
+    case "context.budget.warning":
+    case "context.compacted":
       return "decision.made";
     case "patch.proposed":
       return "agent.edit.proposed";
@@ -2037,23 +2077,31 @@ function drainBtwQueue(pendingBtw: Map<string, string[]>, runId: string): string
  * retained without consuming budget. Storage stores content as opaque JSON,
  * so we parse it back into the ChatContentBlock shape here.
  */
-async function recallChatSeedMessages(
+async function recallChatSeedContext(
   store: SqliteEgoStore,
   sessionId: string,
-): Promise<ChatMessage[]> {
-  const tokenBudget = 16_000;
+  tokenBudget: number,
+): Promise<{ messages: ChatMessage[]; decision: ContextBudgetDecision }> {
+  const allMessages = await store.listMessages(sessionId, { limit: 500 });
   const stored = await store.recallForPrompt(sessionId, tokenBudget);
-  return stored.map((row) => {
-    const content = parseChatContent(row.contentJson);
-    const message: ChatMessage = { role: row.role, content };
-    if (row.toolCallId) {
-      message.toolCallId = row.toolCallId;
-    }
-    if (row.toolName) {
-      message.name = row.toolName;
-    }
-    return message;
-  });
+  return {
+    decision: analyzeContextBudget({
+      allMessages,
+      selectedMessages: stored,
+      tokenBudget,
+    }),
+    messages: stored.map((row) => {
+      const content = parseChatContent(row.contentJson);
+      const message: ChatMessage = { role: row.role, content };
+      if (row.toolCallId) {
+        message.toolCallId = row.toolCallId;
+      }
+      if (row.toolName) {
+        message.name = row.toolName;
+      }
+      return message;
+    }),
+  };
 }
 
 /**
@@ -2110,9 +2158,9 @@ function parseChatContent(contentJson: string): ChatMessage["content"] {
  * its content/rawContent field. Returns an empty object when no scope is
  * configured so the spread is a no-op (loop receives no securityScope).
  */
-function resolveSecurityScopeGate(
-  memories: RuntimeMemoryRecord[],
-): { securityScope?: SecurityScopeGate } {
+function resolveSecurityScopeGate(memories: RuntimeMemoryRecord[]): {
+  securityScope?: SecurityScopeGate;
+} {
   const record = memories.find((memory) => memory.kind === "security_scope");
   if (!record) {
     return {};
@@ -2153,7 +2201,10 @@ function parseSecurityScope(value: unknown): SecurityScopeGate | undefined {
     allowedActions,
     forbiddenActions,
     riskLevel:
-      riskLevel === "low" || riskLevel === "medium" || riskLevel === "high" || riskLevel === "critical"
+      riskLevel === "low" ||
+      riskLevel === "medium" ||
+      riskLevel === "high" ||
+      riskLevel === "critical"
         ? riskLevel
         : "low",
     expiresAt,

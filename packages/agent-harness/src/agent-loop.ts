@@ -14,6 +14,12 @@ import { mergeLoopPolicy, type LoopPolicy } from "./loop-policy.js";
 import { createLoopState, type LoopIntent, type PlannerAction } from "./loop-state.js";
 import { buildLoopReflection } from "./reflection.js";
 import { evaluateBudgetWarning, evaluateStopCondition } from "./stop-condition.js";
+import {
+  createInitialStrategyGraph,
+  strategyGraphToPrompt,
+  summarizeStrategyGraph,
+  type StrategyToolSummary,
+} from "./strategy/strategy-graph.js";
 import type { SecurityScopeGate } from "./tool-executor.js";
 import type { AgentRunEvent, PermissionLevel } from "./session.js";
 
@@ -100,6 +106,24 @@ export async function* runAgentLoop(input: AgentLoopInput): AsyncIterable<AgentR
   };
   modelMessages.push(userTurn);
   input.onMessage?.(userTurn);
+
+  const strategyGraph = createInitialStrategyGraph({
+    runId: input.runId,
+    sessionId: input.sessionId,
+    message: input.message,
+    intent: input.intent,
+    permissionLevel: input.permissionLevel,
+    tools: summarizeStrategyTools(input.toolRegistry.list()),
+    hasSecurityScope: Boolean(input.securityScope),
+  });
+  modelMessages.push({ role: "system", content: strategyGraphToPrompt(strategyGraph) });
+  yield await input.emit({
+    type: "strategy.graph.created",
+    runId: input.runId,
+    sessionId: input.sessionId,
+    message: summarizeStrategyGraph(strategyGraph).split("\n")[0] ?? "Strategy graph created.",
+    payload: { strategyGraph },
+  });
 
   while (state.status === "running") {
     if (input.signal?.aborted) {
@@ -300,7 +324,21 @@ export async function* runAgentLoop(input: AgentLoopInput): AsyncIterable<AgentR
   }
 }
 
-type PlannerStep = { type: "delta"; event: AgentRunEvent } | { type: "action"; action: PlannerAction };
+function summarizeStrategyTools(
+  tools: ReturnType<ReturnType<typeof createTerminalAgentToolRegistry>["list"]>,
+): StrategyToolSummary[] {
+  return tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    permissionScope: tool.permission.scope,
+    riskLevel: tool.riskLevel ?? tool.permission.risk,
+    requiresApproval: Boolean(tool.requiresApproval),
+    scenarios: tool.scenarios ?? [],
+  }));
+}
+
+type PlannerStep =
+  { type: "delta"; event: AgentRunEvent } | { type: "action"; action: PlannerAction };
 
 async function* choosePlannerAction(
   input: AgentLoopInput,
@@ -348,7 +386,8 @@ async function* tryStructuredModelAction(
         riskLevel: tool.riskLevel ?? tool.permission.risk,
         requiredPermission: inferRequiredPermission(tool),
         requiresApproval: Boolean(tool.requiresApproval),
-        sandboxProfile: tool.sandboxProfile ?? (tool.permission.requiresSandbox ? "docker" : "none"),
+        sandboxProfile:
+          tool.sandboxProfile ?? (tool.permission.requiresSandbox ? "docker" : "none"),
         timeoutMs: tool.timeoutMs ?? 30_000,
         scenarios: tool.scenarios ?? [],
       }));

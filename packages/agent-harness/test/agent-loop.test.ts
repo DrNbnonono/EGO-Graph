@@ -29,8 +29,14 @@ describe("agent loop", () => {
     // Without a model provider the loop falls back to deterministic planning,
     // which for chat reaches the "enough evidence" stop branch after one step.
     expect(events.map((event) => event.type)).toEqual(
-      expect.arrayContaining(["loop.step.started", "planner.decision", "loop.stopped"]),
+      expect.arrayContaining([
+        "strategy.graph.created",
+        "loop.step.started",
+        "planner.decision",
+        "loop.stopped",
+      ]),
     );
+    expect(events[0]?.type).toBe("strategy.graph.created");
     expect(events.some((event) => event.type === "loop.stopped")).toBe(true);
   });
 

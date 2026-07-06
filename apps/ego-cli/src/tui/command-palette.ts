@@ -53,6 +53,8 @@ export const commandPalette: CommandManifest[] = [
   { name: "/exit", category: "Session", description: "Exit the terminal UI.", shortcut: "Esc" },
   { name: "/model", category: "Model", description: "Show active model guidance." },
   { name: "/models", category: "Model", description: "Open model profiles guidance." },
+  { name: "/model configure", category: "Model", description: "Show terminal model configuration syntax." },
+  { name: "/model set", category: "Model", description: "Save model config, e.g. /model set provider=minimax model=MiniMax-M3." },
   { name: "/mcp", category: "MCP", description: "Discover configured MCP tools." },
   { name: "/tools", category: "MCP", description: "Discover available tools." },
   { name: "/skills", category: "MCP", description: "Show skill management guidance." },

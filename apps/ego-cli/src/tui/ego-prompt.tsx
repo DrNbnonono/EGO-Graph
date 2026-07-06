@@ -3,7 +3,7 @@ import type { PermissionLevel } from "@ego-graph/agent-harness";
 import type { WorkbenchState } from "@ego-graph/workbench";
 import { TextareaRenderable, TextAttributes } from "@opentui/core";
 import { useBindings } from "@opentui/keymap/solid";
-import { createMemo, For, onMount, Show, type JSX } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onMount, Show, type JSX } from "solid-js";
 import { getCommandPaletteMatches, type CommandManifest } from "./command-palette.js";
 import { useTuiTheme } from "./theme.js";
 
@@ -46,8 +46,31 @@ export function EgoPrompt(props: {
   const suggestions = createMemo(() =>
     props.value.trim().startsWith("/") ? getCommandPaletteMatches(props.value).slice(0, 6) : [],
   );
-  const selected = createMemo(() => suggestions()[0]);
+  const [selectedIndex, setSelectedIndex] = createSignal(0);
+  const selected = createMemo(() => suggestions()[selectedIndex()]);
   const mode = createMemo(() => (props.value.trim().startsWith("$") ? "shell" : "normal"));
+  const autocompleteVisible = createMemo(() => suggestions().length > 0);
+
+  createEffect(() => {
+    props.value;
+    setSelectedIndex(0);
+  });
+
+  function moveSuggestion(delta: -1 | 1): boolean {
+    const options = suggestions();
+    if (options.length === 0) return false;
+    setSelectedIndex((current) => (current + delta + options.length) % options.length);
+    return true;
+  }
+
+  function submitCurrent(): void {
+    setTimeout(() => {
+      const text = input?.plainText ?? props.value;
+      const command = selected();
+      const submitted = text.trim().startsWith("/") && command ? command.name : text;
+      void props.onSubmit(submitted);
+    }, 0);
+  }
 
   const promptRef: PromptRef = {
     get focused() {
@@ -80,6 +103,39 @@ export function EgoPrompt(props: {
 
   useBindings(() => ({
     target: () => input,
+    enabled: () => autocompleteVisible(),
+    commands: [
+      {
+        name: "prompt.autocomplete.prev",
+        title: "Previous command suggestion",
+        category: "Autocomplete",
+        run: () => moveSuggestion(-1),
+      },
+      {
+        name: "prompt.autocomplete.next",
+        title: "Next command suggestion",
+        category: "Autocomplete",
+        run: () => moveSuggestion(1),
+      },
+      {
+        name: "prompt.autocomplete.select",
+        title: "Select command suggestion",
+        category: "Autocomplete",
+        run: submitCurrent,
+      },
+    ],
+    bindings: [
+      { key: "up", cmd: "prompt.autocomplete.prev" },
+      { key: "down", cmd: "prompt.autocomplete.next" },
+      { key: "return", cmd: "prompt.autocomplete.select" },
+      { key: "kpenter", cmd: "prompt.autocomplete.select" },
+      { key: "linefeed", cmd: "prompt.autocomplete.select" },
+    ],
+  }));
+
+  useBindings(() => ({
+    target: () => input,
+    enabled: () => !autocompleteVisible(),
     bindings: [
       { key: "up", cmd: () => props.onHistory(-1) },
       { key: "down", cmd: () => props.onHistory(1) },
@@ -91,26 +147,29 @@ export function EgoPrompt(props: {
   return (
     <box width="100%" flexShrink={0}>
       <box
-        backgroundColor={theme.backgroundElement}
-        border={["top", "bottom"]}
-        borderColor={theme.borderSubtle}
+        backgroundColor={props.home ? theme.background : theme.backgroundElement}
+        border={props.home ? true : ["top", "bottom"]}
+        borderColor={autocompleteVisible() ? theme.borderActive : theme.border}
         paddingLeft={1}
         paddingRight={1}
         paddingTop={props.home ? 1 : 0}
         paddingBottom={props.home ? 1 : 0}
+        customBorderChars={roundedBorder}
       >
-        <box width="100%" flexDirection="row" justifyContent="space-between" gap={2} flexShrink={0}>
-          <text fg={theme.textMuted}>
-            {mode() === "shell" ? "$ shell" : "EGO-Graph"}
-            <span style={{ fg: theme.borderActive }}> / </span>
-            {props.workbench?.model.label ?? "loading model"}
-          </text>
-          <PromptStatus
-            busy={props.busy}
-            permissionLevel={props.permissionLevel}
-            workbench={props.workbench}
-          />
-        </box>
+        <Show when={!props.home}>
+          <box width="100%" flexDirection="row" justifyContent="space-between" gap={2} flexShrink={0}>
+            <text fg={theme.textMuted}>
+              {mode() === "shell" ? "$ shell" : "EGO-Graph"}
+              <span style={{ fg: theme.borderActive }}> / </span>
+              {props.workbench?.model.label ?? "loading model"}
+            </text>
+            <PromptStatus
+              busy={props.busy}
+              permissionLevel={props.permissionLevel}
+              workbench={props.workbench}
+            />
+          </box>
+        </Show>
         <box width="100%" flexDirection="row">
           <text width={2} fg={props.busy ? theme.warning : theme.primary} attributes={TextAttributes.BOLD}>
             {mode() === "shell" ? "$" : ">"}
@@ -128,21 +187,28 @@ export function EgoPrompt(props: {
             textColor={theme.text}
             focusedTextColor={theme.text}
             cursorColor={props.busy ? theme.warning : theme.text}
+            keyBindings={[
+              { name: "return", action: "submit" },
+              { name: "kpenter", action: "submit" },
+              { name: "linefeed", action: "submit" },
+              { name: "return", ctrl: true, action: "newline" },
+              { name: "return", shift: true, action: "newline" },
+              { name: "return", meta: true, action: "newline" },
+              { name: "kpenter", ctrl: true, action: "newline" },
+              { name: "kpenter", shift: true, action: "newline" },
+              { name: "kpenter", meta: true, action: "newline" },
+            ]}
             onContentChange={() => props.onChange(input?.plainText ?? "")}
-            onSubmit={() => {
-              const command = selected();
-              const text = input?.plainText ?? "";
-              void props.onSubmit(text.trim() === "/" && command ? command.name : text);
-            }}
+            onSubmit={submitCurrent}
           />
         </box>
         <Show when={suggestions().length > 0}>
-          <PromptAutocomplete options={suggestions()} />
+          <PromptAutocomplete options={suggestions()} selectedIndex={selectedIndex()} />
         </Show>
       </box>
       <box flexDirection="row" justifyContent="space-between" paddingLeft={1} paddingRight={1}>
         <text fg={theme.textMuted}>
-          {props.busy ? "ctrl+c interrupt  ctrl+o details" : "ctrl+p commands  /help status"}
+          {props.busy ? "ctrl+c interrupt  ctrl+o details" : "ctrl+p commands  /help status  ↑↓ select"}
         </text>
         <text fg={theme.textMuted}>enter submit  shift/ctrl+enter newline</text>
       </box>
@@ -170,22 +236,22 @@ function PromptStatus(props: {
   );
 }
 
-function PromptAutocomplete(props: { options: CommandManifest[] }): JSX.Element {
+function PromptAutocomplete(props: { options: CommandManifest[]; selectedIndex?: number }): JSX.Element {
   const theme = useTuiTheme();
   return (
-    <box paddingLeft={2} paddingTop={1}>
+    <box paddingLeft={2} paddingTop={1} paddingBottom={1}>
       <For each={props.options}>
         {(option, index) => (
           <Show
-            when={index() === 0}
+            when={index() === (props.selectedIndex ?? 0)}
             fallback={
-              <box paddingLeft={1} paddingRight={1}>
+              <box paddingLeft={1} paddingRight={1} flexDirection="row" justifyContent="space-between">
                 <text fg={theme.text}>{option.name.padEnd(20)}</text>
                 <text fg={theme.textMuted}>{option.description}</text>
               </box>
             }
           >
-            <box backgroundColor={theme.primary} paddingLeft={1} paddingRight={1}>
+            <box backgroundColor={theme.primary} paddingLeft={1} paddingRight={1} flexDirection="row" justifyContent="space-between">
               <text fg={theme.background}>{option.name.padEnd(20)}</text>
               <text fg={theme.background}>{option.description}</text>
             </box>
@@ -195,3 +261,17 @@ function PromptAutocomplete(props: { options: CommandManifest[] }): JSX.Element 
     </box>
   );
 }
+
+const roundedBorder = {
+  topLeft: "╭",
+  topRight: "╮",
+  bottomLeft: "╰",
+  bottomRight: "╯",
+  horizontal: "─",
+  vertical: "│",
+  topT: "┬",
+  bottomT: "┴",
+  leftT: "├",
+  rightT: "┤",
+  cross: "┼",
+};

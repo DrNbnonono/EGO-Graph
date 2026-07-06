@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/solid */
-import { RGBA, TextAttributes, TextareaRenderable } from "@opentui/core";
+import { InputRenderable, RGBA, TextAttributes, type ScrollBoxRenderable } from "@opentui/core";
 import { useBindings } from "@opentui/keymap/solid";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 import { createContext, createEffect, createMemo, createSignal, For, Show, useContext, type JSX } from "solid-js";
@@ -10,6 +10,7 @@ export type DialogState =
   | { type: "none" }
   | { type: "commands"; filter?: string }
   | { type: "help" }
+  | { type: "models" }
   | { type: "permissions" }
   | { type: "plan" }
   | { type: "diff" }
@@ -172,7 +173,8 @@ export function DialogSelect<T>(props: {
   const dialog = useTuiDialog();
   const [filter, setFilter] = createSignal("");
   const [selected, setSelected] = createSignal(0);
-  let input: TextareaRenderable | undefined;
+  let input: InputRenderable | undefined;
+  let scroll: ScrollBoxRenderable | undefined;
 
   const filtered = createMemo(() => {
     const needle = filter().trim().toLowerCase();
@@ -202,6 +204,7 @@ export function DialogSelect<T>(props: {
 
   createEffect(() => {
     if (selected() >= filtered().length) setSelected(Math.max(0, filtered().length - 1));
+    scrollToSelection();
     props.ref?.({
       get filter() {
         return filter();
@@ -223,36 +226,60 @@ export function DialogSelect<T>(props: {
     dialog.clear();
   }
 
+  function move(delta: -1 | 1): void {
+    const count = filtered().length;
+    if (count === 0) return;
+    setSelected((value) => (value + delta + count) % count);
+  }
+
+  function scrollToSelection(): void {
+    if (!scroll || scroll.isDestroyed) return;
+    const row = selectedRowOffset(groups(), selected());
+    const visible = Math.max(1, scroll.height - 2);
+    if (row < scroll.scrollTop) {
+      scroll.scrollTo(row);
+      return;
+    }
+    if (row >= scroll.scrollTop + visible) {
+      scroll.scrollTo(Math.max(0, row - visible + 1));
+    }
+  }
+
   useBindings(() => ({
     enabled: dialog.state.type !== "none",
     bindings: [
-      { key: "up", cmd: () => setSelected((value) => Math.max(0, value - 1)) },
-      { key: "down", cmd: () => setSelected((value) => Math.min(filtered().length - 1, value + 1)) },
-      { key: "enter", cmd: () => choose() },
+      { key: "up", cmd: () => move(-1) },
+      { key: "down", cmd: () => move(1) },
+      { key: "return", cmd: () => choose() },
+      { key: "kpenter", cmd: () => choose() },
+      { key: "linefeed", cmd: () => choose() },
     ],
   }));
 
   return (
     <DialogFrame title={props.title} size="large">
       <box paddingLeft={2} paddingRight={2} flexShrink={0}>
-        <textarea
-          ref={(value: TextareaRenderable) => {
+        <input
+          ref={(value: InputRenderable) => {
             input = value;
             setTimeout(() => input?.focus(), 1);
           }}
           width="100%"
-          minHeight={1}
-          maxHeight={1}
           placeholder={props.placeholder ?? "Filter"}
           placeholderColor={theme.textMuted}
           textColor={theme.text}
           focusedTextColor={theme.text}
           cursorColor={theme.primary}
-          onContentChange={() => setFilter(input?.plainText ?? "")}
+          keyBindings={[
+            { name: "return", action: "submit" },
+            { name: "kpenter", action: "submit" },
+            { name: "linefeed", action: "submit" },
+          ]}
+          onInput={(value: string) => setFilter(value)}
           onSubmit={() => choose()}
         />
       </box>
-      <scrollbox flexGrow={1} minHeight={0} scrollbarOptions={{ visible: false }}>
+      <scrollbox ref={(value: ScrollBoxRenderable) => (scroll = value)} flexGrow={1} minHeight={0} scrollbarOptions={{ visible: false }}>
         <For each={groups()}>
           {(group) => (
             <box paddingLeft={1} paddingRight={1}>
@@ -328,4 +355,21 @@ export function EmptyDialogHint(props: { children: JSX.Element }): JSX.Element {
       <text fg={theme.textMuted}>{props.children}</text>
     </box>
   );
+}
+
+function selectedRowOffset<T>(
+  groups: Array<{ category: string; options: DialogSelectOption<T>[] }>,
+  selected: number,
+): number {
+  let row = 0;
+  let remaining = selected;
+  for (const group of groups) {
+    if (group.category) row += 1;
+    if (remaining < group.options.length) {
+      return row + remaining * 2;
+    }
+    row += group.options.length * 2;
+    remaining -= group.options.length;
+  }
+  return row;
 }

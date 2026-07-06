@@ -4,6 +4,7 @@ import {
   toPublicModelConfig,
   type PersistedModelConfig,
 } from "@ego-graph/llm";
+import { resolveWorkspaceRoot } from "../workspace-root.js";
 
 export type ConfigModelCommandOptions = {
   provider?: string;
@@ -18,7 +19,7 @@ export type ConfigModelCommandOptions = {
 };
 
 export async function handleConfigModelCommand(options: ConfigModelCommandOptions): Promise<void> {
-  const workspaceRoot = process.cwd();
+  const workspaceRoot = resolveWorkspaceRoot();
   const update = buildModelConfigUpdate(options);
 
   const loaded =
