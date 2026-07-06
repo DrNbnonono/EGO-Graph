@@ -6,6 +6,8 @@ import type {
 import { type ZodTypeAny, type z } from "zod";
 import type { AgentRunEvent, AgentRunEventType, PermissionLevel } from "./session.js";
 import { createToolCall, executeToolCall, type SecurityScopeGate } from "./tool-executor.js";
+import type { PermissionLifecycleState } from "./permissions/permission-lifecycle.js";
+import type { PermissionRule } from "./permission-rules.js";
 
 export type HarnessToolEventInput = {
   type: AgentRunEventType;
@@ -33,6 +35,8 @@ export type ExecuteHarnessToolStepInput = {
   toolInput: Record<string, unknown>;
   /** When set, high-risk/network tools are gated against this scope. */
   securityScope?: SecurityScopeGate;
+  /** Persistent permission grants honored before falling back to a prompt. */
+  permissionLifecycle?: PermissionLifecycleState;
   emit(event: HarnessToolEventInput): Promise<AgentRunEvent>;
   emitEvidence(event: HarnessEvidenceEventInput): Promise<AgentRunEvent>;
 };
@@ -67,6 +71,29 @@ export async function* executeHarnessToolStep(
     permissionLevel: input.permissionLevel,
     approvalGranted: !toolCall.requiresApproval || input.permissionLevel === "security-active",
     ...(input.securityScope ? { securityScope: input.securityScope } : {}),
+    ...(input.permissionLifecycle ? { permissionLifecycle: input.permissionLifecycle } : {}),
+    onAutoApprovedPermission(detail) {
+      // Emit an auditable permission.replied event so the TUI, report, and
+      // repro bundle record that this call was auto-approved from a saved
+      // grant rather than a fresh human decision.
+      void input
+        .emit({
+          type: "permission.replied",
+          runId: input.runId,
+          sessionId: input.sessionId,
+          message: `Permission auto-approved from saved grant: ${detail.action} on ${detail.resources.join(", ")}.`,
+          payload: {
+            tool: tool.name,
+            action: detail.action,
+            resources: detail.resources,
+            matchedRule: detail.matchedRule satisfies PermissionRule,
+            source: "saved-grant",
+          },
+        })
+        .catch(() => {
+          // Swallow: the run does not depend on the audit event landing.
+        });
+    },
     runId: input.runId,
     sessionId: input.sessionId,
   });

@@ -91,7 +91,12 @@ export function permissionRulesForLevel(level: PermissionLevel): PermissionRule[
   ];
 }
 
-function wildcardMatch(value: string, pattern: string): boolean {
+/**
+ * Glob-style match used by the permission rule evaluator. Exported so the
+ * tool executor can reuse the exact same semantics when honoring saved
+ * permission grants from the lifecycle store.
+ */
+export function wildcardMatch(value: string, pattern: string): boolean {
   if (pattern === "*") {
     return true;
   }

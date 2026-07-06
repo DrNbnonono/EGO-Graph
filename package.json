@@ -16,6 +16,8 @@
     "format:check": "prettier --check .",
     "eval": "node scripts/eval.mjs",
     "eval:smoke": "node scripts/eval.mjs --smoke",
+    "eval:hardness": "node scripts/hardness-eval.mjs",
+    "eval:hardness:smoke": "node scripts/hardness-eval.mjs --smoke",
     "smoke": "node scripts/smoke.mjs",
     "test": "vitest run",
     "typecheck": "tsc -b",

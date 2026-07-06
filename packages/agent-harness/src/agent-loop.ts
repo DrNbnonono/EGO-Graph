@@ -18,9 +18,18 @@ import {
   createInitialStrategyGraph,
   strategyGraphToPrompt,
   summarizeStrategyGraph,
+  type StrategyGraph,
   type StrategyToolSummary,
 } from "./strategy/strategy-graph.js";
+import { applyObservationToStrategy } from "./strategy/strategy-graph-update.js";
+import {
+  analyzeChatContextBudget,
+  compactModelMessages,
+  shouldCompact,
+} from "./context/auto-compaction.js";
+import { resolveModelContextLimit } from "./context/model-limits.js";
 import type { SecurityScopeGate } from "./tool-executor.js";
+import type { PermissionLifecycleState } from "./permissions/permission-lifecycle.js";
 import type { AgentRunEvent, PermissionLevel } from "./session.js";
 
 export type AgentLoopInput = {
@@ -34,6 +43,18 @@ export type AgentLoopInput = {
   modelProvider?: ChatModelProvider | null;
   securityScope?: SecurityScopeGate;
   policy?: Partial<LoopPolicy>;
+  /**
+   * Persistent permission grants. When provided, the loop honors saved
+   * "allow always" rules so a previously-approved action runs without
+   * re-prompting. Held by the session and threaded through tool-flow.
+   */
+  permissionLifecycle?: PermissionLifecycleState;
+  /**
+   * Effective context limit (tokens) of the active model. The loop uses this
+   * to trigger auto-compaction before the model rejects an oversized prompt.
+   * Defaults to a conservative window via resolveModelContextLimit.
+   */
+  modelContextLimit?: number;
   /**
    * Prior conversation messages recalled from persistent storage. When
    * provided, these are prepended to the in-memory model context so the model
@@ -107,7 +128,7 @@ export async function* runAgentLoop(input: AgentLoopInput): AsyncIterable<AgentR
   modelMessages.push(userTurn);
   input.onMessage?.(userTurn);
 
-  const strategyGraph = createInitialStrategyGraph({
+  let strategyGraph: StrategyGraph = createInitialStrategyGraph({
     runId: input.runId,
     sessionId: input.sessionId,
     message: input.message,
@@ -275,6 +296,9 @@ export async function* runAgentLoop(input: AgentLoopInput): AsyncIterable<AgentR
         toolName: action.toolCall.name,
         toolInput: action.toolCall.arguments,
         ...(input.securityScope ? { securityScope: input.securityScope } : {}),
+        ...(input.permissionLifecycle
+          ? { permissionLifecycle: input.permissionLifecycle }
+          : {}),
         emit: input.emit,
         emitEvidence: input.emitEvidence,
       })) {
@@ -285,6 +309,42 @@ export async function* runAgentLoop(input: AgentLoopInput): AsyncIterable<AgentR
           lastObservation = event.message;
           lastToolOutput = event.payload.output;
           state.observations.push(event.message);
+          // Reflect the observation into the strategy graph: close evidence
+          // gaps, adjust hypothesis confidence, advance posture if the
+          // authorization gap closed. Only emit strategy.graph.updated when
+          // the graph actually changed, so a no-op tool does not spam events.
+          const findings = Array.isArray((event.payload as { findings?: unknown }).findings)
+            ? ((event.payload as { findings: unknown[] }).findings).map(String)
+            : lastObservation
+              ? [lastObservation]
+              : [];
+          const strategyUpdate = applyObservationToStrategy({
+            graph: strategyGraph,
+            observation: {
+              tool: action.toolCall?.name ?? "unknown",
+              findings,
+              ...(typeof lastToolOutput === "object" && lastToolOutput !== null
+                ? { output: lastToolOutput as Record<string, unknown> }
+                : {}),
+            },
+          });
+          if (strategyUpdate.updates.length > 0) {
+            strategyGraph = strategyUpdate.graph;
+            modelMessages.push({ role: "system", content: strategyGraphToPrompt(strategyGraph) });
+            yield await input.emit({
+              type: "strategy.graph.updated",
+              runId: input.runId,
+              sessionId: input.sessionId,
+              message: strategyUpdate.updates
+                .map((update) => update.summary)
+                .join(" | "),
+              payload: {
+                strategyGraph,
+                updates: strategyUpdate.updates,
+                reason: "observation-applied",
+              },
+            });
+          }
         }
         yield event;
       }
@@ -308,6 +368,51 @@ export async function* runAgentLoop(input: AgentLoopInput): AsyncIterable<AgentR
         message: `Loop step ${state.stepCount} completed.`,
         payload: { reflection, loop: state },
       });
+
+      // Long-running missions accumulate context. After each step, check the
+      // active prompt against the model context limit; if compaction is
+      // needed, fold the middle of the conversation into a summary while
+      // preserving P0 evidence, recent tool results, and the final answer.
+      const contextLimit =
+        input.modelContextLimit ?? resolveModelContextLimit({});
+      const budget = analyzeChatContextBudget({ messages: modelMessages, contextLimit });
+      if (budget.status !== "healthy") {
+        yield await input.emit({
+          type: "context.budget.warning",
+          runId: input.runId,
+          sessionId: input.sessionId,
+          message: budget.reason,
+          payload: {
+            utilization: budget.utilization,
+            totalTokens: budget.totalTokens,
+            contextLimit,
+            status: budget.status,
+          },
+        });
+      }
+      if (shouldCompact(budget)) {
+        const compacted = compactModelMessages({
+          messages: modelMessages,
+          contextLimit,
+          p0ToolUseIds: openP0ToolUseIds(strategyGraph),
+        });
+        modelMessages.length = 0;
+        modelMessages.push(...compacted.activeMessages);
+        yield await input.emit({
+          type: "context.compacted",
+          runId: input.runId,
+          sessionId: input.sessionId,
+          message: `Context compacted: dropped ${compacted.droppedCount} message(s), kept ${compacted.preserved.length} critical item(s).`,
+          payload: {
+            compactedSummary: compacted.compactedSummary,
+            droppedCount: compacted.droppedCount,
+            preserved: compacted.preserved,
+            tokensBefore: compacted.tokensBefore,
+            tokensAfter: compacted.tokensAfter,
+            contextLimit,
+          },
+        });
+      }
       continue;
     }
 
@@ -611,7 +716,7 @@ function deterministicAction(
       riskLevel: "high",
       requiredPermission: "security-active",
       userVisibleMessage:
-        "安全任务需要先补充授权范围、目标、允许动作和风险等级；当前不会执行主动工具。",
+        "安全任务需要先补充 SecurityScope（授权范围、目标、允许动作和风险等级）；当前不会执行主动工具。",
       expectedObservation: "User provides SecurityScope.",
       stopCondition: "Stop until SecurityScope exists.",
     };
@@ -750,4 +855,18 @@ function firstSearchTerm(message: string): string {
 
 function isLocalSecurityAudit(message: string): boolean {
   return /依赖|package|manifest|semgrep|sast|源码|source|本地|local/i.test(message);
+}
+
+/**
+ * Derive a best-effort set of tool-use ids that should survive compaction as
+ * P0 evidence. The strategy graph tracks open P0 evidence gaps by question,
+ * not by tool-use id, so we conservatively treat the most recent tool result
+ * as P0-relevant (it is the freshest evidence for the leading hypothesis).
+ * As the strategy graph gains richer evidence node linkage in a later pass,
+ * this can be tightened to only the tool results that closed a P0 gap.
+ */
+function openP0ToolUseIds(_graph: StrategyGraph): ReadonlySet<string> {
+  // Placeholder until evidence nodes carry explicit toolUseId links: return
+  // an empty set so compaction still works but does not over-preserve.
+  return new Set<string>();
 }

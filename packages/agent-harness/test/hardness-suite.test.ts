@@ -22,7 +22,9 @@ describe("hardness suite", () => {
   });
 
   it("reports missing orchestration and evidence for shallow traces", () => {
-    const scenario = baselineHardnessScenarios[0]!;
+    const scenario = baselineHardnessScenarios.find(
+      (candidate) => candidate.id === "h2-code-audit-noisy-repo",
+    )!;
     const score = scoreHardnessTrace({
       scenario,
       events: [event("user.message", "分析项目")],

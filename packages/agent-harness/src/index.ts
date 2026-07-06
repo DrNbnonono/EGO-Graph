@@ -84,6 +84,23 @@ export {
   type ContextBudgetDecision,
 } from "./context/context-budget.js";
 export {
+  analyzeChatContextBudget,
+  compactModelMessages,
+  estimateMessagesCost,
+  shouldCompact,
+  type CompactModelMessagesInput,
+  type CompactionPreservedItem,
+  type CompactionPreservedKind,
+  type CompactionResult,
+} from "./context/auto-compaction.js";
+export {
+  DEFAULT_MODEL_CONTEXT_LIMITS,
+  FALLBACK_MODEL_CONTEXT_LIMIT,
+  resolveModelContextLimit,
+  type ModelContextLimitInput,
+  type ModelWireApi,
+} from "./context/model-limits.js";
+export {
   baselineHardnessScenarios,
   scoreHardnessTrace,
   type HardnessCapability,
@@ -91,6 +108,18 @@ export {
   type HardnessScenario,
   type HardnessScore,
 } from "./hardness/hardness-suite.js";
+export {
+  baselineHardnessFixtures,
+  fixtureForScenario,
+  type HardnessFixture,
+} from "./hardness/hardness-fixtures.js";
+export {
+  runHardnessScenario,
+  runHardnessSuite,
+  summarizeHardnessSuite,
+  type HardnessRunnerOptions,
+  type HardnessRunnerResult,
+} from "./hardness/hardness-runner.js";
 export { runAgentLoop, type AgentLoopInput } from "./agent-loop.js";
 export { mergeLoopPolicy, defaultLoopPolicy, type LoopPolicy } from "./loop-policy.js";
 export { evaluateBudgetWarning, type BudgetWarning } from "./stop-condition.js";
@@ -112,4 +141,39 @@ export {
   type StrategyStage,
   type StrategyToolSummary,
 } from "./strategy/strategy-graph.js";
+export {
+  applyObservationToStrategy,
+  closeEvidenceGap,
+  progressStage,
+  updateHypothesis,
+  type StrategyHypothesisPatch,
+  type StrategyObservation,
+  type StrategyUpdate,
+  type StrategyUpdateKind,
+  type StrategyUpdateResult,
+} from "./strategy/strategy-graph-update.js";
 export { type SecurityScopeGate } from "./tool-executor.js";
+export {
+  buildToolCapabilityReportEvent,
+  type ToolCapabilityReport,
+} from "./tool-capability-report.js";
+export {
+  detectCycle,
+  layerJobs,
+  readyJobs,
+  topologicalSort,
+  SchedulerCycleError,
+  type CycleError,
+} from "./scheduler/dag.js";
+export {
+  executeSchedule,
+  type ExecuteScheduleInput,
+  type SchedulerBatchResult,
+} from "./scheduler/tool-scheduler.js";
+export type {
+  RetryPolicy,
+  ScheduledToolJob,
+  SchedulerEmit,
+  SchedulerJobResult,
+  SchedulerResidualRisk,
+} from "./scheduler/types.js";

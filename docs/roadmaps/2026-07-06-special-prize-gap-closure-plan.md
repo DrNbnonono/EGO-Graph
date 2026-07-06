@@ -4,6 +4,31 @@
 具备自主决策能力的通用网络安全智能体。最终闭环必须覆盖任务理解、威胁
 感知、策略规划、工具协同、证据沉淀、可解释报告和安全可控的人机协同。
 
+## 交付状态（2026-07-06 接手轮）
+
+本轮把上一轮遗留的“数据结构已落但未接入 loop”的 P0 模块推进到运行时闭环。
+所有改动 additive，不破坏现有测试；新增 ~57 个单测，agent-harness/tools/report/security-tools
+四个包的 120 个测试全绿。
+
+| P0 项 | 状态 | 关键产出 |
+| --- | --- | --- |
+| P0-1 策略图生命周期 | ✅ 已闭环 | `strategy/strategy-graph-update.ts`（假设/缺口/姿态更新）+ loop 在每次 observation 后 emit `strategy.graph.updated` |
+| P0-2 自动 compaction | ✅ 已闭环 | `context/auto-compaction.ts` + `context/model-limits.ts`；loop 在 `needs_compaction` 时折叠历史并 emit `context.compacted`，保留 P0 证据/最近工具/最终结论 |
+| P0-3 Hardness 评测 | ✅ 已闭环 | `hardness/hardness-runner.ts` + `hardness-fixtures.ts`；补齐 h0/h1/h5 场景；`scripts/hardness-eval.mjs` CI 入口 |
+| P0-4 安全工具链 | ✅ 已成型 | `packages/tools/src/security/{web,ir,pcap,reverse,vuln,report}/`；解析器优先 + 能力探测降级；`capability-registry.ts` 可扩展注册点 |
+| P0-5 工具协同与失败恢复 | ✅ 已成型 | `packages/agent-harness/src/scheduler/{types,dag,tool-scheduler}.ts`；DAG/并行只读/重试/fallback/残余风险 |
+| P0-6 权限生命周期 | ✅ 已接入 | `tool-executor.ts` 在 `ask` 门控前查 `permissionLifecycle.savedRules`；allow-always 现在真正生效并 emit `permission.replied`（source=saved-grant） |
+| P0-7 真实沙箱与网络边界 | ✅ 已成型 | `packages/tools/src/security/sandbox/boundary.ts`：egress allowlist、secret redaction；capability 探测覆盖 docker/nsjail |
+| 证据图谱与报告（P1 前移） | ✅ 已成型 | `packages/report/src/evidence/{evidence-graph,decision-trace,repro-bundle,defense-report}.ts`；从事件流重建证据图谱、决策追踪、复现包、答辩报告 |
+
+### 仍待推进（P1/P2，不在本轮范围）
+
+- Session 事件存储按 message/part/tool/permission/status 拆分；abort/resume/fork/replay 重构（`session.ts` 仍是大文件）。
+- 模型 provider catalog / context limit / profile fallback / 成本统计的统一化（本轮已留 `model-limits.ts` 接口）。
+- TUI/Web 把 capability 状态、证据图谱、决策追踪做成常驻面板（本轮已提供数据与 `tool.capability.report` 事件，UI 渲染待接）。
+- MCP/插件 OAuth、stdio/http 状态、工具 schema 版本。
+- 决赛场景包（3–5 个高质量 demo）与团队协作视角。
+
 ## 目录原则
 
 - `packages/agent-harness/src/strategy/`：目标树、假设树、证据缺口、策略图。

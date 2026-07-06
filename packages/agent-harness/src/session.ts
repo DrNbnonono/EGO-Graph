@@ -117,6 +117,13 @@ export type AgentRunEventType =
   | "mcp.tools.discovered"
   | "mcp.call.proposed"
   | "mcp.call.completed"
+  | "scheduler.batch.started"
+  | "scheduler.job.started"
+  | "scheduler.job.completed"
+  | "scheduler.job.retried"
+  | "scheduler.job.fallback"
+  | "scheduler.batch.completed"
+  | "tool.capability.report"
   | "run.completed"
   | "run.cancelled"
   | "run.blocked";

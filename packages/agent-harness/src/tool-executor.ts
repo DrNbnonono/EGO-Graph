@@ -9,8 +9,10 @@ import {
 import {
   evaluatePermissionRules,
   permissionRulesForLevel,
+  wildcardMatch,
   type PermissionRule,
 } from "./permission-rules.js";
+import type { PermissionLifecycleState } from "./permissions/permission-lifecycle.js";
 
 export type ToolCallProtocol = {
   id: string;
@@ -82,6 +84,23 @@ export type ExecuteToolCallInput<
   permissionLevel: PermissionLevel;
   approvalGranted?: boolean;
   permissionRules?: PermissionRule[];
+  /**
+   * Persistent permission lifecycle (saved allow/always grants). When
+   * provided, a tool that would otherwise hit an `ask` rule is auto-approved
+   * if a saved rule with effect `allow` matches the tool's action+resource,
+   * mirroring opencode's "allow always" reuse. Without this the lifecycle is
+   * dead code: saved grants would never be honored within a run.
+   */
+  permissionLifecycle?: PermissionLifecycleState;
+  /**
+   * Invoked when a tool call is auto-approved from a saved permission grant,
+   * so the session can emit a `permission.replied` event for auditability.
+   */
+  onAutoApprovedPermission?(detail: {
+    action: string;
+    resources: string[];
+    matchedRule: PermissionRule;
+  }): void;
   /** When provided, high-risk/network tools are gated against this scope. */
   securityScope?: SecurityScopeGate;
   runId: string;
@@ -165,14 +184,37 @@ export async function executeToolCall<
     });
   }
   if (permissionDecision.effect === "ask" && !input.approvalGranted) {
-    return failResult(input, call, "permission.requested", "Tool requires permission approval.", {
-      ...basePayload,
-      action: permissionAction,
-      resources: permissionResources,
-      matchedRule: permissionDecision.matchedRule,
-      savePolicy: permissionResources,
-      recoveryHint: "Approve or deny the pending permission request.",
-    });
+    // Honor persistent "allow always" grants before falling back to blocking
+    // on a human decision. This is what makes the permission lifecycle real:
+    // a saved grant auto-approves the call without re-prompting the user.
+    const savedAllow = input.permissionLifecycle?.savedRules.find(
+      (rule) =>
+        rule.effect === "allow" &&
+        wildcardMatch(permissionAction, rule.action) &&
+        permissionResources.every((resource) => wildcardMatch(resource, rule.resource)),
+    );
+    if (savedAllow) {
+      input.onAutoApprovedPermission?.({
+        action: permissionAction,
+        resources: permissionResources,
+        matchedRule: savedAllow,
+      });
+    } else {
+      return failResult(
+        input,
+        call,
+        "permission.requested",
+        "Tool requires permission approval.",
+        {
+          ...basePayload,
+          action: permissionAction,
+          resources: permissionResources,
+          matchedRule: permissionDecision.matchedRule,
+          savePolicy: permissionResources,
+          recoveryHint: "Approve or deny the pending permission request.",
+        },
+      );
+    }
   }
 
   // Security scope gate: high-risk or network-scoped tools must clear an
