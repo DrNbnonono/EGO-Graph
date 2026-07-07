@@ -151,11 +151,11 @@ body.rail-right-collapsed .right-rail .panel {
   inset: 0;
   z-index: 10;
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
+  grid-template-columns: 320px minmax(0, 1fr);
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: var(--workbench-bg);
+  background: rgba(255, 255, 255, 0.96);
   box-shadow: var(--shadow);
   backdrop-filter: blur(18px);
 }
@@ -179,7 +179,7 @@ body.settings-open .dashboard-shell {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 40px 56px 18px;
+  padding: 44px 72px 22px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -194,9 +194,9 @@ body.settings-open .dashboard-shell {
   align-content: start;
   gap: 10px;
   min-height: 0;
-  padding: 18px 12px;
+  padding: 22px 16px;
   border-right: 1px solid var(--line);
-  background: rgba(226, 234, 242, 0.58);
+  background: linear-gradient(180deg, #eef4fa 0%, #e7eef6 100%);
   overflow: auto;
 }
 
@@ -216,6 +216,6 @@ body.settings-open .dashboard-shell {
 .settings-content {
   min-height: 0;
   overflow: auto;
-  padding: 28px 56px 56px;
+  padding: 30px 72px 64px;
 }`;
 }

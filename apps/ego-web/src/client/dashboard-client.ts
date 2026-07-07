@@ -123,9 +123,13 @@ function renderProject() {
   const name = byId("active-project-name");
   const path = byId("active-project-path");
   const cwd = byId("cwd-label");
+  const settingsPath = byId("settings-current-project-path");
+  const input = byId("project-path-input");
   if (name) name.textContent = project?.name || "当前项目";
   if (path) path.textContent = project?.path || "未选择项目";
   if (cwd) cwd.textContent = project?.path || "~/EGO-Graph";
+  if (settingsPath) settingsPath.textContent = project?.path || "未选择项目";
+  if (input && !input.value) input.value = project?.path || "";
 }
 
 function renderSessions() {
@@ -453,6 +457,33 @@ async function executeCommand(command) {
   appendMessage("assistant", "命令已收到：" + value + "。如果需要执行具体任务，请直接描述目标。");
 }
 
+async function openProjectFromInput() {
+  const input = byId("project-path-input");
+  const targetPath = input?.value.trim();
+  if (!targetPath) {
+    appendMessage("system", "请先输入目标目录路径。", { skipPersist: true });
+    return;
+  }
+  const button = byId("open-project-button");
+  if (button) button.disabled = true;
+  try {
+    const payload = await fetchJson("/api/projects/open", {
+      method: "POST",
+      body: JSON.stringify({ path: targetPath }),
+    });
+    state.projects = payload.projects || [];
+    state.project = payload.activeProject || state.projects[0] || null;
+    state.activeSessionId = null;
+    renderProject();
+    await loadSessions();
+    await refreshStatus();
+  } catch (error) {
+    appendMessage("system", "打开目录失败：" + error.message, { skipPersist: true });
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 async function submitMission() {
   const input = byId("goal-input");
   const goal = input?.value.trim();
@@ -615,6 +646,7 @@ async function refreshMetrics() {
 
 function wireEvents() {
   byId("start-run")?.addEventListener("click", submitMission);
+  byId("open-project-button")?.addEventListener("click", openProjectFromInput);
   byId("goal-input")?.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
