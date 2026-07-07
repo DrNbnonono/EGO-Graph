@@ -15,6 +15,12 @@ export function renderLayoutCss(): string {
   backdrop-filter: blur(18px);
 }
 
+.workbench-fit {
+  height: auto;
+  max-height: calc(100vh - 24px);
+  grid-template-rows: auto auto auto;
+}
+
 .topbar {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -69,6 +75,10 @@ export function renderLayoutCss(): string {
   overflow: hidden;
   padding: var(--gap);
   transition: grid-template-columns 160ms ease;
+}
+
+.workbench-fit .dashboard-shell {
+  height: auto;
 }
 
 .left-rail,

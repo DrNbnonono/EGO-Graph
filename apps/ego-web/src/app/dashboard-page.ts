@@ -56,7 +56,7 @@ export function renderDashboardHtml(): string {
   </head>
   <body data-mobile-section="chat" data-theme="light">
     <div class="page-field" aria-hidden="true"></div>
-    <main class="workbench">
+    <main class="workbench workbench-fit">
       <header class="topbar">
         <div class="brand">
           <img class="brand-logo" src="/assets/brand/ego-lotus.png" alt="EGO-Graph" />
@@ -134,7 +134,7 @@ export function renderDashboardHtml(): string {
             <textarea id="goal-input" rows="3" placeholder="在此输入你的问题，模型可用时会调用 /chat 进行回复..."></textarea>
             <div class="composer-row">
               <input id="session-input" placeholder="会话标识可选" />
-              <button class="primary-action" id="start-run" type="button">发送 <span>Enter</span></button>
+              <button class="primary-action send-action" id="start-run" type="button">发送 <span>Enter</span></button>
             </div>
             <div class="command-strip" aria-label="快捷命令">
               <span class="slash-mark">/</span>
@@ -169,7 +169,10 @@ export function renderDashboardHtml(): string {
             <div class="inspector-panel" id="inspector-memory" hidden></div>
             <div class="inspector-panel" id="inspector-mcp" hidden></div>
             <div class="inspector-panel" id="inspector-settings" hidden>
-              <button class="primary-action" type="button" data-settings-open>打开设置</button>
+              <div class="settings-panel-entry">
+                <p>模型、外观、MCP 和 Skills 的管理入口已移到独立设置页。</p>
+                <button class="settings-open-button" type="button" data-settings-open>${icon("settings")}打开设置</button>
+              </div>
             </div>
           </section>
         </aside>
