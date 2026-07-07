@@ -168,6 +168,11 @@ export function renderDashboardHtml(): string {
             </div>
             <div class="inspector-panel" id="inspector-memory" hidden></div>
             <div class="inspector-panel" id="inspector-mcp" hidden></div>
+            <div class="inspector-panel" id="inspector-report" hidden>
+              <div class="detail-list" id="report-list">
+                <p class="muted">选择一个已完成的 Run 以查看其防御报告。</p>
+              </div>
+            </div>
             <div class="inspector-panel" id="inspector-settings" hidden>
               <div class="settings-panel-entry">
                 <p>模型、外观、MCP 和 Skills 的管理入口已移到独立设置页。</p>

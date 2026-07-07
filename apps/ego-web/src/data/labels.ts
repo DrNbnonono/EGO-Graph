@@ -9,6 +9,7 @@ export const inspectorTabs = [
   ["runs", "Runs"],
   ["memory", "记忆"],
   ["mcp", "MCP"],
+  ["report", "报告"],
   ["settings", "设置"],
 ] as const;
 
