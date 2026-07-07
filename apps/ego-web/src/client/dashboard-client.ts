@@ -244,6 +244,9 @@ async function switchProject(targetPath) {
 async function selectSession(sessionId) {
   state.activeSessionId = sessionId;
   renderSessions();
+  // Restore keyboard focus on the newly-active session row.
+  // (renderSessions replaces the DOM, destroying focus; this fixes that.)
+  byId("session-list")?.querySelector(".session-item.active .session-open")?.focus();
   await restoreConversation(currentSession());
 }
 

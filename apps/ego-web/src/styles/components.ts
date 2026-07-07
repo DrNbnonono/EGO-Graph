@@ -754,7 +754,8 @@ body.rail-right-collapsed .right-rail-toggle {
   cursor: pointer;
 }
 
-.session-item:hover .session-delete {
+.session-item:hover .session-delete,
+.session-item:focus-within .session-delete {
   display: grid;
 }
 
