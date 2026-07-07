@@ -321,6 +321,7 @@ function appendMessage(role, body, options = {}) {
   renderMarkdown(bubble, body);
   content.append(bubble);
 
+  // Hover actions. Assistant: copy/remember/events. User: copy/edit (re-send).
   if (role === "assistant") {
     const actions = document.createElement("div");
     actions.className = "message-actions";
@@ -329,6 +330,13 @@ function appendMessage(role, body, options = {}) {
       '<button type="button" class="message-action" data-remember-message>记忆</button>' +
       '<button type="button" class="message-action" data-inspector-tab-shortcut="runs">事件</button>';
     content.append(actions);
+  } else if (role === "user") {
+    const actions = document.createElement("div");
+    actions.className = "message-actions";
+    actions.innerHTML =
+      '<button type="button" class="message-action" data-copy-message>复制</button>' +
+      '<button type="button" class="message-action" data-edit-message>编辑</button>';
+    content.append(actions);
   }
 
   row.append(avatar, content);
@@ -336,6 +344,17 @@ function appendMessage(role, body, options = {}) {
   conversation.scrollTop = conversation.scrollHeight;
   if (!options.skipPersist && role !== "system") persistMessage(role, String(body || ""));
   return row;
+}
+
+function editUserMessage(row) {
+  const text = String(row?.dataset?.messageText || "");
+  const input = byId("goal-input");
+  if (input) {
+    input.value = text;
+    input.focus();
+    const len = input.value.length;
+    input.setSelectionRange(len, len);
+  }
 }
 
 function messageRoleLabel(role) {
@@ -1282,6 +1301,10 @@ function wireEvents() {
       navigator.clipboard?.writeText(row?.dataset.messageText || "");
       target.textContent = "已复制";
       setTimeout(() => (target.textContent = "复制"), 1200);
+    }
+    if (target.dataset.editMessage !== undefined) {
+      const row = target.closest(".message-row");
+      if (row) editUserMessage(row);
     }
     if (target.dataset.rememberMessage !== undefined) {
       setInspectorTab("memory");

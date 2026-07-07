@@ -845,10 +845,59 @@ body.rail-right-collapsed .right-rail-toggle {
 }
 
 .message-row {
-  display: grid;
-  grid-template-columns: 36px minmax(0, 1fr);
+  display: flex;
+  align-items: flex-start;
   gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-4);
+}
+
+/* Assistant + system: avatar left, content left-aligned. */
+.message-row.role-assistant,
+.message-row.role-system {
+  flex-direction: row;
+}
+
+.message-row.role-assistant .message-content,
+.message-row.role-system .message-content {
+  align-items: flex-start;
+}
+
+.message-row.role-assistant .message-bubble,
+.message-row.role-system .message-bubble {
+  border-top-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-lg);
+}
+
+/* User: avatar right, content right-aligned (WeChat / ZCode style). */
+.message-row.role-user {
+  flex-direction: row-reverse;
+}
+
+.message-row.role-user .message-content {
+  align-items: flex-end;
+}
+
+.message-row.role-user .message-role {
+  flex-direction: row-reverse;
+}
+
+.message-row.role-user .message-bubble {
+  max-width: min(560px, 80%);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--button-text-on-accent);
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-sm);
+}
+
+.message-row.role-user .message-actions {
+  justify-content: flex-end;
+}
+
+.message-row.role-user .message-avatar {
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 50%, var(--cyan)));
+  color: var(--button-text-on-accent);
+  border-color: transparent;
 }
 
 /* Message avatar: circular, brand ring for assistant, neutral for user. */
@@ -896,8 +945,9 @@ body.rail-right-collapsed .right-rail-toggle {
 
 .message-content {
   display: grid;
-  gap: var(--sp-2);
+  gap: var(--sp-1);
   min-width: 0;
+  max-width: min(680px, 82%);
 }
 
 .message-bubble {
@@ -908,11 +958,6 @@ body.rail-right-collapsed .right-rail-toggle {
   background: var(--surface-inset);
   color: var(--text);
   border-top-left-radius: var(--radius-sm);
-}
-
-.message-row.role-user .message-bubble {
-  background: var(--accent-tint);
-  border-color: var(--accent-line);
 }
 
 .message-row.role-system .message-bubble {
