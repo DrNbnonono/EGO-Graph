@@ -1448,7 +1448,7 @@ dd {
 .settings-close-button {
   display: inline-flex;
   align-items: center;
-  justify-self: start;
+  /* width: fit-content defeats the flex cross-axis stretch that made this span the sidebar. */
   width: fit-content;
   gap: var(--sp-2);
   min-height: 34px;
