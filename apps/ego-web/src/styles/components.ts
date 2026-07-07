@@ -500,7 +500,6 @@ button[type="submit"] {
 body.rail-left-collapsed .left-rail-toggle,
 body.rail-right-collapsed .right-rail-toggle {
   border-color: var(--accent-line);
-  background: var(--accent-tint);
   color: var(--accent);
 }
 
