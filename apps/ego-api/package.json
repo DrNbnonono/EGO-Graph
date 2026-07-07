@@ -27,6 +27,7 @@
     "@ego-graph/tools": "workspace:*",
     "@ego-graph/workbench": "workspace:*",
     "@ego-graph/workspace": "workspace:*",
-    "hono": "^4.6.16"
+    "hono": "^4.6.16",
+    "ws": "^8.18.0"
   }
 }

@@ -6,8 +6,6 @@ import {
 } from "@ego-graph/llm";
 import { saveMcpServer } from "@ego-graph/mcp";
 import { saveLocalSkill } from "@ego-graph/tools";
-import { resolveWorkspaceRoot } from "../workspace-root.js";
-
 export type ConfigModelCommandOptions = {
   provider?: string;
   baseUrl?: string;
@@ -41,7 +39,7 @@ export type ConfigSkillCommandOptions = {
 };
 
 export async function handleConfigModelCommand(options: ConfigModelCommandOptions): Promise<void> {
-  const workspaceRoot = resolveWorkspaceRoot();
+  const workspaceRoot = process.cwd();
   const update = buildModelConfigUpdate(options);
 
   const loaded =
@@ -61,7 +59,7 @@ export async function handleConfigModelCommand(options: ConfigModelCommandOption
 }
 
 export async function handleConfigMcpCommand(options: ConfigMcpCommandOptions): Promise<void> {
-  const workspaceRoot = resolveWorkspaceRoot();
+  const workspaceRoot = process.cwd();
   const transport = options.transport ?? (options.url ? "http" : "stdio");
   const saved = await saveMcpServer({
     workspaceRoot,
@@ -85,7 +83,7 @@ export async function handleConfigMcpCommand(options: ConfigMcpCommandOptions): 
 }
 
 export async function handleConfigSkillCommand(options: ConfigSkillCommandOptions): Promise<void> {
-  const workspaceRoot = resolveWorkspaceRoot();
+  const workspaceRoot = process.cwd();
   const saved = await saveLocalSkill({
     workspaceRoot,
     skill: {

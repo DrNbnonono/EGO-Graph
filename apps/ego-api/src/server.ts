@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   draftAgentPlan,
@@ -1090,6 +1091,235 @@ export function createServer(options: CreateServerOptions = {}): Hono {
     });
   });
 
+  app.post("/agent/harness/runs/stream", async (context) => {
+    const body = (await context.req.json().catch(() => ({}))) as {
+      sessionId?: string;
+      message?: string;
+      mode?: "chat" | "patch" | "security";
+      permissionLevel?: PermissionLevel;
+    };
+    const message = body.message?.trim();
+    if (!message) {
+      return context.json({ ok: false, error: "message is required" }, 400);
+    }
+    const sessionId = body.sessionId?.trim() || `web-harness-${Date.now()}`;
+    const permissionLevel = normalizePermissionLevel(body.permissionLevel);
+    const mode = body.mode ?? "chat";
+    const modelProviderOption = options.modelProvider;
+
+    await withStore(async (store) => {
+      const projects = await store.listProjects();
+      const project = projects.find((item) => item.active) ?? defaultProject;
+      if (!(await store.getProject(project.id))) {
+        await store.upsertProject(project);
+      }
+      if (!(await store.getSession(sessionId))) {
+        await store.createSession({
+          id: sessionId,
+          projectId: project.id,
+          title: normalizeSessionTitle(message),
+        });
+      }
+      await store.appendMessage({
+        sessionId,
+        role: "user",
+        contentJson: JSON.stringify(message),
+      });
+      await store.saveHermesEvent(
+        createHermesEvent({
+          type: "message.received",
+          sessionId,
+          source: "api.agent.harness.stream",
+          payload: { message, mode, permissionLevel },
+        }),
+      );
+    });
+
+    return createNdjsonStreamResponse(async (write) => {
+      const terminalSession = createTerminalAgentSession({
+        workspaceRoot,
+        egoHome,
+        permissionLevel,
+        ...(modelProviderOption !== undefined ? { modelProvider: modelProviderOption } : {}),
+      });
+      await terminalSession.hydratePendingRuns();
+
+      let activeRunId: string | undefined;
+      const events: AgentRunEvent[] = [];
+      try {
+        write({
+          type: "agent.event",
+          event: "web.run.started",
+          sessionId,
+          mode,
+          permissionLevel,
+          createdAt: new Date().toISOString(),
+        });
+        const runStream =
+          mode === "chat"
+            ? terminalSession.submitMessage(message)
+            : terminalSession.startTask(prefixHarnessModeMessage(message, mode));
+        for await (const event of runStream) {
+          activeRunId ??= event.runId;
+          events.push(event);
+          activeHarnessSessions.set(event.runId, terminalSession);
+          write({
+            type: "agent.event",
+            event: event.type,
+            sessionId,
+            runId: event.runId,
+            phase: event.phase,
+            permissionLevel: event.permissionLevel ?? permissionLevel,
+            message: event.message,
+            payload: event.payload,
+            createdAt: event.createdAt,
+          });
+        }
+        const finalMessage = summarizeHarnessAssistant(events);
+        await withStore(async (store) => {
+          await store.appendMessage({
+            sessionId,
+            role: "assistant",
+            contentJson: JSON.stringify(finalMessage),
+            ...(activeRunId ? { runId: activeRunId } : {}),
+          });
+          if (activeRunId) {
+            await store.saveHermesEvent(
+              createHermesEvent({
+                type: "agent.harness.completed",
+                sessionId,
+                runId: activeRunId,
+                source: "api.agent.harness.stream",
+                payload: { mode, eventCount: events.length, permissionLevel },
+              }),
+            );
+          }
+        });
+        write({
+          type: "assistant.final",
+          sessionId,
+          runId: activeRunId,
+          message: finalMessage,
+          createdAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        const diagnostic = `模型调用失败：${error instanceof Error ? error.message : String(error)}`;
+        await withStore(async (store) => {
+          await store.appendMessage({
+            sessionId,
+            role: "assistant",
+            contentJson: JSON.stringify(diagnostic),
+            ...(activeRunId ? { runId: activeRunId } : {}),
+          });
+        });
+        write({
+          type: "error",
+          event: "web.run.failed",
+          sessionId,
+          runId: activeRunId,
+          message: diagnostic,
+          createdAt: new Date().toISOString(),
+        });
+      } finally {
+        if (activeRunId) {
+          activeHarnessSessions.delete(activeRunId);
+        }
+      }
+    });
+  });
+
+  app.post("/api/terminal/commands", async (context) => {
+    const body = (await context.req.json().catch(() => ({}))) as {
+      sessionId?: string;
+      command?: string;
+      cwd?: string;
+      permissionLevel?: PermissionLevel;
+    };
+    const command = body.command?.trim();
+    if (!command) {
+      return context.json({ ok: false, error: "command is required" }, 400);
+    }
+    const permissionLevel = normalizePermissionLevel(body.permissionLevel);
+    if (permissionLevel === "read-only") {
+      return context.json(
+        { ok: false, error: "terminal commands require shell-readonly or higher permission" },
+        403,
+      );
+    }
+    const cwdOptions: Parameters<typeof resolveCommandCwd>[0] = {
+      storeHome: egoHome,
+      workspaceRoot,
+    };
+    if (body.sessionId !== undefined) cwdOptions.sessionId = body.sessionId;
+    if (body.cwd !== undefined) cwdOptions.cwd = body.cwd;
+    const cwd = await resolveCommandCwd(cwdOptions);
+
+    return createNdjsonStreamResponse(async (write) => {
+      const commandId = `terminal-${Date.now()}`;
+      write({
+        type: "terminal.started",
+        commandId,
+        command,
+        cwd,
+        permissionLevel,
+        createdAt: new Date().toISOString(),
+      });
+      await new Promise<void>((resolvePromise) => {
+        const child = spawn(command, {
+          cwd,
+          shell: true,
+          windowsHide: true,
+          env: process.env,
+        });
+        child.stdout?.on("data", (chunk: Buffer) => {
+          write({
+            type: "terminal.stdout",
+            commandId,
+            text: chunk.toString("utf8"),
+            createdAt: new Date().toISOString(),
+          });
+        });
+        child.stderr?.on("data", (chunk: Buffer) => {
+          write({
+            type: "terminal.stderr",
+            commandId,
+            text: chunk.toString("utf8"),
+            createdAt: new Date().toISOString(),
+          });
+        });
+        child.on("error", (error) => {
+          write({
+            type: "terminal.error",
+            commandId,
+            message: error.message,
+            createdAt: new Date().toISOString(),
+          });
+        });
+        child.on("close", async (exitCode) => {
+          if (body.sessionId) {
+            await withStore(async (store) => {
+              await store.saveHermesEvent(
+                createHermesEvent({
+                  type: "terminal.command.completed",
+                  sessionId: body.sessionId ?? commandId,
+                  source: "api.terminal.commands",
+                  payload: { command, cwd, exitCode, permissionLevel },
+                }),
+              );
+            });
+          }
+          write({
+            type: "terminal.completed",
+            commandId,
+            exitCode,
+            createdAt: new Date().toISOString(),
+          });
+          resolvePromise();
+        });
+      });
+    });
+  });
+
   app.post("/agent/harness/runs", async (context) => {
     const body = (await context.req.json()) as {
       message?: string;
@@ -1662,6 +1892,100 @@ function toWebMessage(message: {
     content: typeof parsed === "string" ? parsed : JSON.stringify(parsed),
     createdAt: message.createdAt,
   };
+}
+
+function normalizePermissionLevel(value: unknown): PermissionLevel {
+  return value === "read-only" ||
+    value === "workspace-write" ||
+    value === "shell-readonly" ||
+    value === "network-low" ||
+    value === "security-active"
+    ? value
+    : "read-only";
+}
+
+function prefixHarnessModeMessage(message: string, mode: "chat" | "patch" | "security"): string {
+  if (mode === "patch") {
+    return `请以生成 Patch 的工作流处理：先给出计划和风险，再在需要时提出可审批的修改。\n\n${message}`;
+  }
+  if (mode === "security") {
+    return `请以授权安全任务的工作流处理：先确认范围、权限和证据链，再执行必要的安全分析。\n\n${message}`;
+  }
+  return message;
+}
+
+function summarizeHarnessAssistant(events: AgentRunEvent[]): string {
+  const completed = [...events].reverse().find((event) => event.type === "assistant.completed");
+  if (completed?.message?.trim()) {
+    return completed.message;
+  }
+  const assistantMessages = events
+    .filter(
+      (event) =>
+        event.type === "assistant.message" ||
+        event.type === "assistant.delta" ||
+        event.type === "run.blocked" ||
+        event.type === "tool.blocked",
+    )
+    .map((event) => event.message?.trim())
+    .filter((message): message is string => Boolean(message));
+  return assistantMessages.at(-1) ?? "Agent 运行结束，但没有返回可展示的最终文本。请展开执行过程查看事件。";
+}
+
+function createNdjsonStreamResponse(
+  producer: (write: (value: Record<string, unknown>) => void) => Promise<void>,
+): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const write = (value: Record<string, unknown>) => {
+        controller.enqueue(encoder.encode(`${JSON.stringify(value)}\n`));
+      };
+      try {
+        await producer(write);
+      } catch (error) {
+        write({
+          type: "error",
+          message: error instanceof Error ? error.message : String(error),
+          createdAt: new Date().toISOString(),
+        });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "cache-control": "no-cache",
+      "content-type": "application/x-ndjson; charset=utf-8",
+    },
+  });
+}
+
+async function resolveCommandCwd(input: {
+  storeHome: string;
+  workspaceRoot: string;
+  sessionId?: string;
+  cwd?: string;
+}): Promise<string> {
+  const requested = input.cwd?.trim();
+  if (requested) {
+    const resolved = resolve(requested);
+    if (existsSync(resolved)) return resolved;
+  }
+  if (input.sessionId) {
+    const store = new SqliteEgoStore(sqlitePath(input.storeHome));
+    try {
+      const session = await store.getSession(input.sessionId);
+      const project = session ? await store.getProject(session.projectId) : undefined;
+      if (project?.path && existsSync(project.path)) {
+        return project.path;
+      }
+    } finally {
+      store.close();
+    }
+  }
+  return input.workspaceRoot;
 }
 
 async function collectHarnessEvents(

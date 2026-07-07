@@ -237,5 +237,7 @@ process.stdin.on("data", (chunk) => {
     handle(JSON.parse(body));
   }
 });
+process.stdin.resume();
+setInterval(() => {}, 1 << 30);
 `;
 }

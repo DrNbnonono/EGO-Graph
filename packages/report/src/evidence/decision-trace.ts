@@ -29,7 +29,7 @@ export function buildDecisionTraceFromEvents(events: EvidenceInputEvent[]): Deci
   const pendingToolEvidence = new Map<string, string[]>();
 
   for (const event of events) {
-    if (event.type === "planner.decision") {
+    if (event.type === "planner.decision" || event.type === "plan.proposed") {
       step += 1;
       const action = readPayload(event, "action") as
         | { nextAction?: string; thoughtSummary?: string; userVisibleMessage?: string; toolCall?: { name: string } }
@@ -65,6 +65,19 @@ export function buildDecisionTraceFromEvents(events: EvidenceInputEvent[]): Deci
           pendingToolEvidence.set(toolCallId, []);
         }
       }
+      continue;
+    }
+    if (event.type === "patch.proposed" || event.type === "repair.proposed" || event.type === "check.completed") {
+      step += 1;
+      steps.push({
+        step,
+        type: "observation",
+        action: event.type,
+        rationale: event.message,
+        evidenceRefs: [],
+        strategyUpdateRefs: [],
+        ...(event.createdAt ? { createdAt: event.createdAt } : {}),
+      });
       continue;
     }
     if (event.type === "observation.created" || event.type === "evidence.created") {

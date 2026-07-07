@@ -1,5 +1,6 @@
 import type { z, ZodTypeAny } from "zod";
 import { isModelConfigured, type ModelConfig } from "./config.js";
+import { ModelRequestError, parseRetryAfter } from "./model-request-error.js";
 
 /**
  * Content-block model. Messages may carry either a plain string (backwards
@@ -147,7 +148,12 @@ export function createOpenAICompatibleProvider(config: ModelConfig): ChatModelPr
 
         if (!response.ok) {
           const text = await response.text();
-          throw new Error(`Model request failed ${response.status}: ${text.slice(0, 500)}`);
+          throw new ModelRequestError({
+            message: `Model request failed ${response.status}: ${text.slice(0, 500)}`,
+            statusCode: response.status,
+            retryAfterMs: parseRetryAfter(response.headers.get("retry-after")),
+            providerName: config.provider,
+          });
         }
 
         const data = (await response.json()) as {
@@ -155,7 +161,10 @@ export function createOpenAICompatibleProvider(config: ModelConfig): ChatModelPr
         };
         const content = data.choices?.[0]?.message?.content;
         if (!content) {
-          throw new Error("Model response did not include assistant content");
+          throw new ModelRequestError({
+            message: "Model response did not include assistant content",
+            providerName: config.provider,
+          });
         }
         return content;
       } finally {
@@ -191,7 +200,12 @@ export function createOpenAICompatibleProvider(config: ModelConfig): ChatModelPr
 
         if (!response.ok) {
           const text = await response.text();
-          throw new Error(`Model request failed ${response.status}: ${text.slice(0, 500)}`);
+          throw new ModelRequestError({
+            message: `Model request failed ${response.status}: ${text.slice(0, 500)}`,
+            statusCode: response.status,
+            retryAfterMs: parseRetryAfter(response.headers.get("retry-after")),
+            providerName: config.provider,
+          });
         }
 
         const data = (await response.json()) as {
@@ -245,7 +259,12 @@ export function createOpenAICompatibleProvider(config: ModelConfig): ChatModelPr
 
       if (!response.ok) {
         const text = await response.text();
-        throw new Error(`Model stream failed ${response.status}: ${text.slice(0, 500)}`);
+        throw new ModelRequestError({
+                  message: `Model stream failed ${response.status}: ${text.slice(0, 500)}`,
+                  statusCode: response.status,
+                  retryAfterMs: parseRetryAfter(response.headers.get("retry-after")),
+                  providerName: config.provider,
+                });
       }
       if (!response.body) {
         throw new Error("Model stream response did not include a body");
@@ -294,7 +313,12 @@ export function createAnthropicMessagesProvider(config: ModelConfig): ChatModelP
 
         if (!response.ok) {
           const text = await response.text();
-          throw new Error(`Model request failed ${response.status}: ${text.slice(0, 500)}`);
+          throw new ModelRequestError({
+                    message: `Model request failed ${response.status}: ${text.slice(0, 500)}`,
+                    statusCode: response.status,
+                    retryAfterMs: parseRetryAfter(response.headers.get("retry-after")),
+                    providerName: config.provider,
+                  });
         }
 
         const data = (await response.json()) as {
@@ -348,7 +372,12 @@ export function createAnthropicMessagesProvider(config: ModelConfig): ChatModelP
 
         if (!response.ok) {
           const text = await response.text();
-          throw new Error(`Model request failed ${response.status}: ${text.slice(0, 500)}`);
+          throw new ModelRequestError({
+                    message: `Model request failed ${response.status}: ${text.slice(0, 500)}`,
+                    statusCode: response.status,
+                    retryAfterMs: parseRetryAfter(response.headers.get("retry-after")),
+                    providerName: config.provider,
+                  });
         }
 
         const data = (await response.json()) as {
@@ -401,7 +430,12 @@ export function createAnthropicMessagesProvider(config: ModelConfig): ChatModelP
 
       if (!response.ok) {
         const text = await response.text();
-        throw new Error(`Model stream failed ${response.status}: ${text.slice(0, 500)}`);
+        throw new ModelRequestError({
+                  message: `Model stream failed ${response.status}: ${text.slice(0, 500)}`,
+                  statusCode: response.status,
+                  retryAfterMs: parseRetryAfter(response.headers.get("retry-after")),
+                  providerName: config.provider,
+                });
       }
       if (!response.body) {
         throw new Error("Model stream response did not include a body");

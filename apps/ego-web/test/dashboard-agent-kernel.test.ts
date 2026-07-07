@@ -6,15 +6,14 @@ describe("dashboard agent kernel hooks", () => {
     const html = renderDashboardHtml();
     const js = renderDashboardJs();
 
-    expect(html).toContain('id="plan-preview"');
-    expect(html).toContain('id="approve-plan-button"');
-    expect(html).toContain('id="memory-list"');
-    expect(html).toContain('id="skill-list"');
-    expect(html).toContain('id="search-status"');
-    expect(js).toContain("/agent/plans");
-    expect(js).toContain("workbench.hermes?.recentEvents");
-    expect(js).toContain("renderPlanPreview");
-    expect(js).toContain("renderMemory");
-    expect(js).toContain("approveActivePlan");
+    expect(html).toContain('id="inspector-plan"');
+    expect(html).toContain('id="inspector-memory"');
+    expect(html).toContain('id="skills-manager"');
+    expect(html).toContain('id="mcp-manager"');
+    expect(html).toContain('id="report-list"');
+    expect(js).toContain("/agent/harness/runs/stream");
+    expect(js).toContain("renderInspector");
+    expect(js).toContain("renderSettingsManagers");
+    expect(js).toContain("submitMission");
   });
 });

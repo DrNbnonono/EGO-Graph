@@ -89,19 +89,24 @@ export function deserializeReproBundle(text: string): ReproBundle {
 function inferGoal(events: EvidenceInputEvent[]): string {
   const started = events.find((event) => event.type === "run.started");
   const userMessage = events.find((event) => event.type === "user.message");
-  return userMessage?.message ?? (started?.payload as { goal?: string } | undefined)?.goal ?? started?.message ?? "(unknown goal)";
+  const startedPayload = started?.payload as { goal?: string; userMessage?: string } | undefined;
+  return userMessage?.message ?? startedPayload?.goal ?? startedPayload?.userMessage ?? started?.message ?? "(unknown goal)";
 }
 
 function inferScope(events: EvidenceInputEvent[]): string[] {
+  const started = events.find((event) => event.type === "run.started");
+  const permissionLevel = (started?.payload as { permissionLevel?: string } | undefined)
+    ?.permissionLevel;
+  const inferred = permissionLevel ? [`permission:${permissionLevel}`] : [];
   for (const event of events) {
     if (event.type === "strategy.graph.created" || event.type === "strategy.graph.updated") {
       const graph = (event.payload as { strategyGraph?: { assumptions?: string[] } } | undefined)?.strategyGraph;
       if (graph?.assumptions) {
-        return graph.assumptions.slice(0, 5);
+        return [...inferred, ...graph.assumptions].slice(0, 5);
       }
     }
   }
-  return [];
+  return inferred;
 }
 
 function inferStatus(events: EvidenceInputEvent[]): ReproBundle["status"] {

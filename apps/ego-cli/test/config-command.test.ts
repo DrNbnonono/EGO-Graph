@@ -10,8 +10,7 @@ describe("ego config model", () => {
     const cli = join(process.cwd(), "apps", "ego-cli", "dist", "index.js");
     await writeFile(join(root, "package.json"), '{"name":"ego-cli-config-fixture"}', "utf8");
 
-    const result = await execa(
-      "node",
+    const result = await execa(process.execPath,
       [
         cli,
         "config",
@@ -44,8 +43,7 @@ describe("ego config model", () => {
     const cli = join(process.cwd(), "apps", "ego-cli", "dist", "index.js");
     await writeFile(join(root, "package.json"), '{"name":"ego-cli-config-tools"}', "utf8");
 
-    const mcp = await execa(
-      "node",
+    const mcp = await execa(process.execPath,
       [
         cli,
         "config",
@@ -53,14 +51,13 @@ describe("ego config model", () => {
         "--name",
         "filesystem",
         "--command",
-        "node",
+        process.execPath,
         "--args",
         "server.mjs,--readonly",
       ],
       { cwd: root },
     );
-    const skill = await execa(
-      "node",
+    const skill = await execa(process.execPath,
       [
         cli,
         "config",
@@ -87,7 +84,7 @@ describe("ego config model", () => {
     expect(mcp.stdout).toContain("MCP server filesystem");
     expect(skill.exitCode).toBe(0);
     expect(skill.stdout).toContain("Skill report-writer");
-    expect(config.mcpServers.filesystem.command).toBe("node");
+    expect(config.mcpServers.filesystem.command).toBe(process.execPath);
     expect(config.mcpServers.filesystem.args).toEqual(["server.mjs", "--readonly"]);
     expect(config.skills[0]?.name).toBe("report-writer");
     expect(config.skills[0]?.capabilities).toContain("report.write");

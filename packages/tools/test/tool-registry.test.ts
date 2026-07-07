@@ -42,8 +42,8 @@ describe("ToolRegistry", () => {
 
   it("listByScenario filters by scenario tag and includes universal tools", () => {
     const registry = new ToolRegistry();
-    registry.register(createFixtureReadTool()); // no scenarios → universal
-    registry.register(createFixtureAttackSurfaceTool()); // no scenarios → universal
+    registry.register(createFixtureReadTool());
+    registry.register(createFixtureAttackSurfaceTool());
 
     // Add a scenario-specific tool
     const scenarioTool: ToolDefinition<z.ZodTypeAny, z.ZodTypeAny> = {
@@ -67,8 +67,7 @@ describe("ToolRegistry", () => {
     expect(webPentestTools.map((t) => t.name)).toContain("fixture.read");
 
     const incidentTools = registry.listByScenario("incident_response");
-    // Universal tools are included, scenario-specific are not
-    expect(incidentTools.map((t) => t.name)).toContain("fixture.read");
+    expect(incidentTools.map((t) => t.name)).not.toContain("fixture.read");
     expect(incidentTools.map((t) => t.name)).not.toContain("security.scan");
   });
 
@@ -103,9 +102,9 @@ describe("ToolRegistry", () => {
     registry.register(createFixtureReadTool());
     registry.register(createFixtureAttackSurfaceTool());
 
-    const fileTools = registry.listByScope("file");
-    expect(fileTools.length).toBeGreaterThan(0);
-    expect(fileTools.every((t) => t.permission.scope === "file")).toBe(true);
+    const fixtureTools = registry.listByScope("fixture");
+    expect(fixtureTools.length).toBeGreaterThan(0);
+    expect(fixtureTools.every((t) => t.permission.scope === "fixture")).toBe(true);
   });
 
   it("listRequiringApproval and listRequiringSecurityScope filter correctly", () => {

@@ -115,15 +115,17 @@ export function buildEvidenceGraphFromEvents(events: EvidenceInputEvent[]): Evid
       const candidate = readPayloadField(event, "candidate") as
         | { summary?: string; kind?: EvidenceNodeKind; confidence?: number }
         | undefined;
+      const payloadSummary = readPayloadField(event, "summary") as string | undefined;
+      const payloadSource = readPayloadField(event, "source") as string | undefined;
       const toolName = readPayloadField(event, "toolName") as string | undefined;
-      const summary = candidate?.summary ?? event.message;
+      const summary = candidate?.summary ?? payloadSummary ?? event.message;
       const nodeId = `evidence:${observationIndex++}`;
       nodes.set(nodeId, {
         id: nodeId,
         kind: candidate?.kind ?? "fact",
         summary,
         ...(typeof candidate?.confidence === "number" ? { confidence: candidate.confidence } : {}),
-        ...(toolName ? { toolName, source: toolName } : {}),
+        ...(toolName ? { toolName, source: toolName } : payloadSource ? { source: payloadSource } : {}),
         ...(event.createdAt ? { createdAt: event.createdAt } : {}),
       });
     }

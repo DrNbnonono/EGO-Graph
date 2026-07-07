@@ -8,8 +8,7 @@ describe("ego replay", () => {
   it("prints recorded trajectory events", async () => {
     const egoHome = await mkdtemp(join(tmpdir(), "ego-replay-"));
     try {
-      await execa(
-        "node",
+      await execa(process.execPath,
         [
           "apps/ego-cli/dist/index.js",
           "run",
@@ -23,8 +22,7 @@ describe("ego replay", () => {
         { env: { EGO_HOME: egoHome } },
       );
 
-      const result = await execa(
-        "node",
+      const result = await execa(process.execPath,
         ["apps/ego-cli/dist/index.js", "replay", "--trajectory-id", "run-replay-001"],
         { env: { EGO_HOME: egoHome } },
       );

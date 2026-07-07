@@ -8,8 +8,7 @@ describe("ego eval", () => {
   it("runs the web pentest dataset", async () => {
     const egoHome = await mkdtemp(join(tmpdir(), "ego-eval-"));
     try {
-      const result = await execa(
-        "node",
+      const result = await execa(process.execPath,
         ["apps/ego-cli/dist/index.js", "eval", "--dataset", "datasets/evals/web_pentest.jsonl"],
         { env: { EGO_HOME: egoHome } },
       );

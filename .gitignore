@@ -42,3 +42,4 @@ output/playwright
 opencode/
 .zread/
 prompt.md
+.qoder/

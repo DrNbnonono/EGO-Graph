@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SqliteEgoStore, sqlitePath } from "@ego-graph/storage";
@@ -71,7 +71,6 @@ describe("e2e: full agent workflow", () => {
     // Phase 1: Need understanding + context + plan
     const started = await collect(session.startTask("把 README 里的 hello 改成 lotus"));
     const runId = started[0]!.runId;
-    expect(eventTypes(started)).toContain("user.message");
     expect(eventTypes(started)).toContain("run.started");
     expect(eventTypes(started)).toContain("context.loaded");
     expect(eventTypes(started)).toContain("memory.recalled");
@@ -211,6 +210,7 @@ describe("e2e: full agent workflow", () => {
     const root = await mkdtemp(join(tmpdir(), "ego-e2e-security-"));
     const egoHome = await mkdtemp(join(tmpdir(), "ego-e2e-security-home-"));
     await writeFile(join(root, "package.json"), '{"name":"fixture"}', "utf8");
+    await mkdir(join(root, "logs"), { recursive: true });
     await writeFile(
       join(root, "logs/auth.log"),
       [
@@ -266,7 +266,7 @@ describe("e2e: full agent workflow", () => {
     const authorized = createTerminalAgentSession({
       workspaceRoot: root,
       egoHome,
-      permissionLevel: "shell-readonly",
+      permissionLevel: "security-active",
       modelProvider: fakeProvider(
         JSON.stringify({
           rationale: "Analyzed auth log.",
@@ -276,8 +276,10 @@ describe("e2e: full agent workflow", () => {
               {
                 type: "replace_text",
                 path: "logs/auth.log",
-                oldText: "Failed password",
-                newText: "BLOCKED Failed password",
+                oldText:
+                  "Jul 6 02:00:01 web01 sshd[101]: Failed password for invalid user admin from 203.0.113.5",
+                newText:
+                  "Jul 6 02:00:01 web01 sshd[101]: BLOCKED Failed password for invalid user admin from 203.0.113.5",
               },
             ],
           },

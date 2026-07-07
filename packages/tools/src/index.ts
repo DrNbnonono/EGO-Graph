@@ -8,6 +8,8 @@ export * from "./web-search-tool.js";
 export * from "./terminal-agent-tools.js";
 export * from "./security-tool-bridge.js";
 export * from "./lsp-tools.js";
+export * from "./git-tools.js";
+export * from "./shell-command-policy.js";
 export {
   createSecurityToolRegistry,
   detectSecurityCapabilities,

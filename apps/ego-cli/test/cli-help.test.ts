@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 describe("ego cli help", () => {
   it("prints the public command surface", async () => {
-    const result = await execa("node", ["apps/ego-cli/dist/index.js", "--help"]);
+    const result = await execa(process.execPath, ["apps/ego-cli/dist/index.js", "--help"]);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("EGO-Graph");

@@ -28,8 +28,18 @@ function isOpenTuiNativeLoadError(error: unknown): boolean {
 function printOpenTuiFallback(): void {
   console.log("EGO-Graph PURPLE LOTUS TUI");
   console.log("OpenTUI native backend is unavailable in this Node runtime.");
-  console.log("Use Bun or a Node build with node:ffi enabled to enter the interactive terminal UI.");
-  console.log("Available commands: /init /scan /analyze /report /tools /help");
+  console.log("Falling back to readline-based interactive terminal.");
+}
+
+async function startReadlineFallbackTerminal(): Promise<void> {
+  printOpenTuiFallback();
+  const { createTerminalAgentSession } = await import("@ego-graph/agent-harness");
+  const { resolveWorkspaceRoot, resolveWorkspaceEgoHome } = await import("../workspace-root.js");
+  const { startReadlineFallback } = await import("./readline-fallback.js");
+  const workspaceRoot = resolveWorkspaceRoot();
+  const egoHome = resolveWorkspaceEgoHome(workspaceRoot);
+  const session = createTerminalAgentSession({ workspaceRoot, egoHome });
+  await startReadlineFallback({ session, workspaceRoot });
 }
 
 export async function renderTui(): Promise<void> {
@@ -79,7 +89,7 @@ export async function renderTui(): Promise<void> {
     }
   } catch (error) {
     if (isOpenTuiNativeLoadError(error)) {
-      printOpenTuiFallback();
+      await startReadlineFallbackTerminal();
       return;
     }
     throw error;

@@ -8,8 +8,7 @@ describe("ego run", () => {
   it("runs the controlled web pentest fixture", async () => {
     const egoHome = await mkdtemp(join(tmpdir(), "ego-cli-run-"));
     try {
-      const result = await execa(
-        "node",
+      const result = await execa(process.execPath,
         [
           "apps/ego-cli/dist/index.js",
           "run",

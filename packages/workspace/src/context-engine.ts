@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { buildDependencyGraph, type DependencyGraph } from "./dependency-graph.js";
+import { extractTaskKeywords, keywordsToTerms } from "./context-keywords.js";
 import {
   buildRepoIndex,
   looksSecretLike,
@@ -44,11 +45,13 @@ export async function createContextForTask(input: TaskContextInput): Promise<Tas
   const symbols = await buildSymbolIndex(input.workspaceRoot, repoIndex);
   const dependencyGraph = await buildDependencyGraph(input.workspaceRoot, repoIndex);
   const testMapping = buildTestMapping(repoIndex);
-  const terms = tokenize(
-    [input.goal, input.intent, ...(input.memoryHits ?? []), ...(input.recentEvents ?? [])].join(
-      " ",
-    ),
-  );
+  const keywords = extractTaskKeywords({
+    goal: input.goal,
+    intent: input.intent,
+    recentToolOutputs: input.recentEvents,
+    memoryHints: input.memoryHits,
+  });
+  const terms = keywordsToTerms(keywords);
   const selectedFiles = rankFiles(repoIndex.files, terms, input.changedFiles ?? []).slice(0, 12);
   const selectedSymbols = symbols
     .filter((symbol) => selectedFiles.some((file) => file.path === symbol.file))

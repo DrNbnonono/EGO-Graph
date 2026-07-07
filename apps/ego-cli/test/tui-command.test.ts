@@ -7,7 +7,7 @@ const tsxCli = require.resolve("tsx/cli");
 
 describe("ego default TUI", () => {
   it("prints the non-interactive TUI summary when CI is true", async () => {
-    const result = await execa("node", ["apps/ego-cli/dist/index.js"], {
+    const result = await execa(process.execPath, ["apps/ego-cli/dist/index.js"], {
       env: { CI: "true" },
     });
 
@@ -26,7 +26,7 @@ describe("ego default TUI", () => {
   });
 
   it("starts the source TUI entry without a React runtime crash", async () => {
-    const result = await execa("node", [tsxCli, "apps/ego-cli/src/index.ts"], {
+    const result = await execa(process.execPath, [tsxCli, "apps/ego-cli/src/index.ts"], {
       reject: false,
       timeout: 5000,
       env: { FORCE_COLOR: "0", TMPDIR: "/tmp" },

@@ -70,6 +70,8 @@ export function permissionRulesForLevel(level: PermissionLevel): PermissionRule[
     ...workspaceWrite,
     { action: "check.*", resource: "*", effect: "allow" },
     { action: "shell.readonly", resource: "*", effect: "ask" },
+    { action: "shell.write", resource: "*", effect: "ask" },
+    { action: "git.*", resource: "*", effect: "ask" },
   ];
   if (level === "shell-readonly") {
     return shellReadonly;

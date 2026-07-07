@@ -2,7 +2,16 @@ import { execFile } from "node:child_process";
 import { readdir, readFile } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
+import { classifyShellCommand, isDestructiveCommand } from "./shell-command-policy.js";
 import { z } from "zod";
+import {
+  createGitBranchTool,
+  createGitCommitTool,
+  createGitDiffTool,
+  createGitLogTool,
+  createGitStatusTool,
+} from "./git-tools.js";
+import { detectDocker, executeInDocker } from "./security/sandbox/docker-executor.js";
 import type { ToolDefinition } from "./tool-definition.js";
 import { ToolRegistry } from "./tool-registry.js";
 import {
@@ -140,6 +149,11 @@ export function createTerminalAgentToolRegistry(): TerminalAgentToolRegistry {
   registry.register(createLspDiagnosticsTool());
   registry.register(createLspDefinitionTool());
   registry.register(createLspReferencesTool());
+  registry.register(createGitStatusTool());
+  registry.register(createGitDiffTool());
+  registry.register(createGitLogTool());
+  registry.register(createGitBranchTool());
+  registry.register(createGitCommitTool());
   return registry;
 }
 
@@ -569,6 +583,30 @@ export function createShellWriteTool(): ToolDefinition<
     requiresApproval: true,
     async execute(input, context) {
       const rendered = input.command;
+      // Try Docker sandbox first if available.
+      const docker = await detectDocker();
+      if (docker.available) {
+        const shell = process.platform === "win32" ? "cmd.exe" : "/bin/sh";
+        const shellArgs = process.platform === "win32"
+          ? ["/c", input.command]
+          : ["-c", input.command];
+        const result = await executeInDocker(shell, shellArgs, {
+          workspaceRoot: context.workspaceRoot,
+          timeoutMs: input.timeoutMs ?? 30_000,
+          mountMode: "rw",
+        });
+        if (result.sandboxed) {
+          return {
+            command: rendered,
+            status: result.status,
+            exitCode: result.exitCode,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            findings: [`[${result.status}] (sandboxed) ${rendered}`],
+          };
+        }
+      }
+      // Fallback to direct execution.
       try {
         const result = await execFileAsync(
           process.platform === "win32" ? "cmd.exe" : "/bin/sh",
@@ -719,25 +757,14 @@ function isMatch(line: string, pattern: RegExp | string, ignoreCase: boolean, is
 }
 
 function assertReadonlyCommand(command: string, args: string[]): void {
-  if (command === "pnpm") {
-    const script = args[0] ?? "";
-    if (
-      script === "--version" ||
-      ["typecheck", "test", "build", "lint", "format:check", "smoke"].includes(script)
-    ) {
-      return;
-    }
+  // Check destructive commands first.
+  const destructive = isDestructiveCommand(command, args);
+  if (destructive.destructive) {
+    throw new Error(`Destructive command blocked: ${destructive.reason ?? command}`);
   }
-  if (command === "node" && args[0] === "--version") {
-    return;
-  }
-  if (command === "git") {
-    const subcommand = args[0] ?? "";
-    if (["status", "diff", "log", "show"].includes(subcommand)) {
-      return;
-    }
-  }
-  if (["ls", "pwd", "cat", "head", "tail", "grep", "rg", "find"].includes(command)) {
+  // Use the policy classifier to determine if the command is readonly-safe.
+  const classification = classifyShellCommand(command, args);
+  if (classification.readonlySafe) {
     return;
   }
   throw new Error(`Command is not allowed in shell-readonly mode: ${command} ${args.join(" ")}`);

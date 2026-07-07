@@ -133,9 +133,20 @@ export function renderResponsiveCss(): string {
   .left-rail,
   .right-rail,
   .composer-actions,
+  .composer-row,
+  .connector-form-grid,
   .model-settings-grid,
   .message {
     grid-template-columns: 1fr;
+  }
+
+  .composer-tools {
+    justify-content: flex-start;
+  }
+
+  .connector-item {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
   }
 
   .center-stage {

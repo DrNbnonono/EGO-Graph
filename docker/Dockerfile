@@ -1,4 +1,25 @@
-FROM node:22-bookworm-slim
+# ─── Sandbox image for isolated shell execution ────────────────────────
+FROM node:22-bookworm-slim AS ego-sandbox
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    grep \
+    findutils \
+    coreutils \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN corepack enable
+
+# Non-root user for extra safety.
+RUN useradd --create-home sandbox
+USER sandbox
+WORKDIR /workspace
+
+ENTRYPOINT ["/bin/sh"]
+
+# ─── Full application image ─────────────────────────────────────────────
+FROM node:22-bookworm-slim AS ego-app
 
 WORKDIR /app
 

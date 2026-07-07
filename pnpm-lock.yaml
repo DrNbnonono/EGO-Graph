@@ -89,6 +89,9 @@ importers:
       hono:
         specifier: ^4.6.16
         version: 4.12.27
+      ws:
+        specifier: ^8.18.0
+        version: 8.21.0
 
   apps/ego-cli:
     dependencies:
@@ -164,6 +167,9 @@ importers:
       '@ego-graph/workbench':
         specifier: workspace:*
         version: link:../../packages/workbench
+      marked:
+        specifier: 17.0.1
+        version: 17.0.1
 
   packages/agent:
     dependencies:
@@ -315,6 +321,9 @@ importers:
       '@ego-graph/security-tools':
         specifier: workspace:*
         version: link:../security-tools
+      '@ego-graph/workspace':
+        specifier: workspace:*
+        version: link:../workspace
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
@@ -1990,6 +1999,18 @@ packages:
     resolution: {integrity: sha512-BN22B5eaMMI9UMtjrGd5g5eCYPpCPDUy0FJXbYsaT5zYxjFOckS53SQDE3pWkVoWpHXVb3BrYcEN4Twa55B5cA==}
     engines: {node: '>=0.10.0'}
 
+  ws@8.21.0:
+    resolution: {integrity: sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   yallist@3.1.1:
     resolution: {integrity: sha512-a4UGQaWPH59mOXUYnAG2ewncQS4i4F43Tv3JoAM+s2VDAmS9NsK8GpDMLrCHPksFT7h3K6TOoUNn2pb7RoXx4g==}
 
@@ -3512,6 +3533,8 @@ snapshots:
       stackback: 0.0.2
 
   word-wrap@1.2.5: {}
+
+  ws@8.21.0: {}
 
   yallist@3.1.1: {}
 

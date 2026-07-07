@@ -13,6 +13,7 @@ import {
   estimateMessageTokens,
   generateJson,
   loadModelConfig,
+  withRetry,
   type ChatMessage,
   type ChatModelProvider,
 } from "@ego-graph/llm";
@@ -1671,7 +1672,8 @@ function resolvePlannerProvider(
     return options.modelProvider;
   }
   try {
-    return createChatModelProvider(loadModelConfig({ workspaceRoot: options.workspaceRoot }));
+    const raw = createChatModelProvider(loadModelConfig({ workspaceRoot: options.workspaceRoot }));
+    return raw ? withRetry(raw) : undefined;
   } catch {
     return undefined;
   }
