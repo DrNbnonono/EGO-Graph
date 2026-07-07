@@ -91,18 +91,18 @@ export function renderComponentsCss(): string {
   padding: 0 var(--sp-4);
   border: 1px solid transparent;
   border-radius: var(--radius);
-  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 55%, var(--cyan)));
+  background: var(--accent);
   color: var(--button-text-on-accent);
   font-size: var(--text-base);
   font-weight: var(--weight-semibold);
   cursor: pointer;
-  box-shadow: 0 4px 12px var(--accent-ring), inset 0 1px 0 rgba(255, 255, 255, 0.18);
-  transition: transform 120ms ease, box-shadow 120ms ease, filter 120ms ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
 }
 
 .primary-action:hover {
   transform: translateY(-1px);
-  box-shadow: 0 8px 20px var(--accent-ring), inset 0 1px 0 rgba(255, 255, 255, 0.24);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
 }
 
 .primary-action:active {
@@ -193,7 +193,7 @@ export function renderComponentsCss(): string {
 
 .approve-action:not(:disabled) {
   border-radius: var(--radius);
-  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 55%, var(--cyan)));
+  background: var(--accent);
   color: var(--button-text-on-accent);
   font-weight: var(--weight-semibold);
   cursor: pointer;
@@ -247,24 +247,24 @@ button[type="submit"] {
   padding: 0 var(--sp-4);
   border: 1px solid transparent;
   border-radius: var(--radius-lg);
-  background: linear-gradient(135deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 40%, var(--cyan)) 100%);
+  background: var(--accent);
   color: var(--button-text-on-accent);
   font-weight: var(--weight-semibold);
   cursor: pointer;
-  box-shadow: 0 8px 22px var(--accent-ring), inset 0 1px 0 rgba(255, 255, 255, 0.22);
-  transition: transform 120ms ease, box-shadow 120ms ease, filter 120ms ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
 }
 
 .send-action span {
   margin-left: var(--sp-1);
-  color: rgba(255, 255, 255, 0.72);
+  opacity: 0.72;
   font-size: var(--text-xs);
   font-weight: var(--weight-medium);
 }
 
 .send-action:hover {
   transform: translateY(-1px);
-  box-shadow: 0 12px 28px var(--accent-ring), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
 }
 
 .send-action:active {
@@ -501,6 +501,34 @@ body.rail-left-collapsed .left-rail-toggle,
 body.rail-right-collapsed .right-rail-toggle {
   border-color: var(--accent-line);
   color: var(--accent);
+}
+
+.terminal-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-height: 30px;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--control-bg);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.terminal-toggle:hover {
+  border-color: var(--accent-line);
+  color: var(--accent);
+  background: var(--accent-tint);
+}
+
+.terminal-toggle[aria-pressed="true"] {
+  border-color: var(--accent-line);
+  color: var(--accent);
+  background: var(--accent-tint);
 }
 
 /* ---------- Sessions / project card ---------- */
@@ -2202,8 +2230,11 @@ dd {
 }
 
 .bottom-dock.is-collapsed {
-  min-height: 42px;
-  max-height: 42px;
+  min-height: 0;
+  max-height: 0;
+  overflow: hidden;
+  border: none;
+  display: none;
 }
 
 .bottom-dock.is-collapsed .dock-panel,
@@ -2212,25 +2243,7 @@ dd {
 }
 
 .dock-reopen {
-  position: absolute;
-  right: var(--sp-3);
-  bottom: var(--sp-3);
-  z-index: 7;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-2);
-  min-height: 32px;
-  padding: 0 var(--sp-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-full);
-  background: var(--overlay-bg);
-  backdrop-filter: blur(12px);
-  color: var(--muted);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-medium);
-  box-shadow: var(--shadow-md);
-  cursor: pointer;
-  transition: color 120ms ease, border-color 120ms ease;
+  display: none;
 }
 
 .dock-reopen:hover {

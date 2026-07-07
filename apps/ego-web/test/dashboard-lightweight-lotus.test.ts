@@ -15,7 +15,7 @@ describe("dashboard lightweight lotus UI", () => {
 
     expect(css).toContain("--bg: #f7f9fc");
     expect(css).toContain("--panel: rgba(255, 255, 255, 0.76)");
-    expect(css).toContain("--accent: #6b4fd8");
+    expect(css).toContain("--accent: #1a1a2e");
     expect(css).toContain("--body-font:");
     expect(css).toContain("system-ui");
     expect(css).not.toContain("Charter");

@@ -1136,11 +1136,24 @@ export function createServer(options: CreateServerOptions = {}): Hono {
     });
 
     return createNdjsonStreamResponse(async (write) => {
+      // Check model configuration before creating session
+      const modelConfig = loadModelConfig({ workspaceRoot });
+      const resolvedProvider = modelProviderOption ?? createChatModelProvider(modelConfig);
+      if (!resolvedProvider) {
+        write({
+          type: "error",
+          sessionId,
+          message: "模型未配置。请在设置中配置 API Key 和模型地址，或使用环境变量 EGO_MODEL_PROVIDER。",
+          createdAt: new Date().toISOString(),
+        });
+        return;
+      }
+
       const terminalSession = createTerminalAgentSession({
         workspaceRoot,
         egoHome,
         permissionLevel,
-        ...(modelProviderOption !== undefined ? { modelProvider: modelProviderOption } : {}),
+        modelProvider: resolvedProvider,
       });
       await terminalSession.hydratePendingRuns();
 
@@ -1203,7 +1216,10 @@ export function createServer(options: CreateServerOptions = {}): Hono {
           createdAt: new Date().toISOString(),
         });
       } catch (error) {
-        const diagnostic = `模型调用失败：${error instanceof Error ? error.message : String(error)}`;
+        const rawMessage = error instanceof Error ? error.message : String(error);
+        const diagnostic = rawMessage.includes("fetch failed") || rawMessage.includes("ECONNREFUSED") || rawMessage.includes("ENOTFOUND")
+          ? `模型服务不可达。请检查模型地址和 API Key 是否正确配置。\n原始错误：${rawMessage}`
+          : `模型调用失败：${rawMessage}`;
         await withStore(async (store) => {
           await store.appendMessage({
             sessionId,

@@ -440,6 +440,19 @@ function appendRunEvent(flow, line) {
   flow.append(row);
 }
 
+function toStringMessage(value) {
+  if (typeof value === "string") return value;
+  if (value == null) return "";
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
 function handleHarnessLine(line, runUi) {
   if (!line || !runUi) return;
   addTimelineEvent(line);
@@ -448,7 +461,7 @@ function handleHarnessLine(line, runUi) {
 
   if (line.type === "agent.event") {
     if (line.event === "assistant.delta" || line.event === "assistant.message" || line.event === "assistant.completed") {
-      const text = line.message || "";
+      const text = toStringMessage(line.message);
       if (text) renderMarkdown(runUi.answer, text);
     }
     if (line.event === "permission.requested") {
@@ -457,7 +470,7 @@ function handleHarnessLine(line, runUi) {
       if (checks) {
         checks.innerHTML =
           '<div class="approval-card"><strong>需要批准</strong><p>' +
-          escapeHtml(line.message || "Agent 请求权限") +
+          escapeHtml(toStringMessage(line.message) || "Agent 请求权限") +
           '</p><button class="confirm-action" type="button" data-approve-run="' +
           escapeHtml(line.runId || "") +
           '">批准继续</button></div>';
@@ -465,8 +478,9 @@ function handleHarnessLine(line, runUi) {
     }
   }
   if (line.type === "assistant.final") {
-    renderMarkdown(runUi.answer, line.message || "Agent 没有返回最终文本。");
-    runUi.row.dataset.messageText = line.message || "";
+    const finalText = toStringMessage(line.message) || "Agent 没有返回最终文本。";
+    renderMarkdown(runUi.answer, finalText);
+    runUi.row.dataset.messageText = finalText;
     runUi.row.dataset.runId = line.runId || "";
     runUi.row.classList.remove("run-progress");
     const actions = document.createElement("div");
@@ -478,7 +492,11 @@ function handleHarnessLine(line, runUi) {
     runUi.row.querySelector(".message-content")?.append(actions);
   }
   if (line.type === "error") {
-    runUi.answer.innerHTML = '<div class="error-card"><strong>运行失败</strong><p>' + escapeHtml(line.message || "未知错误") + "</p></div>";
+    const errorMsg = toStringMessage(line.message) || "未知错误";
+    const settingsHint = errorMsg.includes("未配置") || errorMsg.includes("不可达")
+      ? '<br><a href="#" data-settings-open style="color:var(--accent);font-weight:600;cursor:pointer;">打开设置配置模型</a>'
+      : "";
+    runUi.answer.innerHTML = '<div class="error-card"><strong>运行失败</strong><p>' + escapeHtml(errorMsg) + settingsHint + "</p></div>";
   }
   // Follow streaming content (thinking blocks, tool events, deltas).
   scrollConversationToBottom();
@@ -517,14 +535,28 @@ async function submitChatGoal(goal) {
       buffer = lines.pop() || "";
       for (const raw of lines) {
         if (!raw.trim()) continue;
-        handleHarnessLine(JSON.parse(raw), runUi);
+        try {
+          handleHarnessLine(JSON.parse(raw), runUi);
+        } catch {
+          // skip malformed JSON lines
+        }
       }
     }
-    if (buffer.trim()) handleHarnessLine(JSON.parse(buffer), runUi);
+    if (buffer.trim()) {
+      try {
+        handleHarnessLine(JSON.parse(buffer), runUi);
+      } catch {
+        // skip trailing malformed data
+      }
+    }
     await refreshSessionListOnly();
     await refreshStatus();
   } catch (error) {
-    appendMessage("assistant", "模型调用失败：" + error.message, { skipPersist: true });
+    const msg = error.message || "未知错误";
+    const hint = msg.includes("未配置") || msg.includes("不可达") || msg.includes("fetch failed")
+      ? '<br><a href="#" onclick="document.querySelector(\'[data-settings-open]\')?.click();return false;" style="color:var(--accent);font-weight:600;">打开设置配置模型</a>'
+      : "";
+    appendMessage("assistant", msg + hint, { skipPersist: true });
   } finally {
     if (button) button.disabled = false;
   }
@@ -1158,6 +1190,8 @@ function syncDockReopen() {
   const collapsed = byId("bottom-dock")?.classList.contains("is-collapsed") ?? false;
   const reopen = document.querySelector(".dock-reopen");
   if (reopen) reopen.hidden = !collapsed;
+  const toggle = document.querySelector(".terminal-toggle");
+  if (toggle) toggle.setAttribute("aria-pressed", String(!collapsed));
 }
 
 function toggleBottomDock() {

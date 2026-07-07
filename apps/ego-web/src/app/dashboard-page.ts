@@ -77,6 +77,7 @@ export function renderDashboardHtml(): string {
           <span id="cpu-label">CPU --</span>
           <span id="memory-label">RSS --</span>
           <span id="clock-label">--:--:--</span>
+          <button class="terminal-toggle" type="button" data-bottom-dock-toggle aria-pressed="false" title="终端">${icon("terminal")}<span>终端</span></button>
           <button class="rail-toggle-icon left-rail-toggle" type="button" data-rail-toggle="left" aria-label="收起左侧栏" title="收起左侧栏">${icon("chevronLeft")}</button>
           <button class="rail-toggle-icon right-rail-toggle" type="button" data-rail-toggle="right" aria-label="收起右侧栏" title="收起右侧栏">${icon("chevronRight")}</button>
         </div>
@@ -178,7 +179,6 @@ export function renderDashboardHtml(): string {
               <div class="dock-list" id="dock-check-list">暂无检查输出</div>
             </div>
           </section>
-          <button class="dock-reopen" type="button" data-bottom-dock-toggle title="展开底部面板">${icon("terminal")}<span>终端</span></button>
         </section>
 
         <aside class="right-rail" aria-label="Inspector">
@@ -274,9 +274,9 @@ function renderSettingsPage(): string {
         </div>
         <div class="settings-group-title"><h3>权限</h3><p>默认权限会影响下一次 Agent run；高风险动作仍会进入审计流程。</p></div>
         <div class="settings-card">
-          <label class="settings-row-card"><span><strong>默认权限</strong><small>允许读取当前工作区文件。</small></span><input class="switch-control" type="checkbox" checked /><i class="switch-visual" aria-hidden="true"></i></label>
-          <label class="settings-row-card"><span><strong>自动审核</strong><small>低风险读取请求自动通过，高风险仍进入审批。</small></span><input class="switch-control" type="checkbox" checked /><i class="switch-visual" aria-hidden="true"></i></label>
-          <label class="settings-row-card"><span><strong>完整访问权限</strong><small>允许写入和联网命令，需要谨慎开启。</small></span><input class="switch-control" type="checkbox" /><i class="switch-visual" aria-hidden="true"></i></label>
+          <label class="settings-row-card"><span><strong>默认权限</strong><small>允许读取当前工作区文件。</small></span><input class="switch-control" type="checkbox" checked /></label>
+          <label class="settings-row-card"><span><strong>自动审核</strong><small>低风险读取请求自动通过，高风险仍进入审批。</small></span><input class="switch-control" type="checkbox" checked /></label>
+          <label class="settings-row-card"><span><strong>完整访问权限</strong><small>允许写入和联网命令，需要谨慎开启。</small></span><input class="switch-control" type="checkbox" /></label>
         </div>
       </section>
       <section class="settings-section" data-settings-panel="appearance" hidden>

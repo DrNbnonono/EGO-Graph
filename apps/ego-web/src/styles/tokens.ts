@@ -2,11 +2,11 @@ export function renderTokensCss(): string {
   return String.raw`:root {
   color-scheme: light;
 
-  /* --- Brand & status colors (values asserted by tests — keep stable) --- */
+  /* --- Brand & status colors --- */
   --bg: #f7f9fc;
   --bg-soft: #eef3f8;
-  --accent: #6b4fd8;
-  --accent-soft: rgba(107, 79, 216, 0.1);
+  --accent: #1a1a2e;
+  --accent-soft: rgba(26, 26, 46, 0.08);
   --cyan: #1685a7;
   --success: #1ca66a;
   --warning: #b7791f;
@@ -14,7 +14,7 @@ export function renderTokensCss(): string {
   --text: #171923;
   --muted: #6b7280;
   --line: rgba(17, 24, 39, 0.1);
-  --line-strong: rgba(93, 75, 138, 0.22);
+  --line-strong: rgba(26, 26, 46, 0.18);
   --panel: rgba(255, 255, 255, 0.76);
   --button-text-on-accent: #ffffff;
 
@@ -39,9 +39,9 @@ export function renderTokensCss(): string {
   --app-bg: linear-gradient(180deg, #fbfcfe 0%, #eef2f8 100%);
 
   /* --- Tinted accents derived from brand --- */
-  --accent-tint: rgba(107, 79, 216, 0.08);
-  --accent-ring: rgba(107, 79, 216, 0.28);
-  --accent-line: rgba(107, 79, 216, 0.2);
+  --accent-tint: rgba(26, 26, 46, 0.06);
+  --accent-ring: rgba(26, 26, 46, 0.2);
+  --accent-line: rgba(26, 26, 46, 0.16);
   --cyan-tint: rgba(22, 133, 167, 0.08);
   --danger-tint: rgba(229, 72, 103, 0.08);
   --danger-line: rgba(229, 72, 103, 0.24);
@@ -148,19 +148,19 @@ body[data-theme="dark"] {
   --overlay-bg: rgba(20, 24, 36, 0.96);
   --glass-border: rgba(255, 255, 255, 0.1);
   --line: rgba(255, 255, 255, 0.09);
-  --line-strong: rgba(172, 139, 255, 0.3);
+  --line-strong: rgba(240, 240, 240, 0.22);
   --text: #f1eef9;
   --muted: #9b94b0;
-  --accent: #a978ff;
-  --accent-soft: rgba(169, 120, 255, 0.16);
+  --accent: #f0f0f0;
+  --accent-soft: rgba(240, 240, 240, 0.1);
   --cyan: #5dd6e8;
   --success: #65d99a;
   --warning: #e7b75f;
   --danger: #ef6f91;
   --button-text-on-accent: #10131e;
-  --accent-tint: rgba(169, 120, 255, 0.14);
-  --accent-ring: rgba(169, 120, 255, 0.4);
-  --accent-line: rgba(169, 120, 255, 0.28);
+  --accent-tint: rgba(240, 240, 240, 0.08);
+  --accent-ring: rgba(240, 240, 240, 0.2);
+  --accent-line: rgba(240, 240, 240, 0.18);
   --cyan-tint: rgba(93, 214, 232, 0.1);
   --danger-tint: rgba(239, 111, 145, 0.14);
   --danger-line: rgba(239, 111, 145, 0.34);
