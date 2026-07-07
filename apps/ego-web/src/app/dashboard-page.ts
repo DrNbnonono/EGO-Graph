@@ -77,6 +77,8 @@ export function renderDashboardHtml(): string {
           <span id="cpu-label">CPU --</span>
           <span id="memory-label">RSS --</span>
           <span id="clock-label">--:--:--</span>
+          <button class="rail-toggle-icon left-rail-toggle" type="button" data-rail-toggle="left" aria-label="收起左侧栏" title="收起左侧栏">${icon("chevronLeft")}</button>
+          <button class="rail-toggle-icon right-rail-toggle" type="button" data-rail-toggle="right" aria-label="收起右侧栏" title="收起右侧栏">${icon("chevronRight")}</button>
         </div>
       </header>
 
@@ -91,7 +93,6 @@ export function renderDashboardHtml(): string {
 
       <section class="dashboard-shell">
         <aside class="left-rail" aria-label="项目和会话">
-          <button class="rail-toggle-icon left-rail-toggle" type="button" data-rail-toggle="left" aria-label="收起左侧栏" title="收起左侧栏">${icon("chevronLeft")}</button>
           <div class="rail-resizer rail-resizer-left" data-rail-resizer="left" aria-hidden="true"></div>
           <section class="panel session-panel" data-collapsible-panel="sessions">
             <div class="panel-heading">
@@ -181,7 +182,6 @@ export function renderDashboardHtml(): string {
         </section>
 
         <aside class="right-rail" aria-label="Inspector">
-          <button class="rail-toggle-icon right-rail-toggle" type="button" data-rail-toggle="right" aria-label="收起右侧栏" title="收起右侧栏">${icon("chevronRight")}</button>
           <div class="rail-resizer rail-resizer-right" data-rail-resizer="right" aria-hidden="true"></div>
           <section class="panel inspector-shell">
             <div class="panel-heading inspector-heading">

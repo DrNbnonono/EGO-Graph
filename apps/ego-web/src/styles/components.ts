@@ -477,44 +477,24 @@ button[type="submit"] {
 }
 
 .rail-toggle-icon {
-  position: absolute;
-  top: var(--sp-3);
-  z-index: 6;
-  display: grid;
+  display: inline-grid;
   place-items: center;
-  width: 20px;
-  height: 44px;
+  width: 30px;
+  height: 30px;
   min-height: 0;
+  padding: 0;
   border: 1px solid var(--line);
-  border-radius: var(--radius-full);
-  background: var(--glass-border);
-  backdrop-filter: blur(12px);
+  border-radius: var(--radius-sm);
+  background: var(--control-bg);
   color: var(--muted);
   cursor: pointer;
-  box-shadow: var(--shadow-md);
-  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
-}
-
-.left-rail-toggle {
-  right: -10px;
-}
-
-.right-rail-toggle {
-  left: -10px;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
 }
 
 .rail-toggle-icon:hover {
   border-color: var(--accent-line);
   color: var(--accent);
-}
-
-body.rail-left-collapsed .left-rail-toggle,
-body.rail-right-collapsed .right-rail-toggle {
-  position: static;
-  align-self: start;
-  justify-self: center;
-  margin-top: var(--sp-3);
-  box-shadow: none;
+  background: var(--accent-tint);
 }
 
 body.rail-left-collapsed .left-rail-toggle,
