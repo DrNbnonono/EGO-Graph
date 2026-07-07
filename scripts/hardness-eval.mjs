@@ -10,6 +10,8 @@
  *   node scripts/hardness-eval.mjs --smoke    # only h0/h1
  */
 import { pathToFileURL } from "node:url";
+import { writeFile, mkdir } from "node:fs/promises";
+import { join } from "node:path";
 
 const root = process.cwd();
 const smoke = process.argv.includes("--smoke");
@@ -39,6 +41,34 @@ console.log("");
 console.log(`Hardness suite: ${summary.passed}/${summary.total} passed, average score ${summary.averageScore} (${elapsed}s).`);
 if (summary.failedScenarios.length > 0) {
   console.log(`Failed scenarios: ${summary.failedScenarios.join(", ")}`);
+}
+
+// Write JSON artifact for CI upload and evidence trail.
+const report = {
+  timestamp: new Date().toISOString(),
+  smoke,
+  elapsedSeconds: Number(elapsed),
+  summary,
+  results: results.map((result) => ({
+    scenarioId: result.scenario.id,
+    level: result.scenario.level,
+    domain: result.scenario.domain,
+    passed: result.score.passed,
+    score: result.score.score,
+    maxScore: result.score.maxScore,
+    missingSignals: result.score.missingSignals,
+  })),
+};
+const artifactDir = join(root, "hardness-artifacts");
+await mkdir(artifactDir, { recursive: true });
+await writeFile(
+  join(artifactDir, `hardness-report-${smoke ? "smoke" : "full"}.json`),
+  JSON.stringify(report, null, 2),
+  "utf8",
+);
+console.log(`Artifact written to ${join(artifactDir, `hardness-report-${smoke ? "smoke" : "full"}.json`)}`);
+
+if (summary.failedScenarios.length > 0) {
   process.exit(1);
 }
 

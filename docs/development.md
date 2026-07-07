@@ -55,3 +55,39 @@ node apps/ego-cli/dist/index.js run --scenario web_pentest --input scenarios/web
 ```
 
 The API key must stay in the shell environment, `.env.local`, or a secret manager. Do not commit it.
+
+## Windows + cloud-sync drives (EACCES / EPERM)
+
+Running `pnpm install` or `pnpm typecheck` on a Baidu Syncdisk (or similar cloud-sync)
+drive on Windows can fail with `EACCES` or `EPERM` during `node_modules` rename
+operations. The pnpm content-addressable store itself is fine, but the hoisted
+symlink layer conflicts with sync-engine file locks.
+
+Workarounds (in order of preference):
+
+1. **Use the Linux CI runner** (`.github/workflows/ci.yml`) as the authoritative
+   verification path. It runs `typecheck`, `test`, `build`, `smoke`, `eval:smoke`,
+   and `eval:hardness:smoke` on `ubuntu-latest`.
+2. **Clone the repo to a non-synced local path** (e.g. `C:\dev\EGO-Graph`) and run
+   `pnpm install` there. The Baidu Syncdisk copy can remain for editing while the
+   non-synced copy handles builds and tests.
+3. **Run tsc directly** without triggering `pnpm install`:
+   ```bash
+   node "node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/lib/tsc.js" -b --pretty false
+   ```
+   This bypasses the pnpm hoist layer and uses the `.pnpm` store directly.
+
+## Hardness CI gate
+
+The CI pipeline runs `pnpm eval:hardness:smoke` after `eval:smoke`. This executes
+the h0/h1 hardness scenarios against the real agent loop with a deterministic
+stub model provider (no network) and exits non-zero on regression. A JSON
+artifact (`hardness-artifacts/hardness-report-smoke.json`) is uploaded on every
+run with per-scenario scores, missing signals, and timing data.
+
+To run the full hardness suite locally:
+
+```bash
+pnpm build
+pnpm eval:hardness
+```

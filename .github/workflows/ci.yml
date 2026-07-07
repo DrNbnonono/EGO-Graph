@@ -23,3 +23,11 @@ jobs:
       - run: pnpm build
       - run: pnpm smoke
       - run: pnpm eval:smoke
+      - run: pnpm eval:hardness:smoke
+      - name: Upload hardness artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hardness-report
+          path: hardness-artifacts/
+          retention-days: 30
