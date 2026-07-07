@@ -196,10 +196,10 @@ body.settings-open .dashboard-shell {
 }
 
 .settings-sidebar {
-  display: grid;
-  grid-template-rows: auto auto 1fr;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
   gap: var(--sp-3);
+  min-width: 0;
   min-height: 0;
   padding: var(--sp-6) var(--sp-4);
   border-right: 1px solid var(--line);

@@ -1448,6 +1448,8 @@ dd {
 .settings-close-button {
   display: inline-flex;
   align-items: center;
+  justify-self: start;
+  width: fit-content;
   gap: var(--sp-2);
   min-height: 34px;
   padding: 0 var(--sp-3);
