@@ -179,7 +179,7 @@ describe("terminal agent session", () => {
           },
         }),
       ),
-      checkCommands: [{ name: "node-version", command: "node", args: ["--version"] }],
+      checkCommands: [{ name: "node-version", command: process.execPath, args: ["--version"] }],
     });
     const started = await collect(session.startTask("把 README 里的 hello 改成 lotus"));
     const runId = started[0]!.runId;
@@ -365,7 +365,7 @@ describe("terminal agent session", () => {
       checkCommands: [
         {
           name: "forced-fail",
-          command: "node",
+          command: process.execPath,
           args: ["-e", "console.error('broken check'); process.exit(1)"],
         },
       ],

@@ -49,7 +49,7 @@ describe("coding agent foundation", () => {
           { type: "replace_text", path: "README.md", oldText: "hello", newText: "lotus" },
         ],
       },
-      checkCommands: [{ name: "node-version", command: "node", args: ["--version"] }],
+      checkCommands: [{ name: "node-version", command: process.execPath, args: ["--version"] }],
     });
 
     expect(turn.editResult?.applied).toBe(true);
