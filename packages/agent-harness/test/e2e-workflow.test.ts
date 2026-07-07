@@ -361,4 +361,160 @@ describe("e2e: full agent workflow", () => {
     expect(replayed.length).toBeGreaterThan(0);
     expect(eventTypes(replayed)).toContain("run.completed");
   });
+
+  it("skips repair after reaching the max retry limit", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-e2e-repair-limit-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-e2e-repair-limit-home-"));
+    await writeFile(join(root, "package.json"), '{"name":"fixture"}', "utf8");
+    await writeFile(join(root, "README.md"), "hello\n", "utf8");
+
+    // Check command that always fails — simulates an unfixable regression.
+    const alwaysFail = [
+      "-e",
+      "console.error('permanent failure'); process.exit(1)",
+    ];
+
+    // Provider queue: plan + initial edit + repair 1 + repair 2
+    // maxRepairAttempts is 2, so after 2 failed repairs the loop must skip.
+    const session = createTerminalAgentSession({
+      workspaceRoot: root,
+      egoHome,
+      permissionLevel: "shell-readonly",
+      modelProvider: queuedProvider([
+        JSON.stringify({
+          plan: [
+            {
+              id: "context",
+              title: "Read",
+              knownEvidence: ["README"],
+              missingEvidence: ["edit"],
+              toolChoiceRationale: "Read",
+              expectedResult: "context",
+              stopCondition: "done",
+              riskNote: "ro",
+            },
+            {
+              id: "patch",
+              title: "Edit",
+              knownEvidence: ["context"],
+              missingEvidence: ["approval"],
+              toolChoiceRationale: "edit",
+              expectedResult: "diff",
+              stopCondition: "approved",
+              riskNote: "write",
+            },
+          ],
+        }),
+        JSON.stringify({
+          rationale: "initial",
+          editPlan: {
+            goal: "update",
+            operations: [
+              { type: "replace_text", path: "README.md", oldText: "hello", newText: "lotus" },
+            ],
+          },
+        }),
+        JSON.stringify({
+          rationale: "repair 1",
+          editPlan: {
+            goal: "repair 1",
+            operations: [
+              { type: "replace_text", path: "README.md", oldText: "lotus", newText: "lotus r1" },
+            ],
+          },
+        }),
+        JSON.stringify({
+          rationale: "repair 2",
+          editPlan: {
+            goal: "repair 2",
+            operations: [
+              { type: "replace_text", path: "README.md", oldText: "lotus r1", newText: "lotus r2" },
+            ],
+          },
+        }),
+      ]),
+      checkCommands: [{ name: "always-fail", command: process.execPath, args: alwaysFail }],
+    });
+
+    const started = await collect(session.startTask("把 README 里的 hello 改成 lotus"));
+    const runId = started[0]!.runId;
+    await collect(session.approvePlan(runId));
+
+    // First apply: check fails → repair 1 proposed
+    const firstApply = await collect(session.approvePatch(runId));
+    expect(eventTypes(firstApply)).toContain("repair.proposed");
+    expect(session.getRunState(runId)?.repairAttempts).toBe(1);
+
+    // Second apply: check fails again → repair 2 proposed
+    const secondApply = await collect(session.approvePatch(runId));
+    expect(eventTypes(secondApply)).toContain("repair.proposed");
+    expect(session.getRunState(runId)?.repairAttempts).toBe(2);
+
+    // Third apply: check fails again → repair limit reached → repair.skipped
+    const thirdApply = await collect(session.approvePatch(runId));
+    expect(eventTypes(thirdApply)).toContain("repair.skipped");
+    expect(session.getRunState(runId)?.status).toBe("blocked");
+    expect(session.getRunState(runId)?.phase).toBe("blocked");
+  });
+
+  it("resumes patch approval after session restart via hydration", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ego-e2e-hydrate-resume-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-e2e-hydrate-resume-home-"));
+    await writeFile(join(root, "package.json"), '{"name":"fixture"}', "utf8");
+    await writeFile(join(root, "README.md"), "hello\n", "utf8");
+
+    // Session 1: start task, approve plan, get patch pending — then "crash"
+    const first = createTerminalAgentSession({
+      workspaceRoot: root,
+      egoHome,
+      permissionLevel: "shell-readonly",
+      modelProvider: fakeProvider(
+        JSON.stringify({
+          rationale: "README edit.",
+          editPlan: {
+            goal: "update readme",
+            operations: [
+              { type: "replace_text", path: "README.md", oldText: "hello", newText: "lotus" },
+            ],
+          },
+        }),
+      ),
+      checkCommands: [{ name: "node-version", command: process.execPath, args: ["--version"] }],
+    });
+    const started = await collect(first.startTask("把 README hello 改成 lotus"));
+    const runId = started[0]!.runId;
+    await collect(first.approvePlan(runId));
+    // Patch is pending — session "crashes" here (we just abandon it)
+    expect(first.getRunState(runId)?.status).toBe("patch_pending");
+    expect(await readFile(join(root, "README.md"), "utf8")).toBe("hello\n");
+
+    // Session 2: new session, hydrate pending runs, resume patch approval
+    const resumed = createTerminalAgentSession({
+      workspaceRoot: root,
+      egoHome,
+      permissionLevel: "shell-readonly",
+      modelProvider: fakeProvider(
+        JSON.stringify({
+          rationale: "README edit.",
+          editPlan: {
+            goal: "update readme",
+            operations: [
+              { type: "replace_text", path: "README.md", oldText: "hello", newText: "lotus" },
+            ],
+          },
+        }),
+      ),
+      checkCommands: [{ name: "node-version", command: process.execPath, args: ["--version"] }],
+    });
+    const hydrated = await resumed.hydratePendingRuns();
+    expect(hydrated.map((run) => run.runId)).toContain(runId);
+    expect(resumed.getRunState(runId)?.status).toBe("patch_pending");
+    expect(resumed.getRunState(runId)?.diff).toContain("+lotus");
+
+    // Resume: approve patch → checks → run.completed
+    const applied = await collect(resumed.approvePatch(runId));
+    expect(eventTypes(applied)).toContain("patch.applied");
+    expect(eventTypes(applied)).toContain("run.completed");
+    expect(await readFile(join(root, "README.md"), "utf8")).toBe("lotus\n");
+  });
 });
