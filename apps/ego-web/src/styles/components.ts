@@ -514,7 +514,6 @@ body.rail-right-collapsed .right-rail-toggle {
   overflow: auto;
 }
 
-.session-list,
 .tool-list,
 .detail-list,
 .file-list,
@@ -526,10 +525,75 @@ body.rail-right-collapsed .right-rail-toggle {
   padding: var(--sp-3);
 }
 
-.session-list,
 .tool-list,
 .detail-list {
   padding: 0 var(--sp-3) var(--sp-3);
+}
+
+.session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0 var(--sp-2) var(--sp-2);
+}
+
+.session-group {
+  padding: 0 var(--sp-1);
+}
+
+.session-group + .session-group {
+  margin-top: var(--sp-3);
+}
+
+.session-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  width: 100%;
+  min-height: 28px;
+  padding: var(--sp-1) var(--sp-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.session-group-toggle:hover {
+  color: var(--text);
+  background: var(--control-bg);
+}
+
+.session-group-toggle .icon svg {
+  transition: transform 140ms ease;
+}
+
+.session-group-toggle[aria-expanded="false"] .icon svg {
+  transform: rotate(-90deg);
+}
+
+.session-group-count {
+  margin-left: auto;
+  padding: 0 var(--sp-1);
+  border-radius: var(--radius-full);
+  background: var(--control-bg);
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.session-group-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: var(--sp-2);
+}
+
+.session-group-items[hidden] {
+  display: none;
 }
 
 .project-card {
@@ -606,18 +670,16 @@ body.rail-right-collapsed .right-rail-toggle {
 }
 
 .session-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
   gap: var(--sp-2);
-  min-height: 44px;
-  padding: 4px;
-  border: 1px solid transparent;
-  border-radius: var(--radius);
+  min-height: 34px;
+  padding: var(--sp-1) var(--sp-2);
+  border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
-  text-align: left;
   cursor: pointer;
-  transition: border-color 120ms ease, background 120ms ease;
+  transition: background 120ms ease;
 }
 
 .session-item:hover {
@@ -625,13 +687,20 @@ body.rail-right-collapsed .right-rail-toggle {
 }
 
 .session-item.active {
-  border-color: var(--accent-line);
   background: var(--accent-tint);
 }
 
+.session-item.active .session-text strong {
+  color: var(--accent);
+}
+
 .session-open {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: 1;
   min-width: 0;
-  padding: var(--sp-2) var(--sp-3);
+  padding: var(--sp-1) var(--sp-1);
   border: 0;
   background: transparent;
   color: var(--text);
@@ -639,19 +708,57 @@ body.rail-right-collapsed .right-rail-toggle {
   cursor: pointer;
 }
 
-.session-delete {
-  min-width: 28px;
-  min-height: 28px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+.session-open .session-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.session-open strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+}
+
+.session-open small {
   color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.session-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+  flex: 0 0 auto;
+}
+
+.session-item.active .session-dot {
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-ring);
+}
+
+.session-delete {
+  display: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
+  color: var(--muted);
   cursor: pointer;
-  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.session-item:hover .session-delete {
+  display: grid;
 }
 
 .session-delete:hover {
-  border-color: var(--danger-line);
   color: var(--danger);
   background: var(--danger-tint);
 }

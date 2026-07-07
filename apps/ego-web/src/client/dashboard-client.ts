@@ -147,11 +147,41 @@ function renderProject() {
 function renderSessions() {
   const list = byId("session-list");
   if (!list) return;
+  list.replaceChildren();
   if (!state.sessions.length) {
     list.innerHTML = '<div class="empty-state">还没有会话</div>';
     return;
   }
-  list.replaceChildren(...state.sessions.map(renderSessionItem));
+
+  // Group sessions by project id, preserving first-seen order.
+  const groups = new Map();
+  for (const session of state.sessions) {
+    const key = session.projectId || "default";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(session);
+  }
+
+  const fragment = document.createDocumentFragment();
+  for (const [projectId, sessions] of groups) {
+    const header = document.createElement("div");
+    header.className = "session-group";
+    const projectName = (projectId === state.project?.id && state.project?.name) ? state.project.name : "项目";
+    header.innerHTML =
+      '<button type="button" class="session-group-toggle" aria-expanded="true">' +
+      '<span class="icon"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"></path></svg></span>' +
+      escapeHtml(projectName) +
+      '<span class="session-group-count">' + sessions.length + '</span>' +
+      '</button>';
+    fragment.append(header);
+
+    const groupList = document.createElement("div");
+    groupList.className = "session-group-items";
+    for (const session of sessions) {
+      groupList.append(renderSessionItem(session));
+    }
+    fragment.append(groupList);
+  }
+  list.append(fragment);
 }
 
 function renderSessionItem(session) {
@@ -162,12 +192,14 @@ function renderSessionItem(session) {
   open.type = "button";
   open.className = "session-open";
   open.innerHTML =
-    '<strong>' + escapeHtml(session.title || "新对话") + '</strong><small>' + escapeHtml(formatRelativeTime(session.updatedAt)) + "</small>";
+    '<span class="session-dot"></span>' +
+    '<span class="session-text"><strong>' + escapeHtml(session.title || "新对话") + '</strong>' +
+    '<small>' + escapeHtml(formatRelativeTime(session.updatedAt)) + '</small></span>';
   open.addEventListener("click", () => selectSession(session.id));
 
   const del = document.createElement("button");
   del.type = "button";
-  del.className = "icon-button";
+  del.className = "session-delete";
   del.title = "删除会话";
   del.setAttribute("aria-label", "删除会话");
   del.innerHTML = '<span class="icon"><svg viewBox="0 0 16 16"><path d="M3 4h10M6 4V3h4v1m-5 2 .5 7h5L11 6"/></svg></span>';
@@ -1253,6 +1285,13 @@ function wireEvents() {
     if (target.dataset.inspectorTabShortcut) setInspectorTab(target.dataset.inspectorTabShortcut);
     if (target.dataset.mobileTarget) setMobileSection(target.dataset.mobileTarget);
     if (target.dataset.railToggle) toggleRail(target.dataset.railToggle);
+    if (target.classList?.contains("session-group-toggle")) {
+      const toggle = target;
+      const items = toggle.closest(".session-group")?.nextElementSibling;
+      const expanded = toggle.getAttribute("aria-expanded") === "true";
+      toggle.setAttribute("aria-expanded", String(!expanded));
+      if (items) items.hidden = expanded;
+    }
     if (target.dataset.panelToggle) togglePanel(target.dataset.panelToggle);
     if (target.dataset.mode) setMode(target.dataset.mode);
     if (target.dataset.settingsOpen !== undefined) openSettings(target.dataset.page || "general");
