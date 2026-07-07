@@ -98,6 +98,7 @@ export function renderDashboardHtml(): string {
                   <strong id="active-project-name">当前项目</strong>
                   <small id="active-project-path">读取中</small>
                 </div>
+                <button class="project-change-button" type="button" data-settings-open title="更换目标目录">更换</button>
               </div>
               <button class="new-session-button" type="button" id="new-session-button">${icon("plus")}<span>新对话</span></button>
               <div class="session-list" id="session-list"></div>
@@ -193,7 +194,7 @@ export function renderDashboardHtml(): string {
 function renderSettingsPage(): string {
   return String.raw`<section class="settings-page" id="settings-page" hidden aria-label="设置">
   <aside class="settings-sidebar">
-    <button class="ghost settings-back" type="button" data-settings-close>返回工作台</button>
+    <button class="settings-back" type="button" data-settings-close>${icon("chevronLeft")}返回工作台</button>
     <input class="settings-search" id="settings-search" placeholder="搜索设置..." />
     <nav class="settings-nav" aria-label="设置分类">
       <button class="active" type="button" data-settings-tab="general">${icon("settings")}常规</button>
@@ -207,14 +208,32 @@ function renderSettingsPage(): string {
   </aside>
   <section class="settings-main">
     <header class="settings-page-header">
-      <div>
+      <div class="settings-hero">
+        <span id="settings-kicker">Workspace</span>
         <h2 id="settings-title">常规</h2>
         <p id="settings-subtitle">模型配置保持全局，项目切换只改变上下文和会话归属。</p>
       </div>
-      <button class="ghost" type="button" data-settings-close>关闭</button>
+      <button class="settings-close-button" type="button" data-settings-close>关闭</button>
     </header>
     <div class="settings-content" id="settings-content">
       <section class="settings-section" data-settings-panel="general">
+        <div class="settings-group-title">
+          <h3>项目 / 目标目录</h3>
+          <p>新会话默认归属到当前目标目录。浏览器版请输入路径；未来 App 版可接原生文件夹选择。</p>
+        </div>
+        <div class="settings-card project-picker-card">
+          <div class="settings-row-card">
+            <div>
+              <strong>当前目标目录</strong>
+              <small id="settings-current-project-path">读取中</small>
+            </div>
+            <span class="inherit-chip">全局模型不变</span>
+          </div>
+          <div class="project-path-row">
+            <input id="project-path-input" placeholder="输入项目文件夹路径，例如 E:\\path\\to\\project" />
+            <button class="secondary-action" id="open-project-button" type="button">${icon("folder")}打开目录</button>
+          </div>
+        </div>
         <h3>工作模式</h3>
         <div class="option-grid">
           <label class="option-card">
@@ -228,11 +247,23 @@ function renderSettingsPage(): string {
             <small>技术细节更少，节奏更轻</small>
           </label>
         </div>
-        <h3>权限</h3>
+        <div class="settings-group-title">
+          <h3>权限</h3>
+          <p>这些是前端体验开关，后续可以接入完整权限策略。</p>
+        </div>
         <div class="settings-card">
-          <label><span>默认权限</span><input type="checkbox" checked /></label>
-          <label><span>自动审核</span><input type="checkbox" checked /></label>
-          <label><span>完整访问权限</span><input type="checkbox" /></label>
+          <label class="settings-row-card">
+            <span><strong>默认权限</strong><small>允许读取当前工作区文件。</small></span>
+            <input class="switch-control" type="checkbox" checked />
+          </label>
+          <label class="settings-row-card">
+            <span><strong>自动审核</strong><small>低风险读取请求自动通过，高风险仍进入审批。</small></span>
+            <input class="switch-control" type="checkbox" checked />
+          </label>
+          <label class="settings-row-card">
+            <span><strong>完整访问权限</strong><small>允许写入和联网命令，需要谨慎开启。</small></span>
+            <input class="switch-control" type="checkbox" />
+          </label>
         </div>
       </section>
       <section class="settings-section" data-settings-panel="appearance" hidden>

@@ -55,4 +55,19 @@ describe("dashboard product polish", () => {
     expect(html).toContain('class="send-action"');
     expect(html).toContain('class="settings-open-button"');
   });
+
+  it("renders a polished settings page with a project directory picker", () => {
+    const html = renderDashboardHtml();
+    const css = renderDashboardCss();
+    const js = renderDashboardJs();
+
+    expect(html).toContain('id="project-path-input"');
+    expect(html).toContain('id="open-project-button"');
+    expect(html).toContain('class="settings-hero"');
+    expect(html).toContain('class="settings-row-card"');
+    expect(css).toContain(".settings-hero");
+    expect(css).toContain(".settings-row-card");
+    expect(css).toContain(".switch-control");
+    expect(js).toContain("/api/projects/open");
+  });
 });
