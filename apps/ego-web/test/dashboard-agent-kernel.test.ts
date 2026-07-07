@@ -12,7 +12,7 @@ describe("dashboard agent kernel hooks", () => {
     expect(html).toContain('id="skill-list"');
     expect(html).toContain('id="search-status"');
     expect(js).toContain("/agent/plans");
-    expect(js).toContain("/api/hermes/timeline");
+    expect(js).toContain("workbench.hermes?.recentEvents");
     expect(js).toContain("renderPlanPreview");
     expect(js).toContain("renderMemory");
     expect(js).toContain("approveActivePlan");

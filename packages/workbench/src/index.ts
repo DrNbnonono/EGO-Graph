@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { basename } from "node:path";
 import { isModelConfigured, listModelProfiles, loadModelConfigWithSource } from "@ego-graph/llm";
 import { loadMcpConfig } from "@ego-graph/mcp";
-import { createBuiltinSkillRegistry } from "@ego-graph/tools";
+import { createBuiltinSkillRegistry, listLocalSkills } from "@ego-graph/tools";
 import {
   defaultEgoHome,
   sqlitePath,
@@ -98,7 +98,7 @@ export type WorkbenchSkill = {
   capabilities: string[];
   status: "ready" | "planned" | "offline";
   enabled: boolean;
-  source: "built-in" | "plugin";
+  source: "built-in" | "plugin" | "local";
   permissions: string[];
   toolCount: number;
 };
@@ -211,11 +211,12 @@ export async function readWorkbenchState(input: ReadWorkbenchStateInput): Promis
   const workspaceRoot = input.workspaceRoot;
   const egoHome = input.egoHome ?? defaultEgoHome();
   const workspace = createWorkspaceService(workspaceRoot);
-  const [summary, files, mcpConfig, modelProfiles] = await Promise.all([
+  const [summary, files, mcpConfig, modelProfiles, localSkills] = await Promise.all([
     workspace.summarizeProject(),
     workspace.listFiles({ limit: 80, maxDepth: 3 }),
     loadMcpConfig(workspaceRoot),
     listModelProfiles({ workspaceRoot }),
+    listLocalSkills(workspaceRoot),
   ]);
   const loadedModelConfig = loadModelConfigWithSource({ workspaceRoot });
   const modelConfig = loadedModelConfig.config;
@@ -235,6 +236,31 @@ export async function readWorkbenchState(input: ReadWorkbenchStateInput): Promis
     const agentPlans = await store.listAgentPlans({ limit: 8 });
     const hermesEvents = await store.listHermesEvents({ limit: 8 });
     const skills = createBuiltinSkillRegistry().listSkills();
+    const workbenchSkills: WorkbenchSkill[] = [
+      ...skills.map((skill) => ({
+        name: skill.name,
+        version: skill.version,
+        capabilities: skill.capabilities,
+        status:
+          skill.name === "workspace" || skill.name === "web-search"
+            ? ("ready" as const)
+            : ("planned" as const),
+        enabled: true,
+        source: "built-in" as const,
+        permissions: skill.capabilities,
+        toolCount: skill.tools.length,
+      })),
+      ...localSkills.skills.map((skill) => ({
+        name: skill.name,
+        version: skill.version,
+        capabilities: skill.capabilities,
+        status: skill.enabled ? ("ready" as const) : ("offline" as const),
+        enabled: skill.enabled,
+        source: "local" as const,
+        permissions: skill.permissions,
+        toolCount: skill.tools.length,
+      })),
+    ];
     const newestRun = recentRuns[0];
     const clock = new Date();
     const commandsRegistry = getBuiltinCommands();
@@ -365,16 +391,7 @@ export async function readWorkbenchState(input: ReadWorkbenchStateInput): Promis
           source: event.source,
         })),
       },
-      skills: skills.map((skill) => ({
-        name: skill.name,
-        version: skill.version,
-        capabilities: skill.capabilities,
-        status: skill.name === "workspace" || skill.name === "web-search" ? "ready" : "planned",
-        enabled: true,
-        source: "built-in",
-        permissions: skill.capabilities,
-        toolCount: skill.tools.length,
-      })),
+      skills: workbenchSkills,
       search: {
         status: "ready",
         tool: "web.search",

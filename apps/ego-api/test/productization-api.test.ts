@@ -165,6 +165,44 @@ describe("productized workbench API", () => {
     expect(test.tools.map((tool: { name: string }) => tool.name)).toContain("lookup");
     expect(file).toContain("hidden-value");
   });
+
+  it("persists local skill registrations through API endpoints", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "ego-api-skills-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-api-skills-home-"));
+    const app = createServer({ workspaceRoot, egoHome, modelProvider: null });
+
+    const createResponse = await app.request("/api/skills", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "report-writer",
+        version: "0.1.0",
+        description: "Write structured security reports.",
+        capabilities: ["report.write", "markdown.render"],
+        tools: [],
+        permissions: ["file:write"],
+        entry: "local:report-writer",
+        enabled: true,
+      }),
+      headers: { "content-type": "application/json" },
+    });
+    const skills = await app.request("/api/skills").then((response) => response.json());
+    const workbench = await app.request("/api/workbench").then((response) => response.json());
+    const file = await readFile(join(workspaceRoot, ".ego", "config.json"), "utf8");
+
+    expect(createResponse.status).toBe(200);
+    expect(skills.skills.map((skill: { name: string }) => skill.name)).toContain("report-writer");
+    expect(workbench.workbench.skills.map((skill: { name: string }) => skill.name)).toContain(
+      "report-writer",
+    );
+    expect(file).toContain("report-writer");
+
+    const deleteResponse = await app.request("/api/skills/report-writer", { method: "DELETE" });
+    const afterDelete = await app.request("/api/skills").then((response) => response.json());
+    expect(deleteResponse.status).toBe(200);
+    expect(afterDelete.skills.map((skill: { name: string }) => skill.name)).not.toContain(
+      "report-writer",
+    );
+  });
 });
 
 function fakeMcpServerSource(): string {

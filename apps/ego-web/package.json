@@ -15,6 +15,7 @@
     "@ego-graph/llm": "workspace:*",
     "@ego-graph/mcp": "workspace:*",
     "@ego-graph/storage": "workspace:*",
-    "@ego-graph/workbench": "workspace:*"
+    "@ego-graph/workbench": "workspace:*",
+    "marked": "17.0.1"
   }
 }

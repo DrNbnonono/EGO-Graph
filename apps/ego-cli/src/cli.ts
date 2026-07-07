@@ -72,6 +72,36 @@ export function createProgram(): Command {
       await handleConfigModelCommand(options);
     });
 
+  config
+    .command("mcp")
+    .description("Add or update a local MCP server in .ego/config.json")
+    .requiredOption("--name <name>", "MCP server name")
+    .option("--transport <transport>", "transport: stdio or http")
+    .option("--command <command>", "stdio command")
+    .option("--args <args>", "comma-separated stdio args")
+    .option("--url <url>", "HTTP MCP endpoint URL")
+    .option("--disabled", "save the server disabled")
+    .action(async (options) => {
+      const { handleConfigMcpCommand } = await import("./commands/config.js");
+      await handleConfigMcpCommand(options);
+    });
+
+  config
+    .command("skill")
+    .description("Add or update a local skill registration in .ego/config.json")
+    .requiredOption("--name <name>", "skill name")
+    .requiredOption("--description <description>", "skill description")
+    .option("--version <version>", "skill version", "0.1.0")
+    .option("--capabilities <capabilities>", "comma-separated capability names")
+    .option("--tools <tools>", "comma-separated tool names")
+    .option("--permissions <permissions>", "comma-separated permission labels")
+    .requiredOption("--entry <entry>", "skill entry, for example local:report-writer")
+    .option("--disabled", "save the skill disabled")
+    .action(async (options) => {
+      const { handleConfigSkillCommand } = await import("./commands/config.js");
+      await handleConfigSkillCommand(options);
+    });
+
   program
     .command("serve")
     .description("Start the local EGO-Graph API")

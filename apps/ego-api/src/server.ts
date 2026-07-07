@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import {
   draftAgentPlan,
   loadAgentSystemPrompt,
@@ -51,7 +51,13 @@ import {
   saveMcpServer,
   testMcpServer,
 } from "@ego-graph/mcp";
-import { createBuiltinSkillRegistry, loadPluginManifests } from "@ego-graph/tools";
+import {
+  createBuiltinSkillRegistry,
+  deleteLocalSkill,
+  listLocalSkills,
+  loadPluginManifests,
+  saveLocalSkill,
+} from "@ego-graph/tools";
 import {
   readDashboardStatus,
   renderDashboardCss,
@@ -76,6 +82,7 @@ import {
   CompositeTrajectoryStore,
   defaultEgoHome,
   JsonlTrajectoryStore,
+  parseMessageContent,
   reportDir,
   sqlitePath,
   SqliteEgoStore,
@@ -99,6 +106,20 @@ export function createServer(options: CreateServerOptions = {}): Hono {
   const egoHome = options.egoHome ?? defaultEgoHome();
   const metricsSampler = createRuntimeMetricsSampler();
   const activeHarnessSessions = new Map<string, TerminalAgentSession>();
+  const defaultProject = toProjectRecord(workspaceRoot, true);
+
+  async function withStore<T>(callback: (store: SqliteEgoStore) => Promise<T>): Promise<T> {
+    const store = new SqliteEgoStore(sqlitePath(egoHome));
+    try {
+      const projects = await store.listProjects();
+      if (!projects.some((project) => project.id === defaultProject.id)) {
+        await store.upsertProject({ ...defaultProject, active: projects.length === 0 });
+      }
+      return await callback(store);
+    } finally {
+      store.close();
+    }
+  }
 
   app.get("/health", (context) => {
     return context.json({ ok: true, service: "ego-api" });
@@ -116,6 +137,16 @@ export function createServer(options: CreateServerOptions = {}): Hono {
 
   app.get("/assets/dashboard.js", (context) => {
     return context.text(renderDashboardJs(), 200, {
+      "content-type": "application/javascript; charset=utf-8",
+    });
+  });
+
+  app.get("/assets/vendor/marked.esm.js", async (context) => {
+    const source = await readFile(
+      join(workspaceRoot, "node_modules", ".pnpm", "marked@17.0.1", "node_modules", "marked", "lib", "marked.esm.js"),
+      "utf8",
+    );
+    return context.text(source, 200, {
       "content-type": "application/javascript; charset=utf-8",
     });
   });
@@ -151,6 +182,126 @@ export function createServer(options: CreateServerOptions = {}): Hono {
       ok: true,
       workbench: await readWorkbenchState({ workspaceRoot, egoHome, metricsSampler }),
     });
+  });
+
+  app.get("/api/projects", async (context) => {
+    return context.json(
+      await withStore(async (store) => {
+        const projects = await store.listProjects();
+        return {
+          ok: true,
+          activeProject: projects.find((project) => project.active) ?? defaultProject,
+          projects,
+        };
+      }),
+    );
+  });
+
+  app.post("/api/projects/open", async (context) => {
+    const body = (await context.req.json().catch(() => ({}))) as { path?: string };
+    const targetPath = body.path?.trim() ? resolve(body.path) : workspaceRoot;
+    if (!existsSync(targetPath)) {
+      return context.json({ ok: false, error: "project path does not exist" }, 400);
+    }
+
+    return context.json(
+      await withStore(async (store) => {
+        const project = await store.upsertProject(toProjectRecord(targetPath, true));
+        return {
+          ok: true,
+          activeProject: project,
+          projects: await store.listProjects(),
+        };
+      }),
+    );
+  });
+
+  app.get("/api/sessions", async (context) => {
+    const projectId = context.req.query("projectId") ?? defaultProject.id;
+    return context.json(
+      await withStore(async (store) => ({
+        ok: true,
+        sessions: await store.listSessions(projectId),
+      })),
+    );
+  });
+
+  app.post("/api/sessions", async (context) => {
+    const body = (await context.req.json().catch(() => ({}))) as {
+      projectId?: string;
+      title?: string;
+    };
+    const projectId = body.projectId ?? defaultProject.id;
+    const title = normalizeSessionTitle(body.title);
+
+    return context.json(
+      await withStore(async (store) => {
+        const project = await store.getProject(projectId);
+        if (!project) {
+          return { ok: false, error: "project not found" };
+        }
+        const session = await store.createSession({ projectId, title });
+        return { ok: true, session };
+      }),
+    );
+  });
+
+  app.get("/api/sessions/:id/messages", async (context) => {
+    return context.json(
+      await withStore(async (store) => {
+        const sessionId = context.req.param("id");
+        const session = await store.getSession(sessionId);
+        if (!session) return { ok: false, error: "session not found", messages: [] };
+        const messages = (await store.listMessages(sessionId)).map(toWebMessage);
+        return { ok: true, session, messages };
+      }),
+    );
+  });
+
+  app.post("/api/sessions/:id/messages", async (context) => {
+    const body = (await context.req.json().catch(() => ({}))) as {
+      role?: string;
+      content?: string;
+      runId?: string;
+    };
+    const role = parseMessageRole(body.role);
+    const content = body.content ?? "";
+    if (!role || !content.trim()) {
+      return context.json({ ok: false, error: "role and content are required" }, 400);
+    }
+
+    return context.json(
+      await withStore(async (store) => {
+        const sessionId = context.req.param("id");
+        const session = await store.getSession(sessionId);
+        if (!session) return { ok: false, error: "session not found" };
+        const message = await store.appendMessage({
+          sessionId,
+          role,
+          contentJson: JSON.stringify(content),
+          ...(body.runId ? { runId: body.runId } : {}),
+        });
+        return { ok: true, message: toWebMessage(message) };
+      }),
+    );
+  });
+
+  app.delete("/api/sessions/:id", async (context) => {
+    return context.json(
+      await withStore(async (store) => {
+        await store.deleteSession(context.req.param("id"));
+        return { ok: true };
+      }),
+    );
+  });
+
+  app.post("/api/sessions/:id/clear", async (context) => {
+    return context.json(
+      await withStore(async (store) => {
+        await store.clearSession(context.req.param("id"));
+        return { ok: true };
+      }),
+    );
   });
 
   app.get("/api/runtime/metrics", (context) => {
@@ -445,6 +596,22 @@ export function createServer(options: CreateServerOptions = {}): Hono {
     const sqliteStore = new SqliteEgoStore(sqlitePath(egoHome));
     const sessionId = body.sessionId ?? "web-chat";
     try {
+      const projects = await sqliteStore.listProjects();
+      if (!projects.some((project) => project.id === defaultProject.id)) {
+        await sqliteStore.upsertProject({ ...defaultProject, active: projects.length === 0 });
+      }
+      if (!(await sqliteStore.getSession(sessionId))) {
+        await sqliteStore.createSession({
+          id: sessionId,
+          projectId: defaultProject.id,
+          title: normalizeSessionTitle(message),
+        });
+      }
+      await sqliteStore.appendMessage({
+        sessionId,
+        role: "user",
+        contentJson: JSON.stringify(message),
+      });
       const memoryHits = await recallStoreMemories(sqliteStore, message);
       await sqliteStore.saveHermesEvent(
         createHermesEvent({
@@ -459,6 +626,11 @@ export function createServer(options: CreateServerOptions = {}): Hono {
         workspaceRoot,
         memoryHints: toMemoryHints(memoryHits),
         ...(options.modelProvider !== undefined ? { modelProvider: options.modelProvider } : {}),
+      });
+      await sqliteStore.appendMessage({
+        sessionId,
+        role: "assistant",
+        contentJson: JSON.stringify(turn.reply),
       });
       const remembered = await rememberInStore(sqliteStore, {
         scope: "session",
@@ -492,6 +664,20 @@ export function createServer(options: CreateServerOptions = {}): Hono {
     }
 
     const sessionId = body.sessionId ?? "web-chat";
+    await withStore(async (store) => {
+      if (!(await store.getSession(sessionId))) {
+        await store.createSession({
+          id: sessionId,
+          projectId: defaultProject.id,
+          title: normalizeSessionTitle(message),
+        });
+      }
+      await store.appendMessage({
+        sessionId,
+        role: "user",
+        contentJson: JSON.stringify(message),
+      });
+    });
     const provider =
       options.modelProvider !== undefined
         ? options.modelProvider
@@ -503,6 +689,13 @@ export function createServer(options: CreateServerOptions = {}): Hono {
         workspaceRoot,
         ...(options.modelProvider !== undefined ? { modelProvider: options.modelProvider } : {}),
       });
+      await withStore((store) =>
+        store.appendMessage({
+          sessionId,
+          role: "assistant",
+          contentJson: JSON.stringify(turn.reply),
+        }).then(() => undefined),
+      );
       const lines = [
         { type: "agent.event", event: "message.received", sessionId, message },
         { type: "agent.event", event: "model.completed", sessionId, model: turn.model },
@@ -546,6 +739,13 @@ export function createServer(options: CreateServerOptions = {}): Hono {
             sessionId,
             model: provider.model,
           });
+          await withStore((store) =>
+            store.appendMessage({
+              sessionId,
+              role: "assistant",
+              contentJson: JSON.stringify(reply),
+            }).then(() => undefined),
+          );
           write({
             type: "assistant.final",
             sessionId,
@@ -774,15 +974,72 @@ export function createServer(options: CreateServerOptions = {}): Hono {
   app.get("/api/skills", async (context) => {
     const registry = createBuiltinSkillRegistry();
     const plugins = await loadPluginManifests(workspaceRoot);
+    const local = await listLocalSkills(workspaceRoot);
     return context.json({
       ok: true,
-      skills: registry.listSkills(),
+      skills: [
+        ...registry.listSkills().map((skill) => ({
+          ...skill,
+          enabled: true,
+          source: "built-in",
+        })),
+        ...plugins.plugins.flatMap((plugin) =>
+          (plugin.skills ?? []).map((skill) => ({
+            ...skill,
+            enabled: true,
+            source: "plugin",
+            plugin: plugin.name,
+          })),
+        ),
+        ...local.skills,
+      ],
       tools: registry.listTools().map((tool) => ({
         name: tool.name,
         description: tool.description,
         permission: tool.permission,
       })),
       plugins,
+      local,
+    });
+  });
+
+  app.post("/api/skills", async (context) => {
+    const body = (await context.req.json()) as {
+      name?: string;
+      version?: string;
+      description?: string;
+      capabilities?: string[];
+      tools?: string[];
+      permissions?: string[];
+      entry?: string;
+      enabled?: boolean;
+    };
+    if (!body.name || !body.description || !body.entry) {
+      return context.json({ ok: false, error: "name, description and entry are required" }, 400);
+    }
+
+    return context.json({
+      ok: true,
+      ...(await saveLocalSkill({
+        workspaceRoot,
+        skill: {
+          name: body.name,
+          version: body.version ?? "0.1.0",
+          description: body.description,
+          capabilities: body.capabilities ?? [],
+          tools: body.tools ?? [],
+          permissions: body.permissions ?? [],
+          entry: body.entry,
+          enabled: body.enabled ?? true,
+        },
+      })),
+    });
+  });
+
+  app.delete("/api/skills/:name", async (context) => {
+    return context.json({
+      ok: true,
+      ...(await deleteLocalSkill({ workspaceRoot, name: context.req.param("name") })),
     });
   });
 
@@ -1362,6 +1619,49 @@ function parseAgentPlanMode(mode: string | undefined): AgentPlanMode | undefined
     return "coding";
   }
   return mode === "coding" || mode === "ctf" || mode === "research" ? mode : undefined;
+}
+
+function toProjectRecord(path: string, active: boolean) {
+  const normalized = resolve(path);
+  const now = new Date().toISOString();
+  return {
+    id: `project-${Buffer.from(normalized).toString("base64url")}`,
+    name: basename(normalized) || normalized,
+    path: normalized,
+    active,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function normalizeSessionTitle(value: string | undefined): string {
+  const title = value?.trim();
+  return title ? title.slice(0, 48) : "新对话";
+}
+
+function parseMessageRole(role: string | undefined): "system" | "user" | "assistant" | "tool" | undefined {
+  return role === "system" || role === "user" || role === "assistant" || role === "tool"
+    ? role
+    : undefined;
+}
+
+function toWebMessage(message: {
+  id: string;
+  sessionId: string;
+  runId?: string;
+  role: "system" | "user" | "assistant" | "tool";
+  contentJson: string;
+  createdAt: string;
+}) {
+  const parsed = parseMessageContent(message.contentJson);
+  return {
+    id: message.id,
+    sessionId: message.sessionId,
+    ...(message.runId ? { runId: message.runId } : {}),
+    role: message.role,
+    content: typeof parsed === "string" ? parsed : JSON.stringify(parsed),
+    createdAt: message.createdAt,
+  };
 }
 
 async function collectHarnessEvents(

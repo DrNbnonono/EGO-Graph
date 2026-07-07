@@ -60,7 +60,7 @@ describe("ego api server", () => {
     expect(html).toContain("EGO-Graph Agent Workbench");
     expect(html).toContain('id="agent-thread"');
     expect(html).toContain('id="execution-timeline"');
-    expect(html).toContain("模型设置");
+    expect(html).toContain("模型配置");
     expect(html).toContain("项目进展");
     expect(html).toContain('id="mission-chat"');
     expect(html).toContain("/assets/brand/ego-lotus.png");
