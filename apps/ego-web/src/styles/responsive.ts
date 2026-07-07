@@ -75,6 +75,7 @@ export function renderResponsiveCss(): string {
     margin: 0;
     padding-bottom: 0;
     border-radius: 0;
+    grid-template-rows: auto auto minmax(0, 1fr);
   }
 
   .topbar {
