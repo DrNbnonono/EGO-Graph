@@ -6,11 +6,13 @@ import { trajectoryEventSchema, type TrajectoryEvent } from "@ego-graph/core";
 import type { RunIndexRecord } from "./run-index-store.js";
 import type {
   AppendMessageInput,
+  ConversationSessionRecord,
   ConversationStore,
   ListMessagesOptions,
+  ProjectRecord,
   StoredMessage,
 } from "./conversation-store.js";
-import { createStoredMessageId } from "./conversation-store.js";
+import { createConversationSessionId, createStoredMessageId } from "./conversation-store.js";
 
 export type SqliteEvidenceRecord = {
   id: number;
@@ -215,6 +217,23 @@ type HermesEventRow = {
   payload_json: string;
   created_at: string;
   source: string;
+};
+
+type ProjectRow = {
+  id: string;
+  name: string;
+  path: string;
+  active: number;
+  created_at: string;
+  updated_at: string;
+};
+
+type ConversationSessionRow = {
+  id: string;
+  project_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
 };
 
 type MemoryRow = {
@@ -809,6 +828,96 @@ export class SqliteEgoStore implements ConversationStore {
       .run(status, runId ?? null, updatedAt, planId);
   }
 
+  async upsertProject(
+    input: Omit<ProjectRecord, "createdAt" | "updatedAt"> & Partial<ProjectRecord>,
+  ): Promise<ProjectRecord> {
+    const now = new Date().toISOString();
+    const existing = this.db.prepare("select * from projects where id = ?").get(input.id) as
+      | ProjectRow
+      | undefined;
+    const createdAt = input.createdAt ?? existing?.created_at ?? now;
+    const updatedAt = input.updatedAt ?? now;
+
+    if (input.active) {
+      this.db.prepare("update projects set active = 0").run();
+    }
+    this.db
+      .prepare(
+        `insert into projects (id, name, path, active, created_at, updated_at)
+         values (?, ?, ?, ?, ?, ?)
+         on conflict(id) do update set
+           name = excluded.name,
+           path = excluded.path,
+           active = excluded.active,
+           updated_at = excluded.updated_at`,
+      )
+      .run(input.id, input.name, input.path, input.active ? 1 : 0, createdAt, updatedAt);
+
+    return {
+      id: input.id,
+      name: input.name,
+      path: input.path,
+      active: input.active,
+      createdAt,
+      updatedAt,
+    };
+  }
+
+  async listProjects(): Promise<ProjectRecord[]> {
+    const rows = this.db
+      .prepare("select * from projects order by active desc, updated_at desc, name asc")
+      .all() as ProjectRow[];
+    return rows.map(projectRowToRecord);
+  }
+
+  async getProject(projectId: string): Promise<ProjectRecord | undefined> {
+    const row = this.db.prepare("select * from projects where id = ?").get(projectId) as
+      | ProjectRow
+      | undefined;
+    return row ? projectRowToRecord(row) : undefined;
+  }
+
+  async createSession(input: {
+    id?: string;
+    projectId: string;
+    title: string;
+    createdAt?: string;
+    updatedAt?: string;
+  }): Promise<ConversationSessionRecord> {
+    const now = new Date().toISOString();
+    const id = input.id ?? createConversationSessionId();
+    const createdAt = input.createdAt ?? now;
+    const updatedAt = input.updatedAt ?? createdAt;
+
+    this.db
+      .prepare(
+        `insert into conversation_sessions (id, project_id, title, created_at, updated_at)
+         values (?, ?, ?, ?, ?)`,
+      )
+      .run(id, input.projectId, input.title, createdAt, updatedAt);
+
+    return { id, projectId: input.projectId, title: input.title, createdAt, updatedAt };
+  }
+
+  async listSessions(projectId: string): Promise<ConversationSessionRecord[]> {
+    const rows = this.db
+      .prepare("select * from conversation_sessions where project_id = ? order by updated_at desc")
+      .all(projectId) as ConversationSessionRow[];
+    return rows.map(conversationSessionRowToRecord);
+  }
+
+  async getSession(sessionId: string): Promise<ConversationSessionRecord | undefined> {
+    const row = this.db
+      .prepare("select * from conversation_sessions where id = ?")
+      .get(sessionId) as ConversationSessionRow | undefined;
+    return row ? conversationSessionRowToRecord(row) : undefined;
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    this.db.prepare("delete from conversation_messages where session_id = ?").run(sessionId);
+    this.db.prepare("delete from conversation_sessions where id = ?").run(sessionId);
+  }
+
   async appendMessage(input: AppendMessageInput): Promise<StoredMessage> {
     const id = input.id ?? createStoredMessageId();
     const createdAt = input.createdAt ?? new Date().toISOString();
@@ -829,6 +938,9 @@ export class SqliteEgoStore implements ConversationStore {
         input.tokenCount ?? null,
         createdAt,
       );
+    this.db
+      .prepare("update conversation_sessions set updated_at = ? where id = ?")
+      .run(createdAt, input.sessionId);
     return {
       id,
       sessionId: input.sessionId,
@@ -1081,6 +1193,27 @@ export class SqliteEgoStore implements ConversationStore {
       create index if not exists idx_agent_plans_status on agent_plans(status, updated_at);
       create index if not exists idx_agent_plans_session on agent_plans(session_id, updated_at);
 
+      create table if not exists projects (
+        id text primary key,
+        name text not null,
+        path text not null,
+        active integer not null default 0,
+        created_at text not null,
+        updated_at text not null
+      );
+
+      create index if not exists idx_projects_active_updated on projects(active, updated_at);
+
+      create table if not exists conversation_sessions (
+        id text primary key,
+        project_id text not null,
+        title text not null,
+        created_at text not null,
+        updated_at text not null
+      );
+
+      create index if not exists idx_conversation_sessions_project on conversation_sessions(project_id, updated_at);
+
       create table if not exists conversation_messages (
         id text primary key,
         session_id text not null,
@@ -1331,6 +1464,27 @@ function hermesEventRowToRecord(row: HermesEventRow): HermesEventRecord {
     payload: JSON.parse(row.payload_json) as Record<string, unknown>,
     createdAt: row.created_at,
     source: row.source,
+  };
+}
+
+function projectRowToRecord(row: ProjectRow): ProjectRecord {
+  return {
+    id: row.id,
+    name: row.name,
+    path: row.path,
+    active: row.active === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function conversationSessionRowToRecord(row: ConversationSessionRow): ConversationSessionRecord {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    title: row.title,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 

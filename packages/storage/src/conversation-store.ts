@@ -26,6 +26,23 @@ export type StoredMessage = {
   createdAt: string;
 };
 
+export type ProjectRecord = {
+  id: string;
+  name: string;
+  path: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ConversationSessionRecord = {
+  id: string;
+  projectId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type AppendMessageInput = Omit<StoredMessage, "id" | "createdAt"> & {
   id?: string;
   createdAt?: string;
@@ -38,6 +55,19 @@ export type ListMessagesOptions = {
 };
 
 export type ConversationStore = {
+  upsertProject(input: Omit<ProjectRecord, "createdAt" | "updatedAt"> & Partial<ProjectRecord>): Promise<ProjectRecord>;
+  listProjects(): Promise<ProjectRecord[]>;
+  getProject(projectId: string): Promise<ProjectRecord | undefined>;
+  createSession(input: {
+    id?: string;
+    projectId: string;
+    title: string;
+    createdAt?: string;
+    updatedAt?: string;
+  }): Promise<ConversationSessionRecord>;
+  listSessions(projectId: string): Promise<ConversationSessionRecord[]>;
+  getSession(sessionId: string): Promise<ConversationSessionRecord | undefined>;
+  deleteSession(sessionId: string): Promise<void>;
   appendMessage(input: AppendMessageInput): Promise<StoredMessage>;
   listMessages(sessionId: string, options?: ListMessagesOptions): Promise<StoredMessage[]>;
   /**
@@ -55,6 +85,10 @@ export type ConversationStore = {
 
 export function createStoredMessageId(): string {
   return `msg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function createConversationSessionId(): string {
+  return `session-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 /**
