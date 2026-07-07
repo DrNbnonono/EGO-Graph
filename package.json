@@ -19,6 +19,8 @@
     "eval:hardness": "node scripts/hardness-eval.mjs",
     "eval:hardness:smoke": "node scripts/hardness-eval.mjs --smoke",
     "smoke": "node scripts/smoke.mjs",
+    "demo": "node scripts/demo.mjs",
+    "demo:security": "node scripts/demo.mjs --security",
     "test": "vitest run",
     "typecheck": "tsc -b",
     "ego": "node apps/ego-cli/dist/index.js"
