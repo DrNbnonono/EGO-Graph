@@ -21,6 +21,11 @@ const state = {
 const legacyAgentEndpoints = ["/agent/runs", "/agent/plans"];
 const byId = (id) => document.getElementById(id);
 
+function scrollConversationToBottom() {
+  const conversation = byId("conversation");
+  if (conversation) conversation.scrollTop = conversation.scrollHeight;
+}
+
 marked.setOptions({ gfm: true, breaks: false });
 
 function escapeHtml(value) {
@@ -456,6 +461,8 @@ function handleHarnessLine(line, runUi) {
   if (line.type === "error") {
     runUi.answer.innerHTML = '<div class="error-card"><strong>运行失败</strong><p>' + escapeHtml(line.message || "未知错误") + "</p></div>";
   }
+  // Follow streaming content (thinking blocks, tool events, deltas).
+  scrollConversationToBottom();
 }
 
 async function submitChatGoal(goal) {
