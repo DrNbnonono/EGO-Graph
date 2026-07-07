@@ -264,12 +264,18 @@ function appendMessage(role, body, options = {}) {
   row.dataset.messageText = String(body || "");
   if (options.runId) row.dataset.runId = options.runId;
 
-  const label = document.createElement("div");
-  label.className = "message-role";
-  label.textContent = role === "assistant" ? "lotus" : role;
+  const avatar = document.createElement("div");
+  avatar.className = "message-avatar";
+  avatar.textContent = messageAvatarGlyph(role);
 
   const content = document.createElement("div");
   content.className = "message-content";
+
+  const label = document.createElement("div");
+  label.className = "message-role";
+  label.textContent = messageRoleLabel(role);
+  content.append(label);
+
   const bubble = document.createElement("div");
   bubble.className = "message-bubble";
   renderMarkdown(bubble, body);
@@ -285,11 +291,25 @@ function appendMessage(role, body, options = {}) {
     content.append(actions);
   }
 
-  row.append(label, content);
+  row.append(avatar, content);
   conversation.append(row);
   conversation.scrollTop = conversation.scrollHeight;
   if (!options.skipPersist && role !== "system") persistMessage(role, String(body || ""));
   return row;
+}
+
+function messageRoleLabel(role) {
+  if (role === "assistant") return "lotus";
+  if (role === "user") return "你";
+  if (role === "system") return "系统";
+  return role;
+}
+
+function messageAvatarGlyph(role) {
+  if (role === "assistant") return "L";
+  if (role === "user") return "你";
+  if (role === "system") return "!";
+  return String(role || "?").slice(0, 1).toUpperCase();
 }
 
 function createRunBubble() {
@@ -298,11 +318,15 @@ function createRunBubble() {
   conversation.querySelector(".conversation-empty")?.remove();
   const row = document.createElement("article");
   row.className = "message-row role-assistant run-progress";
+  const avatar = document.createElement("div");
+  avatar.className = "message-avatar";
+  avatar.textContent = "L";
+  const content = document.createElement("div");
+  content.className = "message-content";
   const label = document.createElement("div");
   label.className = "message-role";
   label.textContent = "lotus";
-  const content = document.createElement("div");
-  content.className = "message-content";
+  content.append(label);
   const bubble = document.createElement("div");
   bubble.className = "message-bubble";
   const details = document.createElement("details");
@@ -313,7 +337,7 @@ function createRunBubble() {
   answer.textContent = "正在读取当前会话与项目上下文...";
   bubble.append(details, answer);
   content.append(bubble);
-  row.append(label, content);
+  row.append(avatar, content);
   conversation.append(row);
   conversation.scrollTop = conversation.scrollHeight;
   return { row, details, flow: details.querySelector(".event-flow"), answer };

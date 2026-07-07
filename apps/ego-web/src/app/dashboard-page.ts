@@ -52,9 +52,15 @@ export function renderDashboardHtml(): string {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>${PRODUCT_NAME}</title>
     <link rel="icon" href="/assets/brand/ego-lotus.png" type="image/png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
+    />
     <link rel="stylesheet" href="/assets/dashboard.css" />
   </head>
-  <body data-mobile-section="chat" data-theme="light" data-font-scale="compact" data-density="normal">
+  <body data-mobile-section="chat" data-theme="light" data-font-scale="normal" data-density="normal" data-grid="on">
     <div class="page-field" aria-hidden="true"></div>
     <main class="workbench workbench-fit">
       <header class="topbar">

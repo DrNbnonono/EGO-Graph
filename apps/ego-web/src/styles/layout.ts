@@ -4,15 +4,15 @@ export function renderLayoutCss(): string {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   width: min(1560px, calc(100vw - 32px));
+  max-height: calc(100vh - 24px);
   height: calc(100vh - 24px);
   min-height: 0;
   margin: 12px auto;
   overflow: hidden;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  background: var(--workbench-bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  background: var(--surface-1);
   box-shadow: var(--shadow);
-  backdrop-filter: blur(18px);
 }
 
 .workbench-fit {
@@ -21,15 +21,17 @@ export function renderLayoutCss(): string {
   grid-template-rows: auto auto minmax(0, 1fr);
 }
 
+/* Topbar = the one glass accent surface (blur + translucent chrome). */
 .topbar {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 18px;
-  min-height: 54px;
-  padding: 0 18px;
+  gap: var(--sp-4);
+  min-height: 56px;
+  padding: 0 var(--sp-5);
   border-bottom: 1px solid var(--line);
   background: var(--chrome-bg);
+  backdrop-filter: blur(20px) saturate(140%);
 }
 
 .brand,
@@ -40,30 +42,32 @@ export function renderLayoutCss(): string {
 }
 
 .brand {
-  gap: 12px;
+  gap: var(--sp-3);
 }
 
 .brand strong {
   color: var(--text);
   font-family: var(--display-font);
-  font-size: 15px;
-  font-weight: 760;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.014em;
 }
 
 .brand small,
 .runtime-strip {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .runtime-strip {
   justify-content: flex-end;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: var(--sp-4);
 }
 
 .runtime-strip b {
   color: var(--success);
+  font-weight: var(--weight-semibold);
 }
 
 .dashboard-shell {
@@ -74,6 +78,7 @@ export function renderLayoutCss(): string {
   min-height: 0;
   overflow: hidden;
   padding: var(--gap);
+  background: var(--surface-0);
   transition: grid-template-columns 160ms ease;
 }
 
@@ -151,13 +156,11 @@ body.rail-right-collapsed .right-rail .panel {
   inset: 0;
   z-index: 10;
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: 300px minmax(0, 1fr);
   overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(18px);
+  border-top: 1px solid var(--line);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-lg);
 }
 
 .settings-page[hidden] {
@@ -178,32 +181,36 @@ body.settings-open .dashboard-shell {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 44px 72px 22px;
+  gap: var(--sp-3);
+  padding: var(--sp-10) var(--sp-18) var(--sp-6);
   border-bottom: 1px solid var(--line);
+  background: var(--chrome-bg);
+  backdrop-filter: blur(16px);
 }
 
 .settings-page-header h2 {
   font-family: var(--display-font);
-  font-size: 26px;
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-bold);
+  letter-spacing: -0.02em;
 }
 
 .settings-sidebar {
   display: grid;
-  grid-template-rows: auto auto auto auto auto auto auto;
+  grid-template-rows: auto auto 1fr;
   align-content: start;
-  gap: 10px;
+  gap: var(--sp-3);
   min-height: 0;
-  padding: 22px 16px;
+  padding: var(--sp-6) var(--sp-4);
   border-right: 1px solid var(--line);
-  background: linear-gradient(180deg, #eef4fa 0%, #e7eef6 100%);
+  background: var(--surface-0);
   overflow: auto;
 }
 
 .settings-nav {
   display: grid;
   align-content: start;
-  gap: 4px;
+  gap: var(--sp-1);
 }
 
 .settings-main {
@@ -216,6 +223,6 @@ body.settings-open .dashboard-shell {
 .settings-content {
   min-height: 0;
   overflow: auto;
-  padding: 30px 72px 64px;
+  padding: var(--sp-8) var(--sp-18) var(--sp-14);
 }`;
 }

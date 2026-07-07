@@ -103,7 +103,7 @@ export function renderResponsiveCss(): string {
 
   .mobile-section-nav button {
     padding: 7px 4px;
-    font-size: 12px;
+    font-size: var(--text-sm);
   }
 
   .dashboard-shell {
@@ -150,19 +150,32 @@ export function renderResponsiveCss(): string {
   }
 
   .center-stage {
-    height: 100%;
-    grid-template-rows: minmax(0, 1fr) auto;
+    height: auto;
+    grid-template-rows: auto auto auto;
+  }
+
+  .agent-cockpit {
+    min-height: 320px;
+    max-height: 380px;
+  }
+
+  .conversation-scroll {
+    min-height: 210px;
+  }
+
+  .composer {
+    background: var(--surface-1);
   }
 
   .agent-cockpit > .panel-heading {
     display: grid;
     grid-template-columns: 1fr auto;
     align-items: start;
-    gap: 8px;
+    gap: var(--sp-2);
   }
 
   .agent-cockpit > .panel-heading h2 {
-    font-size: 14px;
+    font-size: var(--text-md);
     line-height: 1.35;
   }
 
@@ -221,7 +234,7 @@ export function renderResponsiveCss(): string {
   }
 
   .settings-page-header h2 {
-    font-size: 22px;
+    font-size: var(--text-2xl);
   }
 
   .choice-grid,
