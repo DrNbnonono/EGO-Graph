@@ -1094,7 +1094,11 @@ function setDockTab(tab) {
 }
 
 function toggleBottomDock() {
-  byId("bottom-dock")?.classList.toggle("is-collapsed");
+  const dock = byId("bottom-dock");
+  if (!dock) return;
+  const collapsed = dock.classList.toggle("is-collapsed");
+  const reopen = document.querySelector(".dock-reopen");
+  if (reopen) reopen.hidden = !collapsed;
 }
 
 function openSettings(tab = "general") {
@@ -1286,6 +1290,8 @@ async function boot() {
   await loadProjectsAndSessions();
   await refreshStatus();
   console.debug("legacy endpoints kept for compatibility", legacyAgentEndpoints);
+  const reopenBtn = document.querySelector(".dock-reopen");
+  if (reopenBtn) reopenBtn.hidden = byId("bottom-dock")?.classList.contains("is-collapsed") ?? false;
 }
 
 boot().catch((error) => {

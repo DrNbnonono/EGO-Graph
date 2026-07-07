@@ -2075,6 +2075,37 @@ dd {
   display: none;
 }
 
+.dock-reopen {
+  position: absolute;
+  right: var(--sp-3);
+  bottom: var(--sp-3);
+  z-index: 7;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 32px;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-full);
+  background: var(--overlay-bg);
+  backdrop-filter: blur(12px);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.dock-reopen:hover {
+  color: var(--accent);
+  border-color: var(--accent-line);
+}
+
+.dock-reopen[hidden] {
+  display: none;
+}
+
 .dock-heading {
   display: flex;
   align-items: center;

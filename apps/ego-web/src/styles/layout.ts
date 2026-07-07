@@ -97,6 +97,7 @@ export function renderLayoutCss(): string {
 }
 
 .center-stage {
+  position: relative;
   grid-template-rows: minmax(0, 1fr) auto auto;
 }
 

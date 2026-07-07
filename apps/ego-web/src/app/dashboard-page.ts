@@ -154,7 +154,7 @@ export function renderDashboardHtml(): string {
             </div>
           </section>
 
-          <section class="bottom-dock panel" id="bottom-dock" aria-label="底部命令面板">
+          <section class="bottom-dock panel is-collapsed" id="bottom-dock" aria-label="底部命令面板">
             <div class="dock-heading">
               <div class="dock-tabs" role="tablist">
                 <button class="dock-tab active" type="button" data-dock-tab="terminal">${icon("terminal")}终端</button>
@@ -177,6 +177,7 @@ export function renderDashboardHtml(): string {
               <div class="dock-list" id="dock-check-list">暂无检查输出</div>
             </div>
           </section>
+          <button class="dock-reopen" type="button" data-bottom-dock-toggle title="展开底部面板">${icon("terminal")}<span>终端</span></button>
         </section>
 
         <aside class="right-rail" aria-label="Inspector">
