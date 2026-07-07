@@ -873,15 +873,16 @@ body.rail-right-collapsed .right-rail-toggle {
   flex-direction: row-reverse;
 }
 
+/* Right-align label + bubble inside the column. justify-items is the grid equivalent
+   of align-items-on-flex; the original align-items: flex-end was a no-op. */
 .message-row.role-user .message-content {
-  align-items: flex-end;
+  justify-items: end;
 }
 
-.message-row.role-user .message-role {
-  flex-direction: row-reverse;
-}
-
-.message-row.role-user .message-bubble {
+/* Cap the user bubble tighter than the assistant's to keep the chat-bubble silhouette.
+   The previous max-width on .message-bubble was dead (lost specificity tie with
+   .message-content defined later); placing the cap here works. */
+.message-row.role-user .message-content .message-bubble {
   max-width: min(560px, 80%);
   background: var(--accent);
   border-color: var(--accent);
@@ -889,6 +890,9 @@ body.rail-right-collapsed .right-rail-toggle {
   border-top-left-radius: var(--radius-lg);
   border-top-right-radius: var(--radius-sm);
 }
+
+/* Note: the dead flex-direction: row-reverse on .message-role was removed --
+   the role label is a single text child, nothing to flip. */
 
 .message-row.role-user .message-actions {
   justify-content: flex-end;
@@ -2480,6 +2484,35 @@ dd {
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   color: var(--muted);
   background: var(--accent-tint);
+}
+
+/* User bubble uses a solid --accent background; markdown inside it must be readable.
+   Scope these overrides so they only apply inside .message-row.role-user. */
+.message-row.role-user .markdown-body {
+  color: var(--button-text-on-accent);
+}
+
+.message-row.role-user .markdown-body h1,
+.message-row.role-user .markdown-body h2,
+.message-row.role-user .markdown-body h3 {
+  color: var(--button-text-on-accent);
+}
+
+.message-row.role-user .markdown-body a {
+  color: color-mix(in srgb, var(--button-text-on-accent) 75%, var(--cyan));
+  text-decoration: underline;
+}
+
+.message-row.role-user .markdown-body blockquote {
+  border-left-color: var(--button-text-on-accent);
+  background: color-mix(in srgb, var(--accent) 65%, black);
+  color: var(--button-text-on-accent);
+}
+
+.message-row.role-user .markdown-body code {
+  background: color-mix(in srgb, var(--button-text-on-accent) 18%, var(--accent));
+  border-color: color-mix(in srgb, var(--button-text-on-accent) 30%, var(--accent));
+  color: var(--button-text-on-accent);
 }
 
 .markdown-body hr {

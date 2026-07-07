@@ -335,7 +335,7 @@ function appendMessage(role, body, options = {}) {
     actions.className = "message-actions";
     actions.innerHTML =
       '<button type="button" class="message-action" data-copy-message>复制</button>' +
-      '<button type="button" class="message-action" data-edit-message>编辑</button>';
+      '<button type="button" class="message-action" data-edit-message aria-label="重新发送这条消息">重新发送</button>';
     content.append(actions);
   }
 
