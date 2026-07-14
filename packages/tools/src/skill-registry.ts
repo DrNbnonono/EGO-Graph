@@ -15,6 +15,7 @@ export const skillManifestSchema = z.object({
 });
 
 export const pluginManifestSchema = z.object({
+  schemaVersion: z.literal(1).optional(),
   name: z.string().min(1),
   version: z.string().min(1),
   skills: z.array(skillManifestSchema).optional(),
@@ -28,6 +29,15 @@ export const pluginManifestSchema = z.object({
     )
     .optional(),
   tools: z.array(z.string()).optional(),
+  runtime: z
+    .object({
+      binaries: z.array(z.string()).optional(),
+      images: z.array(z.object({ name: z.string().min(1), digest: z.string().min(1) })).optional(),
+    })
+    .optional(),
+  fixtures: z.array(z.string()).optional(),
+  checksum: z.string().regex(/^sha256:[a-f0-9]{64}$/u).optional(),
+  source: z.enum(["built-in", "curated", "local"]).optional(),
   enabledByDefault: z.boolean(),
 });
 

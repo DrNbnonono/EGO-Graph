@@ -277,7 +277,7 @@ describe("terminal agent session", () => {
     expect(session.getRunState(events[0]!.runId)?.plan?.[0]?.id).toBe("array-context");
   });
 
-  it("blocks local security research tools until security-active is granted", async () => {
+  it("requires exact approval for local security research tools even after security-active is granted", async () => {
     const root = await mkdtemp(join(tmpdir(), "ego-terminal-agent-security-"));
     const egoHome = await mkdtemp(join(tmpdir(), "ego-terminal-agent-home-"));
     await writeFile(join(root, "package.json"), '{"dependencies":{"floating":"*"}}', "utf8");
@@ -297,7 +297,7 @@ describe("terminal agent session", () => {
     expect(
       allowedEvents.some(
         (event) =>
-          event.type === "tool.completed" &&
+          event.type === "permission.requested" &&
           typeof event.payload.tool === "string" &&
           event.payload.tool === "security.package_manifest_audit",
       ),

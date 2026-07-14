@@ -74,6 +74,22 @@ export type ApprovalRecord = {
   updatedAt: string;
 };
 
+export type SessionPolicyRecord = {
+  sessionId: string;
+  preset: "read-only" | "workspace-write" | "shell-readonly" | "network-low" | "security-active";
+  updatedAt: string;
+};
+
+export type SecureRuntimeRecord = {
+  id: string;
+  sessionId: string;
+  workspaceId: string;
+  status: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type HermesEventRecord = {
   id: string;
   type: string;
@@ -205,6 +221,16 @@ type ApprovalRow = {
   run_id: string;
   kind: "agent_edit" | "agent_plan" | "tool_call";
   status: "pending" | "approved" | "rejected";
+  created_at: string;
+  updated_at: string;
+};
+
+type SecureRuntimeRow = {
+  id: string;
+  session_id: string;
+  workspace_id: string;
+  status: string;
+  payload_json: string;
   created_at: string;
   updated_at: string;
 };
@@ -585,6 +611,54 @@ export class SqliteEgoStore implements ConversationStore {
         : this.db.prepare("select * from approvals order by created_at desc").all()
     ) as ApprovalRow[];
     return rows.map(approvalRowToRecord);
+  }
+
+  async saveSessionPolicy(record: SessionPolicyRecord): Promise<void> {
+    this.db.prepare(
+      `insert into session_policies (session_id, preset, updated_at) values (?, ?, ?)
+       on conflict(session_id) do update set preset = excluded.preset, updated_at = excluded.updated_at`,
+    ).run(record.sessionId, record.preset, record.updatedAt);
+  }
+
+  async getSessionPolicy(sessionId: string): Promise<SessionPolicyRecord | undefined> {
+    const row = this.db.prepare("select * from session_policies where session_id = ?").get(sessionId) as
+      | { session_id: string; preset: SessionPolicyRecord["preset"]; updated_at: string }
+      | undefined;
+    return row ? { sessionId: row.session_id, preset: row.preset, updatedAt: row.updated_at } : undefined;
+  }
+
+  async saveOperationApproval(record: SecureRuntimeRecord): Promise<void> {
+    saveSecureRuntimeRecord(this.db, "operation_approvals_v2", record);
+  }
+
+  async savePermissionGrant(record: SecureRuntimeRecord): Promise<void> {
+    saveSecureRuntimeRecord(this.db, "permission_grants_v2", record);
+  }
+
+  async listPermissionGrants(workspaceId?: string): Promise<SecureRuntimeRecord[]> {
+    const rows = (workspaceId
+      ? this.db.prepare("select * from permission_grants_v2 where workspace_id = ? order by created_at desc").all(workspaceId)
+      : this.db.prepare("select * from permission_grants_v2 order by created_at desc").all()) as SecureRuntimeRow[];
+    return rows.map(secureRuntimeRowToRecord);
+  }
+
+  async getOperationApproval(id: string): Promise<SecureRuntimeRecord | undefined> {
+    return readSecureRuntimeRecord(this.db, "operation_approvals_v2", id);
+  }
+
+  async saveSecurityScope(record: SecureRuntimeRecord): Promise<void> {
+    saveSecureRuntimeRecord(this.db, "security_scopes_v2", record);
+  }
+
+  async getSecurityScope(id: string): Promise<SecureRuntimeRecord | undefined> {
+    return readSecureRuntimeRecord(this.db, "security_scopes_v2", id);
+  }
+
+  async listSecurityScopes(sessionId?: string): Promise<SecureRuntimeRecord[]> {
+    const rows = (sessionId
+      ? this.db.prepare("select * from security_scopes_v2 where session_id = ? order by created_at desc").all(sessionId)
+      : this.db.prepare("select * from security_scopes_v2 order by created_at desc").all()) as SecureRuntimeRow[];
+    return rows.map(secureRuntimeRowToRecord);
   }
 
   async saveHermesEvent(record: HermesEventRecord): Promise<void> {
@@ -1128,6 +1202,44 @@ export class SqliteEgoStore implements ConversationStore {
 
       create index if not exists idx_approvals_status on approvals(status);
 
+      create table if not exists session_policies (
+        session_id text primary key,
+        preset text not null check (preset in ('read-only', 'workspace-write', 'shell-readonly', 'network-low', 'security-active')),
+        updated_at text not null
+      );
+
+      create table if not exists operation_approvals_v2 (
+        id text primary key,
+        session_id text not null,
+        workspace_id text not null,
+        status text not null,
+        payload_json text not null,
+        created_at text not null,
+        updated_at text not null
+      );
+
+      create table if not exists permission_grants_v2 (
+        id text primary key,
+        session_id text not null,
+        workspace_id text not null,
+        status text not null,
+        payload_json text not null,
+        created_at text not null,
+        updated_at text not null
+      );
+
+      create table if not exists security_scopes_v2 (
+        id text primary key,
+        session_id text not null,
+        workspace_id text not null,
+        status text not null,
+        payload_json text not null,
+        created_at text not null,
+        updated_at text not null
+      );
+
+      create index if not exists idx_security_scopes_session on security_scopes_v2(session_id, updated_at);
+
       create table if not exists tool_calls (
         id integer primary key autoincrement,
         run_id text not null,
@@ -1450,6 +1562,47 @@ function approvalRowToRecord(row: ApprovalRow): ApprovalRecord {
     runId: row.run_id,
     kind: row.kind,
     status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function saveSecureRuntimeRecord(
+  db: DatabaseSyncType,
+  table: "operation_approvals_v2" | "permission_grants_v2" | "security_scopes_v2",
+  record: SecureRuntimeRecord,
+): void {
+  db.prepare(
+    `insert into ${table} (id, session_id, workspace_id, status, payload_json, created_at, updated_at)
+     values (?, ?, ?, ?, ?, ?, ?)
+     on conflict(id) do update set status = excluded.status, payload_json = excluded.payload_json, updated_at = excluded.updated_at`,
+  ).run(
+    record.id,
+    record.sessionId,
+    record.workspaceId,
+    record.status,
+    JSON.stringify(record.payload),
+    record.createdAt,
+    record.updatedAt,
+  );
+}
+
+function readSecureRuntimeRecord(
+  db: DatabaseSyncType,
+  table: "operation_approvals_v2" | "permission_grants_v2" | "security_scopes_v2",
+  id: string,
+): SecureRuntimeRecord | undefined {
+  const row = db.prepare(`select * from ${table} where id = ?`).get(id) as SecureRuntimeRow | undefined;
+  return row ? secureRuntimeRowToRecord(row) : undefined;
+}
+
+function secureRuntimeRowToRecord(row: SecureRuntimeRow): SecureRuntimeRecord {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    workspaceId: row.workspace_id,
+    status: row.status,
+    payload: JSON.parse(row.payload_json) as Record<string, unknown>,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

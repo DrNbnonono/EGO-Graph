@@ -71,6 +71,9 @@ importers:
       '@ego-graph/report':
         specifier: workspace:*
         version: link:../../packages/report
+      '@ego-graph/security-tools':
+        specifier: workspace:*
+        version: link:../../packages/security-tools
       '@ego-graph/shared':
         specifier: workspace:*
         version: link:../../packages/shared

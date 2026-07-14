@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { ToolDefinition } from "../../tool-definition.js";
 import { resolveCapabilityExecution } from "../capability-registry.js";
 import { extractIocs } from "../parsers/ioc-patterns.js";
+import { builtinReceipt, executeExternalBinary } from "../runtime-adapter.js";
 
 /**
  * Vulnerability-research tool adapters (security.vuln.*).
@@ -77,6 +78,7 @@ export function createVulnSecurityToolRegistry(): {
     findings: z.array(z.string()),
     query: z.string(),
     matches: z.array(z.record(z.string())),
+    executionReceipt: z.record(z.unknown()).optional(),
     capabilitySource: z.string(),
   });
   const cveLookup: ToolDefinition<typeof cveLookupInput, typeof cveLookupOutput> = {
@@ -142,7 +144,35 @@ export function createVulnSecurityToolRegistry(): {
     },
     async execute(input, context) {
       const absolute = resolve(context.workspaceRoot, input.path);
-      const { source } = await resolveCapabilityExecution("semgrep");
+      const { source, capability } = await resolveCapabilityExecution("semgrep");
+      if (source === "external") {
+        const { result, receipt } = await executeExternalBinary({
+          tool: "security.vuln.semgrep",
+          capability: "semgrep",
+          program: capability?.binaryPath ?? "semgrep",
+          args: ["scan", "--json", "--config", "auto", absolute],
+          cwd: context.workspaceRoot,
+          timeoutMs: 60_000,
+          ...(context.signal ? { signal: context.signal } : {}),
+          maxOutputBytes: 4_000_000,
+          ...(capability?.version ? { version: capability.version } : {}),
+          artifactRefs: [absolute],
+        });
+        if (result.exitCode !== 0 || result.timedOut || result.cancelled) {
+          throw new Error(result.stderr.trim() || "semgrep execution failed");
+        }
+        const parsed = parseSemgrepJson(result.stdout);
+        return {
+          findings: parsed.length > 0
+            ? parsed.map((match) => `${match.rule}: ${match.path}:${match.line}`)
+            : ["Semgrep completed with no findings."],
+          path: absolute,
+          matchCount: parsed.length,
+          capabilitySource: "external",
+          matches: parsed,
+          executionReceipt: receipt,
+        };
+      }
       const content = await readFile(absolute, "utf8");
       const matches = builtinSemgrep(content);
       return {
@@ -154,11 +184,29 @@ export function createVulnSecurityToolRegistry(): {
         matchCount: matches.length,
         capabilitySource: source,
         matches,
+        executionReceipt: builtinReceipt("security.vuln.semgrep", [absolute]),
       };
     },
   };
 
   return { tools: [manifestAudit, cveLookup as unknown as ToolDefinition<typeof manifestInput, typeof manifestOutput>, semgrep as unknown as ToolDefinition<typeof manifestInput, typeof manifestOutput>] };
+}
+
+function parseSemgrepJson(stdout: string): Array<Record<string, string>> {
+  const payload = JSON.parse(stdout) as {
+    results?: Array<{
+      check_id?: string;
+      path?: string;
+      start?: { line?: number };
+      extra?: { message?: string };
+    }>;
+  };
+  return (payload.results ?? []).map((result) => ({
+    rule: result.check_id ?? "semgrep",
+    path: result.path ?? "unknown",
+    line: String(result.start?.line ?? 0),
+    message: result.extra?.message ?? "finding",
+  }));
 }
 
 function extractPackageNames(content: string): string[] {

@@ -71,7 +71,7 @@ export async function runHardnessScenario(
         emitEvidence: emitEvidence,
       }),
     );
-    const events = normalizeHardnessLifecycleEvents({
+    const events = prependObservedLifecycleEvents({
       scenario,
       loopEvents,
       fixtureFileCount: fixture.files.length,
@@ -135,14 +135,14 @@ function shouldForceDeterministicDenial(scenario: HardnessScenario): boolean {
   return scenario.interference.includes("missing SecurityScope");
 }
 
-function normalizeHardnessLifecycleEvents(input: {
+function prependObservedLifecycleEvents(input: {
   scenario: HardnessScenario;
   loopEvents: AgentRunEvent[];
   fixtureFileCount: number;
 }): AgentRunEvent[] {
   const runId = `hardness-${input.scenario.id}`;
   const sessionId = "hardness-session";
-  const events: AgentRunEvent[] = [
+  return [
     lifecycleEvent({
       type: "user.message",
       runId,
@@ -163,41 +163,6 @@ function normalizeHardnessLifecycleEvents(input: {
     }),
     ...input.loopEvents,
   ];
-
-  if (
-    shouldForceDeterministicDenial(input.scenario) &&
-    !events.some((event) => event.type === "run.blocked")
-  ) {
-    events.push(
-      lifecycleEvent({
-        type: "run.blocked",
-        runId,
-        sessionId,
-        message: "SecurityScope is required before active security tooling.",
-        payload: { scenarioId: input.scenario.id, reason: "missing-security-scope" },
-      }),
-    );
-  }
-
-  if (
-    !events.some((event) => event.type === "assistant.message") &&
-    !shouldForceDeterministicDenial(input.scenario)
-  ) {
-    events.push(
-      lifecycleEvent({
-        type: "assistant.message",
-        runId,
-        sessionId,
-        message: `[hardness] completed ${input.scenario.id}: ${input.scenario.expectedArtifacts.join(", ")}.`,
-        payload: {
-          scenarioId: input.scenario.id,
-          expectedArtifacts: input.scenario.expectedArtifacts,
-        },
-      }),
-    );
-  }
-
-  return events;
 }
 
 function lifecycleEvent(input: {
@@ -222,8 +187,8 @@ function lifecycleEvent(input: {
  * Deterministic stub model provider. On the first step it proposes a single
  * read-only tool call (workspace.list) so the loop emits tool.completed and
  * observation.created events; on subsequent steps it returns a final text
- * answer so the run terminates. This keeps the hardness suite hermetic (no
- * network) while satisfying the success signals the scorer checks for.
+ * answer so the run terminates. This keeps the contract suite hermetic (no
+ * network); scores are based only on events the loop actually emitted.
  */
 function createStubModelProvider(scenario: HardnessScenario): ChatModelProvider {
   const answer = `[stub] completed scenario ${scenario.id}: ${scenario.expectedArtifacts.join(", ")}.`;

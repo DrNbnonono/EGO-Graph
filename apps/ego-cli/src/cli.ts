@@ -45,9 +45,10 @@ export function createProgram(): Command {
   program
     .command("doctor")
     .description("Check local EGO-Graph readiness")
-    .action(async () => {
+    .option("--tools", "probe real security tool runtimes")
+    .action(async (options) => {
       const { handleDoctorCommand } = await import("./commands/doctor.js");
-      await handleDoctorCommand();
+      await handleDoctorCommand(options);
     });
 
   const config = program.command("config").description("Manage local EGO-Graph settings");
@@ -60,7 +61,8 @@ export function createProgram(): Command {
       "model provider: openai-compatible, deepseek, minimax, disabled",
     )
     .option("--base-url <url>", "model API base URL")
-    .option("--api-key <key>", "model API key stored in local .ego/config.json")
+    .option("--api-key <key>", "model API key kept only in the current process")
+    .option("--api-key-env <name>", "persist only the environment-variable name for the API key")
     .option("--model <name>", "model name")
     .option("--chat-path <path>", "chat endpoint path")
     .option("--wire-api <api>", "wire API: openai-chat-completions or anthropic-messages")

@@ -67,10 +67,13 @@ describe("model profiles", () => {
     });
     await selectModelProfile({ workspaceRoot: root, id: "local-openai" });
 
-    const profiles = await listModelProfiles({ workspaceRoot: root, env: {} });
-    const active = loadModelConfigWithSource({ workspaceRoot: root, env: {} });
+    const profiles = await listModelProfiles({ workspaceRoot: root });
+    const active = loadModelConfigWithSource({ workspaceRoot: root });
     const file = JSON.parse(await readFile(join(root, ".ego", "config.json"), "utf8")) as {
-      modelProfiles: Array<{ id: string; config: { apiKey?: string } }>;
+      modelProfiles: Array<{
+        id: string;
+        config: { apiKey?: string; apiKeyEnv?: string; apiKeyFile?: string };
+      }>;
       activeModelProfileId: string;
     };
 
@@ -80,6 +83,12 @@ describe("model profiles", () => {
     ).toBeUndefined();
     expect(active.config.model).toBe("qwen-coder");
     expect(active.config.apiKey).toBe("local-secret");
+    expect(
+      file.modelProfiles.find((profile) => profile.id === "local-openai")?.config.apiKey,
+    ).toBeUndefined();
+    expect(
+      file.modelProfiles.find((profile) => profile.id === "local-openai")?.config.apiKeyFile,
+    ).toBe(".ego/runtime/model-keys/local-openai.key");
     expect(file.activeModelProfileId).toBe("local-openai");
 
     await expect(deleteModelProfile({ workspaceRoot: root, id: "local-openai" })).rejects.toThrow(

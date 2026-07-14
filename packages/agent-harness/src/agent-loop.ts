@@ -4,7 +4,7 @@ import {
   type ChatModelProvider,
   type StructuredChatCompletion,
 } from "@ego-graph/llm";
-import type { createTerminalAgentToolRegistry } from "@ego-graph/tools";
+import type { createTerminalAgentToolRegistry, EvidenceClaim } from "@ego-graph/tools";
 import {
   executeHarnessToolStep,
   type HarnessEvidenceEventInput,
@@ -30,7 +30,10 @@ import {
 import { resolveModelContextLimit } from "./context/model-limits.js";
 import type { SecurityScopeGate } from "./tool-executor.js";
 import type { PermissionLifecycleState } from "./permissions/permission-lifecycle.js";
+import type { OperationApproval } from "./permissions/grants-v2.js";
+import type { ToolCallProtocol } from "./tool-executor.js";
 import type { AgentRunEvent, PermissionLevel } from "./session.js";
+import { executeSchedule } from "./scheduler/tool-scheduler.js";
 
 export type AgentLoopInput = {
   runId: string;
@@ -81,6 +84,8 @@ export type AgentLoopInput = {
    * request is aborted rather than waited out.
    */
   signal?: AbortSignal;
+  /** Explicit approval resolver used by controlled evals or interactive approval queues. */
+  approveOperation?(call: ToolCallProtocol): OperationApproval | undefined;
   emit(event: HarnessToolEventInput): Promise<AgentRunEvent>;
   emitEvidence(event: HarnessEvidenceEventInput): Promise<AgentRunEvent>;
 };
@@ -282,6 +287,85 @@ export async function* runAgentLoop(input: AgentLoopInput): AsyncIterable<AgentR
       return;
     }
 
+    if (action.nextAction === "call_tools" && action.toolBatch) {
+      const remaining = Math.max(0, effectivePolicy.maxToolCalls - state.toolCallCount);
+      const calls = action.toolBatch.calls.slice(0, Math.min(remaining, 4));
+      state.toolCallCount += calls.length;
+      let batchPayload: Record<string, unknown> | undefined;
+      for await (const event of executeSchedule({
+        runId: input.runId,
+        sessionId: input.sessionId,
+        workspaceRoot: input.workspaceRoot,
+        toolRegistry: input.toolRegistry,
+        permissionLevel: input.permissionLevel,
+        jobs: calls.map((call) => {
+          const requiredPermission = inferRequiredPermission(input.toolRegistry.get(call.name));
+          return {
+            id: call.id,
+            toolName: call.name,
+            input: call.arguments,
+            ...(call.dependsOn ? { dependsOn: call.dependsOn } : {}),
+            requiredPermission,
+            parallelSafe: requiredPermission === "read-only",
+            retryPolicy: { maxAttempts: 2, backoffMs: 100 },
+            rationale: action.thoughtSummary,
+          };
+        }),
+        maxConcurrent: Math.min(action.toolBatch.maxConcurrent, 4),
+        ...(input.securityScope ? { securityScope: input.securityScope } : {}),
+        ...(input.signal ? { signal: input.signal } : {}),
+        ...(input.approveOperation ? { approveOperation: input.approveOperation } : {}),
+        emit: input.emit,
+      })) {
+        if (event.type === "scheduler.batch.completed") batchPayload = event.payload;
+        yield event;
+      }
+      const results = Array.isArray(batchPayload?.results)
+        ? batchPayload.results as Array<{ jobId?: string; toolName?: string; output?: Record<string, unknown>; status?: string }>
+        : [];
+      const findings = results.flatMap((result) =>
+        Array.isArray(result.output?.findings) ? result.output.findings.map(String) : [],
+      );
+      const residualRisks = Array.isArray(batchPayload?.residualRisks)
+        ? batchPayload.residualRisks.map((item) => JSON.stringify(item))
+        : [];
+      const batchClaims: EvidenceClaim[] = findings.map((claim, index) => ({
+        id: `batch-${state.stepCount}-claim-${index + 1}`,
+        claim,
+        artifactRefs: [`scheduler-batch:${input.runId}:${state.stepCount}`],
+        confidence: 0.7,
+        relation: "neutral",
+      }));
+      const observation = [...findings, ...residualRisks].join(" | ") || "Tool batch completed without evidence.";
+      state.observations.push(observation);
+      modelMessages.push({
+        role: "system",
+        content: `Audited tool batch result: ${JSON.stringify({ results, residualRisks: batchPayload?.residualRisks ?? [] }).slice(0, 16_000)}`,
+      });
+      const strategyUpdate = applyObservationToStrategy({
+        graph: strategyGraph,
+        observation: { tool: "scheduler.batch", findings, claims: batchClaims, output: batchPayload ?? {} },
+      });
+      if (strategyUpdate.updates.length > 0) {
+        strategyGraph = strategyUpdate.graph;
+        yield await input.emit({
+          type: "strategy.graph.updated",
+          runId: input.runId,
+          sessionId: input.sessionId,
+          message: strategyUpdate.updates.map((update) => update.summary).join(" | "),
+          payload: { strategyGraph, updates: strategyUpdate.updates, reason: "scheduler-batch" },
+        });
+      }
+      yield await input.emit({
+        type: "loop.step.completed",
+        runId: input.runId,
+        sessionId: input.sessionId,
+        message: `Loop step ${state.stepCount} completed with ${calls.length} scheduled tool(s).`,
+        payload: { loop: state, residualRisks: batchPayload?.residualRisks ?? [] },
+      });
+      continue;
+    }
+
     if (action.nextAction === "call_tool" && action.toolCall) {
       state.toolCallCount += 1;
       let lastObservation: string | undefined;
@@ -299,6 +383,8 @@ export async function* runAgentLoop(input: AgentLoopInput): AsyncIterable<AgentR
         ...(input.permissionLifecycle
           ? { permissionLifecycle: input.permissionLifecycle }
           : {}),
+        ...(input.approveOperation ? { approveOperation: input.approveOperation } : {}),
+        ...(input.signal ? { signal: input.signal } : {}),
         emit: input.emit,
         emitEvidence: input.emitEvidence,
       })) {
@@ -318,11 +404,15 @@ export async function* runAgentLoop(input: AgentLoopInput): AsyncIterable<AgentR
             : lastObservation
               ? [lastObservation]
               : [];
+          const claims = Array.isArray((event.payload as { claims?: unknown }).claims)
+            ? (event.payload as { claims: EvidenceClaim[] }).claims
+            : [];
           const strategyUpdate = applyObservationToStrategy({
             graph: strategyGraph,
             observation: {
               tool: action.toolCall?.name ?? "unknown",
               findings,
+              claims,
               ...(typeof lastToolOutput === "object" && lastToolOutput !== null
                 ? { output: lastToolOutput as Record<string, unknown> }
                 : {}),
@@ -590,6 +680,31 @@ async function* tryStructuredModelAction(
       };
       return;
     }
+    if (result.toolCalls.length > 1) {
+      const calls = result.toolCalls.slice(0, 4);
+      yield {
+        type: "action",
+        action: {
+          thoughtSummary: result.content || `Model selected ${calls.length} tools.`,
+          intent: input.intent,
+          nextAction: "call_tools",
+          toolBatch: {
+            calls: calls.map((item, index) => ({
+              id: item.id || `model-batch-${state.stepCount}-${index}`,
+              name: item.name,
+              arguments: item.arguments,
+            })),
+            maxConcurrent: 4,
+          },
+          riskLevel: "low",
+          requiredPermission: "read-only",
+          userVisibleMessage: `模型选择并行调用 ${calls.length} 个只读工具。`,
+          expectedObservation: "Tools return an auditable evidence batch.",
+          stopCondition: "Stop when P0 evidence gaps close or residual risks are explicit.",
+        },
+      };
+      return;
+    }
     yield {
       type: "action",
       action: {
@@ -612,7 +727,7 @@ async function* tryStructuredModelAction(
 function buildLoopSystemPreamble(intent: LoopIntent, hasSecurityScope: boolean): string {
   const lines = [
     "You are the EGO-Graph terminal agent planner.",
-    "Choose at most one safe next tool call per turn, or answer directly when you have enough evidence.",
+    "Choose up to four independent read-only tools per turn, or answer directly when you have enough evidence.",
     "Do not reveal hidden chain-of-thought; provide auditable summaries only.",
   ];
   if (intent === "chat") {
@@ -865,8 +980,9 @@ function isLocalSecurityAudit(message: string): boolean {
  * As the strategy graph gains richer evidence node linkage in a later pass,
  * this can be tightened to only the tool results that closed a P0 gap.
  */
-function openP0ToolUseIds(_graph: StrategyGraph): ReadonlySet<string> {
+function openP0ToolUseIds(graph: StrategyGraph): ReadonlySet<string> {
   // Placeholder until evidence nodes carry explicit toolUseId links: return
   // an empty set so compaction still works but does not over-preserve.
+  if (!graph.evidenceGaps.some((gap) => gap.priority === "p0")) return new Set<string>();
   return new Set<string>();
 }

@@ -13,6 +13,11 @@ import {
   type PermissionRule,
 } from "./permission-rules.js";
 import type { PermissionLifecycleState } from "./permissions/permission-lifecycle.js";
+import {
+  consumeOperationApproval,
+  validateOperationApproval,
+  type OperationApproval,
+} from "./permissions/grants-v2.js";
 
 export type ToolCallProtocol = {
   id: string;
@@ -53,6 +58,7 @@ export type ToolExecutorEvent = {
     | "tool.completed"
     | "tool.failed"
     | "tool.timeout"
+    | "tool.cancelled"
     | "tool.blocked"
     | "permission.requested"
     | "permission.replied"
@@ -67,7 +73,7 @@ export type ToolExecutorEvent = {
 };
 
 export type ToolExecutorResult = {
-  status: "completed" | "failed" | "timeout" | "blocked";
+  status: "completed" | "failed" | "timeout" | "cancelled" | "blocked";
   call: ToolCallProtocol;
   event: ToolExecutorEvent;
   output?: Record<string, unknown>;
@@ -82,7 +88,10 @@ export type ExecuteToolCallInput<
   call?: ToolCallProtocol;
   workspaceRoot: string;
   permissionLevel: PermissionLevel;
-  approvalGranted?: boolean;
+  /** Exact, single-use approval for tools declaring requiresApproval. */
+  operationApproval?: OperationApproval;
+  workspaceId?: string;
+  signal?: AbortSignal;
   permissionRules?: PermissionRule[];
   /**
    * Persistent permission lifecycle (saved allow/always grants). When
@@ -174,6 +183,12 @@ export async function executeToolCall<
     resources: permissionResources,
     rules: input.permissionRules ?? permissionRulesForLevel(input.permissionLevel),
   });
+  const exactApproval = validateOperationApproval({
+    approval: input.operationApproval,
+    call,
+    sessionId: input.sessionId,
+    workspaceId: input.workspaceId ?? input.workspaceRoot,
+  });
   if (permissionDecision.effect === "deny") {
     return failResult(input, call, "tool.blocked", "Tool blocked by permission rule.", {
       ...basePayload,
@@ -183,7 +198,7 @@ export async function executeToolCall<
       recoveryHint: "Adjust the permission policy only if this action is authorized.",
     });
   }
-  if (permissionDecision.effect === "ask" && !input.approvalGranted) {
+  if (permissionDecision.effect === "ask") {
     // Honor persistent "allow always" grants before falling back to blocking
     // on a human decision. This is what makes the permission lifecycle real:
     // a saved grant auto-approves the call without re-prompting the user.
@@ -193,7 +208,10 @@ export async function executeToolCall<
         wildcardMatch(permissionAction, rule.action) &&
         permissionResources.every((resource) => wildcardMatch(resource, rule.resource)),
     );
-    if (savedAllow) {
+    if (exactApproval.valid) {
+      // A call-bound approval may satisfy the ask decision for this exact
+      // input, but it never creates a reusable permission grant.
+    } else if (savedAllow) {
       input.onAutoApprovedPermission?.({
         action: permissionAction,
         resources: permissionResources,
@@ -229,20 +247,28 @@ export async function executeToolCall<
     });
   }
 
-  if (call.requiresApproval && !input.approvalGranted) {
-    return failResult(input, call, "tool.blocked", "Tool requires approval before execution.", {
-      ...basePayload,
-      recoveryHint: "Approve the pending tool call before retrying.",
-    });
+  if (call.requiresApproval) {
+    if (!exactApproval.valid) {
+      return failResult(input, call, "tool.blocked", "Tool requires an exact operation approval.", {
+        ...basePayload,
+        approvalReason: exactApproval.reason,
+        recoveryHint: "Approve this exact tool call before retrying.",
+      });
+    }
+    consumeOperationApproval(input.operationApproval!);
   }
 
   try {
-    const output = await withTimeout(
-      input.tool.execute(parsedInput.data as z.output<InputSchema>, {
+    const output = await executeWithCancellation({
+      timeoutMs: call.timeoutMs,
+      ...(input.signal ? { signal: input.signal } : {}),
+      execute: (signal, deadlineAt) => input.tool.execute(parsedInput.data as z.output<InputSchema>, {
         workspaceRoot: input.workspaceRoot,
+        signal,
+        deadlineAt,
+        ...(input.securityScope ? { securityScope: input.securityScope } : {}),
       }),
-      call.timeoutMs,
-    );
+    });
     const parsedOutput = input.tool.outputSchema.safeParse(output);
     if (!parsedOutput.success) {
       return failResult(input, call, "tool.failed", "Tool output schema validation failed.", {
@@ -288,11 +314,19 @@ export async function executeToolCall<
     };
   } catch (error) {
     const message =
-      error instanceof ToolTimeoutError ? "Tool timed out." : "Tool execution failed.";
+      error instanceof ToolTimeoutError
+        ? "Tool timed out."
+        : error instanceof ToolCancelledError
+          ? "Tool was cancelled."
+          : "Tool execution failed.";
     return failResult(
       input,
       call,
-      error instanceof ToolTimeoutError ? "tool.timeout" : "tool.failed",
+      error instanceof ToolTimeoutError
+        ? "tool.timeout"
+        : error instanceof ToolCancelledError
+          ? "tool.cancelled"
+          : "tool.failed",
       message,
       {
         ...basePayload,
@@ -309,7 +343,7 @@ export async function executeToolCall<
 function failResult<InputSchema extends ZodTypeAny, OutputSchema extends ZodTypeAny>(
   input: ExecuteToolCallInput<InputSchema, OutputSchema>,
   call: ToolCallProtocol,
-  type: "tool.failed" | "tool.timeout" | "tool.blocked" | "permission.requested",
+  type: "tool.failed" | "tool.timeout" | "tool.cancelled" | "tool.blocked" | "permission.requested",
   message: string,
   payload: Record<string, unknown>,
 ): ToolExecutorResult {
@@ -317,6 +351,8 @@ function failResult<InputSchema extends ZodTypeAny, OutputSchema extends ZodType
     status:
       type === "tool.timeout"
         ? "timeout"
+        : type === "tool.cancelled"
+          ? "cancelled"
         : type === "tool.blocked" || type === "permission.requested"
           ? "blocked"
           : "failed",
@@ -359,19 +395,40 @@ class ToolTimeoutError extends Error {
   }
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  let timeout: NodeJS.Timeout | undefined;
+class ToolCancelledError extends Error {
+  constructor() {
+    super("Tool execution was cancelled");
+  }
+}
+
+async function executeWithCancellation<T>(input: {
+  timeoutMs: number;
+  signal?: AbortSignal;
+  execute(signal: AbortSignal, deadlineAt: string): Promise<T>;
+}): Promise<T> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const onAbort = (): void => controller.abort(input.signal?.reason);
+  input.signal?.addEventListener("abort", onAbort, { once: true });
+  if (input.signal?.aborted) controller.abort(input.signal.reason);
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort(new ToolTimeoutError(input.timeoutMs));
+  }, input.timeoutMs);
+  timeout.unref?.();
+  const deadlineAt = new Date(Date.now() + input.timeoutMs).toISOString();
   try {
     return await Promise.race([
-      promise,
+      input.execute(controller.signal, deadlineAt),
       new Promise<T>((_resolve, reject) => {
-        timeout = setTimeout(() => reject(new ToolTimeoutError(timeoutMs)), timeoutMs);
+        controller.signal.addEventListener("abort", () => {
+          reject(timedOut ? new ToolTimeoutError(input.timeoutMs) : new ToolCancelledError());
+        }, { once: true });
       }),
     ]);
   } finally {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
+    clearTimeout(timeout);
+    input.signal?.removeEventListener("abort", onAbort);
   }
 }
 

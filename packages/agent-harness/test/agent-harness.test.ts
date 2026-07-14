@@ -262,7 +262,7 @@ describe("terminal agent session", () => {
     expect(session.getRunState(events[0]!.runId)?.plan?.[0]?.title).toBe("模型生成上下文计划");
   });
 
-  it("blocks local security research tools until security-active is granted", async () => {
+  it("requires exact approval for local security research tools even after security-active is granted", async () => {
     const root = await mkdtemp(join(tmpdir(), "ego-terminal-agent-security-"));
     const egoHome = await mkdtemp(join(tmpdir(), "ego-terminal-agent-home-"));
     await writeFile(join(root, "package.json"), '{"dependencies":{"floating":"*"}}', "utf8");
@@ -277,15 +277,13 @@ describe("terminal agent session", () => {
       egoHome,
       permissionLevel: "security-active",
     });
-    // Local static manifest analysis reads workspace files only, so
-    // security-active permission is sufficient — it must NOT require a network
-    // SecurityScope. (Network/intrusive security tools are still gated; this
-    // local tool is not.)
+    // Local static manifest analysis does not require a network SecurityScope,
+    // but it is still high risk and must pause for a single operation approval.
     const localAuditEvents = await collect(allowed.startTask("做一次依赖漏洞审计"));
     expect(
       localAuditEvents.some(
         (event) =>
-          event.type === "tool.completed" &&
+          event.type === "permission.requested" &&
           readPayloadToolName(event) === "security.package_manifest_audit",
       ),
     ).toBe(true);
@@ -325,7 +323,7 @@ describe("terminal agent session", () => {
     expect(
       allowedEvents.some(
         (event) =>
-          event.type === "tool.completed" &&
+          event.type === "permission.requested" &&
           readPayloadToolName(event) === "security.package_manifest_audit",
       ),
     ).toBe(true);
@@ -525,8 +523,10 @@ setInterval(() => {}, 1 << 30);
     const called = await collect(session.callMcpTool("mcp.fixture.echo", { value: "ok" }));
 
     expect(discovered[0]?.message).toContain("1 MCP tool");
-    expect(called.map((event) => event.type)).toContain("tool.completed");
-    expect(JSON.stringify(called.map((event) => event.payload))).toContain("echo:ok");
+    expect(called.map((event) => event.type)).toContain("tool.blocked");
+    expect(JSON.stringify(called.map((event) => event.payload))).toContain(
+      "exact operation approval",
+    );
   });
 
   it("persists conversation history across turns and recalls it for the next model call", async () => {

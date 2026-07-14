@@ -96,6 +96,7 @@ export type AgentRunEventType =
   | "tool.completed"
   | "tool.failed"
   | "tool.timeout"
+  | "tool.cancelled"
   | "tool.blocked"
   | "tool.output.truncated"
   | "permission.requested"
@@ -1449,6 +1450,7 @@ function mapTrajectoryType(type: AgentRunEventType): TrajectoryEvent["type"] | u
       return "tool.completed";
     case "tool.failed":
     case "tool.timeout":
+    case "tool.cancelled":
     case "tool.blocked":
       return "tool.failed";
     case "observation.created":

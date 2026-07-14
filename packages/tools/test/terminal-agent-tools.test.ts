@@ -32,7 +32,7 @@ describe("terminal agent tools", () => {
     const tool = createTerminalAgentToolRegistry().get("shell.readonly");
 
     await expect(
-      tool.execute({ command: "rm", args: ["-rf", "."] }, { workspaceRoot: root }),
+      tool.execute({ program: "rm", args: ["-rf", "."] }, { workspaceRoot: root }),
     ).rejects.toThrow("not allowed");
   });
 
@@ -41,7 +41,7 @@ describe("terminal agent tools", () => {
     await writeFile(join(root, "README.md"), "hello\n", "utf8");
     const tool = createTerminalAgentToolRegistry().get("shell.readonly");
     const result = await tool.execute(
-      { command: "git", args: ["status", "--short"] },
+      { program: "git", args: ["status", "--short"] },
       { workspaceRoot: root },
     );
 

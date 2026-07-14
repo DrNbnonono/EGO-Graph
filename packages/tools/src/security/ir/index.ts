@@ -22,6 +22,7 @@ const irOutput = z.object({
   anomalies: z.number(),
   timeline: z.array(z.record(z.string())).optional(),
   iocSummary: z.record(z.number()).optional(),
+  indicators: z.array(z.object({ kind: z.string(), value: z.string() })).optional(),
 });
 
 function irTool(
@@ -109,6 +110,7 @@ export function createIrSecurityToolRegistry(): {
         recordCount: matches.length,
         anomalies: 0,
         iocSummary: summary,
+        indicators: matches,
       };
     },
   );

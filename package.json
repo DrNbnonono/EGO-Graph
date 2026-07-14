@@ -18,6 +18,8 @@
     "eval:smoke": "node scripts/eval.mjs --smoke",
     "eval:hardness": "node scripts/hardness-eval.mjs",
     "eval:hardness:smoke": "node scripts/hardness-eval.mjs --smoke",
+    "eval:contract": "node scripts/security-eval.mjs --contract",
+    "eval:model": "node scripts/security-eval.mjs --model",
     "smoke": "node scripts/smoke.mjs",
     "demo": "node scripts/demo.mjs",
     "demo:security": "node scripts/demo.mjs --security",

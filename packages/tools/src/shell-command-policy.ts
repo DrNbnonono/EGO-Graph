@@ -85,8 +85,8 @@ export function isDestructiveCommand(command: string, args: string[]): { destruc
  * Git subcommands safe for readonly access.
  */
 const GIT_READONLY_SUBCOMMANDS = new Set([
-  "status", "diff", "log", "show", "blame", "shortlog", "stash", "tag",
-  "remote", "branch", "rev-parse", "describe", "reflog",
+  "status", "diff", "log", "show", "blame", "shortlog",
+  "remote", "rev-parse", "describe", "reflog",
 ]);
 
 /**
@@ -100,25 +100,13 @@ const GIT_WRITE_SUBCOMMANDS = new Set([
 /**
  * pnpm subcommands safe for readonly access.
  */
-const PNPM_READONLY_SUBCOMMANDS = new Set([
-  "--version", "typecheck", "test", "build", "lint", "format:check",
-  "smoke", "list", "outdated", "why", "audit",
-]);
-
-/**
- * pnpm subcommands that modify state (require shell-readonly with approval).
- */
-const PNPM_WRITE_SUBCOMMANDS = new Set([
-  "install", "add", "remove", "update", "dev", "start",
-]);
-
 /**
  * Filesystem read-only commands always allowed in readonly mode.
  */
 const FILESYSTEM_READ_COMMANDS = new Set([
   "ls", "pwd", "cat", "head", "tail", "grep", "rg", "find", "wc",
-  "file", "stat", "du", "df", "which", "where", "echo", "env",
-  "tree", "sort", "uniq", "cut", "awk", "sed", "less", "more",
+  "file", "stat", "du", "df", "which", "where",
+  "tree", "sort", "cut", "sed",
 ]);
 
 /**
@@ -126,8 +114,16 @@ const FILESYSTEM_READ_COMMANDS = new Set([
  */
 const SYSTEM_INFO_COMMANDS = new Set([
   "uname", "hostname", "whoami", "date", "uptime", "free", "top",
-  "ps", "node", "npm", "npx", "python", "python3", "pip", "pip3",
+  "ps",
 ]);
+
+const SHELL_CONTROL_PATTERN = /(?:[|;&<>`]|\$\(|\r|\n)/u;
+
+const FIND_FORBIDDEN_ARGUMENTS = new Set([
+  "-delete", "-exec", "-execdir", "-ok", "-okdir", "-fls", "-fprint", "-fprint0", "-fprintf",
+]);
+
+const SED_FORBIDDEN_ARGUMENTS = new Set(["-i", "--in-place", "-w", "--sandbox=false"]);
 
 /**
  * Classify a shell command into a category and determine its safety level.
@@ -135,6 +131,15 @@ const SYSTEM_INFO_COMMANDS = new Set([
 export function classifyShellCommand(command: string, args: string[]): ShellCommandClassification {
   const cmd = command.toLowerCase().trim();
   const subcommand = args[0] ?? "";
+
+  if (containsShellControlSyntax(command, args)) {
+    return {
+      category: "destructive",
+      readonlySafe: false,
+      destructive: true,
+      reason: "Shell control syntax is not accepted; use structured argv.",
+    };
+  }
 
   // Check destructive first.
   const destructive = isDestructiveCommand(command, args);
@@ -153,7 +158,12 @@ export function classifyShellCommand(command: string, args: string[]): ShellComm
   // Git commands.
   if (cmd === "git") {
     if (GIT_READONLY_SUBCOMMANDS.has(subcommand)) {
-      return { category: "git_read", readonlySafe: true, destructive: false };
+      const safe = validateGitReadonlyArguments(subcommand, args.slice(1));
+      return {
+        category: safe ? "git_read" : "git_write",
+        readonlySafe: safe,
+        destructive: false,
+      };
     }
     if (GIT_WRITE_SUBCOMMANDS.has(subcommand)) {
       return { category: "git_write", readonlySafe: false, destructive: false };
@@ -161,34 +171,21 @@ export function classifyShellCommand(command: string, args: string[]): ShellComm
     return { category: "git_write", readonlySafe: false, destructive: false };
   }
 
-  // Package manager commands.
+  // Package managers run project-controlled lifecycle scripts. They are never
+  // part of the generic readonly shell; dedicated check tools gate them.
   if (cmd === "pnpm" || cmd === "npm" || cmd === "yarn") {
-    if (cmd === "pnpm") {
-      if (PNPM_READONLY_SUBCOMMANDS.has(subcommand)) {
-        return { category: "test_runner", readonlySafe: true, destructive: false };
-      }
-      if (PNPM_WRITE_SUBCOMMANDS.has(subcommand)) {
-        return { category: "package_manager", readonlySafe: false, destructive: false };
-      }
-    }
-    // npm/yarn: only version is readonly safe.
-    if (subcommand === "--version" || subcommand === "version") {
-      return { category: "system_info", readonlySafe: true, destructive: false };
-    }
     return { category: "package_manager", readonlySafe: false, destructive: false };
   }
 
   // Script runners.
-  if (cmd === "node" || cmd === "tsx" || cmd === "ts-node" || cmd === "npx" || cmd === "deno" || cmd === "bun") {
-    if (cmd === "node" && subcommand === "--version") {
-      return { category: "system_info", readonlySafe: true, destructive: false };
-    }
+  if (cmd === "node" || cmd === "tsx" || cmd === "ts-node" || cmd === "npx" || cmd === "deno" || cmd === "bun" || cmd === "python" || cmd === "python3" || cmd === "pip" || cmd === "pip3") {
     return { category: "script_runner", readonlySafe: false, destructive: false };
   }
 
   // Filesystem read commands.
   if (FILESYSTEM_READ_COMMANDS.has(cmd)) {
-    return { category: "filesystem_read", readonlySafe: true, destructive: false };
+    const safe = validateFilesystemReadonlyArguments(cmd, args);
+    return { category: "filesystem_read", readonlySafe: safe, destructive: false };
   }
 
   // System info commands.
@@ -214,6 +211,62 @@ export function assertReadonlySafe(command: string, args: string[]): void {
       `Command is not allowed in shell-readonly mode: ${command} ${args.join(" ")}`,
     );
   }
+}
+
+export function containsShellControlSyntax(command: string, args: string[]): boolean {
+  return [command, ...args].some((part) => SHELL_CONTROL_PATTERN.test(part));
+}
+
+export function assertReadonlyWorkspaceSafe(
+  command: string,
+  args: string[],
+  workspaceRoot: string,
+): void {
+  assertReadonlySafe(command, args);
+  for (const argument of args) {
+    if (argument.startsWith("-") || argument.length === 0) continue;
+    if (/^[A-Za-z]+:\/\//u.test(argument)) {
+      throw new Error(`Network URL is not allowed in shell-readonly mode: ${argument}`);
+    }
+    if (argument.startsWith("/") || /^[A-Za-z]:[\\/]/u.test(argument) || argument.split(/[\\/]/u).includes("..")) {
+      assertWorkspacePath(argument, workspaceRoot);
+    }
+  }
+}
+
+function validateGitReadonlyArguments(subcommand: string, args: string[]): boolean {
+  if (args.some((arg) => arg === "--output" || arg.startsWith("--output=") || arg === "-o")) {
+    return false;
+  }
+  if (subcommand === "remote") {
+    return args.length === 0 || args.every((arg) => arg === "-v" || arg === "--verbose" || arg === "get-url");
+  }
+  if (subcommand === "reflog") {
+    return !args.some((arg) => ["delete", "expire"].includes(arg));
+  }
+  return true;
+}
+
+function validateFilesystemReadonlyArguments(command: string, args: string[]): boolean {
+  if (command === "find" && args.some((arg) => FIND_FORBIDDEN_ARGUMENTS.has(arg.toLowerCase()))) {
+    return false;
+  }
+  if (command === "sed") {
+    if (args.some((arg) => SED_FORBIDDEN_ARGUMENTS.has(arg.toLowerCase()) || /^-i.+/u.test(arg))) {
+      return false;
+    }
+    const script = args.find((arg) => !arg.startsWith("-"));
+    if (script && /(^|[;{\s])(?:e|w)(?:\s|$)/u.test(script)) {
+      return false;
+    }
+  }
+  if (command === "sort" && args.some((arg) => arg === "-o" || arg.startsWith("--output="))) {
+    return false;
+  }
+  if ((command === "rg" || command === "grep") && args.some((arg) => arg === "--pre" || arg.startsWith("--pre="))) {
+    return false;
+  }
+  return true;
 }
 
 /**

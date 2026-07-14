@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "name": "ego-reverse-toolkit",
+  "version": "0.1.0",
+  "tools": [
+    "security.file.identify",
+    "security.reverse.strings",
+    "security.reverse.binwalk"
+  ],
+  "runtime": {
+    "binaries": ["file", "strings", "readelf", "objdump", "binwalk", "analyzeHeadless", "jadx"],
+    "images": [{ "name": "ego-toolkit-reverse", "digest": "required-at-build" }]
+  },
+  "fixtures": [],
+  "source": "built-in",
+  "enabledByDefault": false
+}

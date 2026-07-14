@@ -5,6 +5,7 @@ import type { ToolDefinition } from "../../tool-definition.js";
 import { summarizePcap } from "../parsers/pcap-parser.js";
 import { extractIocs } from "../parsers/ioc-patterns.js";
 import { resolveCapabilityExecution } from "../capability-registry.js";
+import { builtinReceipt, executeExternalBinary } from "../runtime-adapter.js";
 
 /**
  * PCAP forensics tool adapters (security.pcap.*). The summary tool probes for
@@ -24,6 +25,7 @@ const pcapOutput = z.object({
   protocolDistribution: z.record(z.number()),
   capabilitySource: z.string(),
   iocs: z.array(z.record(z.string())).optional(),
+  executionReceipt: z.record(z.unknown()).optional(),
 });
 
 export function createPcapSecurityToolRegistry(): {
@@ -51,7 +53,34 @@ export function createPcapSecurityToolRegistry(): {
     },
     async execute(input, context) {
       const absolute = resolve(context.workspaceRoot, input.path);
-      const { source } = await resolveCapabilityExecution("tshark");
+      const { source, capability } = await resolveCapabilityExecution("tshark");
+      if (source === "external") {
+        const { result, receipt } = await executeExternalBinary({
+          tool: "security.pcap.summary",
+          capability: "tshark",
+          program: capability?.binaryPath ?? "tshark",
+          args: ["-r", absolute, "-T", "fields", "-e", "frame.protocols"],
+          cwd: context.workspaceRoot,
+          timeoutMs: 30_000,
+          ...(context.signal ? { signal: context.signal } : {}),
+          maxOutputBytes: 2_000_000,
+          ...(capability?.version ? { version: capability.version } : {}),
+          artifactRefs: [absolute],
+        });
+        if (result.exitCode !== 0 || result.timedOut || result.cancelled) {
+          throw new Error(result.stderr.trim() || "tshark execution failed");
+        }
+        const parsed = parseTsharkProtocols(result.stdout);
+        return {
+          findings: [`tshark dissected ${parsed.packetCount} packet(s).`],
+          file: absolute,
+          format: "pcap",
+          packetCount: parsed.packetCount,
+          protocolDistribution: parsed.protocolDistribution,
+          capabilitySource: "external",
+          executionReceipt: receipt,
+        };
+      }
       const buffer = await readFile(absolute);
       const parsed = summarizePcap(new Uint8Array(buffer));
       return {
@@ -63,6 +92,7 @@ export function createPcapSecurityToolRegistry(): {
         packetCount: parsed.packetCount,
         protocolDistribution: parsed.protocolDistribution,
         capabilitySource: source,
+        executionReceipt: builtinReceipt("security.pcap.summary", [absolute]),
       };
     },
   };
@@ -147,6 +177,20 @@ export function createPcapSecurityToolRegistry(): {
   };
 
   return { tools: [summary, protocolStats, credential] };
+}
+
+function parseTsharkProtocols(stdout: string): {
+  packetCount: number;
+  protocolDistribution: Record<string, number>;
+} {
+  const lines = stdout.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  const protocolDistribution: Record<string, number> = {};
+  for (const line of lines) {
+    for (const protocol of new Set(line.split(":").map((item) => item.trim()).filter(Boolean))) {
+      protocolDistribution[protocol] = (protocolDistribution[protocol] ?? 0) + 1;
+    }
+  }
+  return { packetCount: lines.length, protocolDistribution };
 }
 
 function formatProtocolLine(distribution: Record<string, number>): string {

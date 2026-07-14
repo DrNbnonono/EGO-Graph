@@ -2,6 +2,8 @@ import type { createTerminalAgentToolRegistry } from "@ego-graph/tools";
 import type { AgentRunEvent, PermissionLevel } from "../session.js";
 import { createToolCall, executeToolCall, type SecurityScopeGate, type ToolExecutorResult } from "../tool-executor.js";
 import type { PermissionRule } from "../permission-rules.js";
+import type { OperationApproval } from "../permissions/grants-v2.js";
+import type { ToolCallProtocol } from "../tool-executor.js";
 import { layerJobs } from "./dag.js";
 import type {
   RetryPolicy,
@@ -28,6 +30,8 @@ export type ExecuteScheduleInput = {
   /** Sleep function (overridable for tests). Defaults to setTimeout. */
   sleep?: (ms: number) => Promise<void>;
   emit: SchedulerEmit;
+  signal?: AbortSignal;
+  approveOperation?(call: ToolCallProtocol): OperationApproval | undefined;
 };
 
 const DEFAULT_RETRY: RetryPolicy = { maxAttempts: 3, backoffMs: 200 };
@@ -109,6 +113,7 @@ export async function* executeSchedule(
         status: result.result.status,
         attempts: result.attempts,
         degraded: result.degraded,
+        ...(result.result.output ? { output: result.result.output } : {}),
       })),
       residualRisks,
       degraded,
@@ -151,7 +156,6 @@ async function runJobWithRetryAndFallback(
   let attempts = 0;
   let lastError: string | undefined;
   let lastRecoveryHint: string | undefined;
-  let lastResult: ToolExecutorResult | undefined;
 
   while (attempts < retry.maxAttempts) {
     attempts += 1;
@@ -167,7 +171,6 @@ async function runJobWithRetryAndFallback(
       },
     });
     const outcome = await runTool(input, job);
-    lastResult = outcome.result;
     const status = outcome.result.status;
     await emit(input, {
       type: "scheduler.job.completed",
@@ -194,7 +197,7 @@ async function runJobWithRetryAndFallback(
     lastError = outcome.result.event.message;
     lastRecoveryHint = extractRecoveryHint(outcome.result);
     // Blocked (permission/scope) is not transient — do not retry.
-    if (outcome.result.status === "blocked") {
+    if (outcome.result.status === "blocked" || outcome.result.status === "cancelled") {
       break;
     }
     if (attempts < retry.maxAttempts) {
@@ -253,7 +256,6 @@ async function runJobWithRetryAndFallback(
         },
       };
     }
-    lastResult = fallbackOutcome.result;
   }
 
   const residualRisk: SchedulerResidualRisk = {
@@ -280,15 +282,17 @@ async function runTool(
 ): Promise<{ result: ToolExecutorResult }> {
   const tool = input.toolRegistry.get(job.toolName);
   const call = createToolCall(tool, job.input);
+  const operationApproval = input.approveOperation?.(call);
   const result = await executeToolCall({
     tool,
     input: job.input,
     call,
     workspaceRoot: input.workspaceRoot,
     permissionLevel: input.permissionLevel,
-    approvalGranted: !call.requiresApproval || input.permissionLevel === "security-active",
+    ...(operationApproval ? { operationApproval } : {}),
     ...(input.securityScope ? { securityScope: input.securityScope } : {}),
     ...(input.permissionRules ? { permissionRules: input.permissionRules } : {}),
+    ...(input.signal ? { signal: input.signal } : {}),
     runId: input.runId,
     sessionId: input.sessionId,
   });

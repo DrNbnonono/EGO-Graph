@@ -1,5 +1,14 @@
 import { z } from "zod";
 
+export const taskInputRefSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("text"), text: z.string().min(1) }),
+  z.object({ kind: z.literal("file"), path: z.string().min(1), mediaType: z.string().min(1).optional() }),
+  z.object({ kind: z.literal("archive"), path: z.string().min(1), mediaType: z.literal("application/zip").default("application/zip") }),
+  z.object({ kind: z.literal("api_document"), path: z.string().min(1), mediaType: z.string().min(1).default("application/json") }),
+]);
+
+export type TaskInputRef = z.output<typeof taskInputRefSchema>;
+
 export const taskSpecSchema = z.object({
   scenario: z.enum([
     "web_pentest",
@@ -10,6 +19,7 @@ export const taskSpecSchema = z.object({
   goal: z.string().min(8),
   targets: z.array(z.string().min(1)).min(1),
   constraints: z.array(z.string().min(1)).default([]),
+  inputs: z.array(taskInputRefSchema).default([]),
 });
 
 export type TaskSpecInput = z.input<typeof taskSpecSchema>;

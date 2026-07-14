@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+export * from "./scope-v2.js";
+
 export type SecurityRiskLevel = "low" | "medium" | "high" | "critical";
 
 export type SecurityTargetType =

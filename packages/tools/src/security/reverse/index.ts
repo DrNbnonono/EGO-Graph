@@ -5,6 +5,7 @@ import type { ToolDefinition } from "../../tool-definition.js";
 import { identifyBinary } from "../parsers/elf-pe-parser.js";
 import { extractIocs } from "../parsers/ioc-patterns.js";
 import { resolveCapabilityExecution } from "../capability-registry.js";
+import { builtinReceipt, executeExternalBinary } from "../runtime-adapter.js";
 
 /**
  * Reverse-engineering tool adapters (security.reverse.*, security.file.*).
@@ -24,6 +25,7 @@ const reverseOutput = z.object({
   size: z.number(),
   capabilitySource: z.string(),
   strings: z.array(z.string()).optional(),
+  executionReceipt: z.record(z.unknown()).optional(),
 });
 
 function reverseTool(
@@ -54,8 +56,65 @@ function reverseTool(
     async execute(input, context) {
       const absolute = resolve(context.workspaceRoot, input.path);
       const buffer = await readFile(absolute);
-      const { source } = await resolveCapabilityExecution(name.includes("binwalk") ? "binwalk" : "file");
-      return run(absolute, new Uint8Array(buffer), source);
+      const capabilityName = name.includes("binwalk")
+        ? "binwalk"
+        : name.includes("strings")
+          ? "strings"
+          : "file";
+      const { source, capability } = await resolveCapabilityExecution(capabilityName);
+      if (source === "external") {
+        const args = capabilityName === "file"
+          ? ["-b", absolute]
+          : capabilityName === "strings"
+            ? ["-a", "-n", "4", absolute]
+            : [absolute];
+        const { result, receipt } = await executeExternalBinary({
+          tool: name,
+          capability: capabilityName,
+          program: capability?.binaryPath ?? capabilityName,
+          args,
+          cwd: context.workspaceRoot,
+          timeoutMs: 30_000,
+          ...(context.signal ? { signal: context.signal } : {}),
+          maxOutputBytes: 2_000_000,
+          ...(capability?.version ? { version: capability.version } : {}),
+          artifactRefs: [absolute],
+        });
+        if (result.exitCode !== 0 || result.timedOut || result.cancelled) {
+          throw new Error(result.stderr.trim() || `${capabilityName} execution failed`);
+        }
+        if (capabilityName === "file") {
+          const identified = identifyBinary(new Uint8Array(buffer), { maxStrings: 0 });
+          return {
+            findings: [`file: ${result.stdout.trim().slice(0, 500)}`],
+            file: absolute,
+            format: identified.format,
+            ...(identified.arch ? { arch: identified.arch } : {}),
+            ...(identified.bits ? { bits: identified.bits } : {}),
+            size: buffer.length,
+            capabilitySource: "external",
+            executionReceipt: receipt,
+          };
+        }
+        const lines = result.stdout.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+        return {
+          findings: [
+            capabilityName === "strings"
+              ? `GNU strings extracted ${lines.length} string(s).`
+              : `binwalk returned ${lines.length} output line(s).`,
+          ],
+          file: absolute,
+          format: capabilityName === "binwalk" ? "binwalk-scan" : "strings",
+          size: buffer.length,
+          capabilitySource: "external",
+          strings: lines.slice(0, 200),
+          executionReceipt: receipt,
+        };
+      }
+      return {
+        ...run(absolute, new Uint8Array(buffer), source),
+        executionReceipt: builtinReceipt(name, [absolute]),
+      };
     },
   };
 }

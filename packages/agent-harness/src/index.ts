@@ -128,6 +128,7 @@ export {
   type LoopState,
   type LoopIntent,
   type PlannerAction,
+  type ToolBatchPlan,
 } from "./loop-state.js";
 export {
   createInitialStrategyGraph,
@@ -153,6 +154,16 @@ export {
   type StrategyUpdateResult,
 } from "./strategy/strategy-graph-update.js";
 export { type SecurityScopeGate } from "./tool-executor.js";
+export {
+  createOperationApproval,
+  createPermissionGrantsV2,
+  consumeOperationApproval,
+  toolCallInputDigest,
+  validateOperationApproval,
+  type OperationApproval,
+  type PermissionGrantV2,
+  type PermissionGrantSource,
+} from "./permissions/grants-v2.js";
 export {
   buildToolCapabilityReportEvent,
   type ToolCapabilityReport,

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "name": "ego-forensics-toolkit",
+  "version": "0.1.0",
+  "tools": [
+    "artifact.archive.inspect",
+    "security.ir.timeline",
+    "security.ir.ioc_extract",
+    "security.pcap.summary",
+    "security.pcap.protocol_stats"
+  ],
+  "runtime": {
+    "binaries": ["tshark", "tcpdump", "yara"],
+    "images": [{ "name": "ego-toolkit-core", "digest": "required-at-build" }]
+  },
+  "fixtures": ["scenarios/incident_response/webshell-case.zip"],
+  "source": "built-in",
+  "enabledByDefault": false
+}

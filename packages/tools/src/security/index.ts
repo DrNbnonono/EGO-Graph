@@ -20,6 +20,9 @@ import { createReverseSecurityToolRegistry } from "./reverse/index.js";
 import { createVulnSecurityToolRegistry } from "./vuln/index.js";
 import { createReportSecurityToolRegistry } from "./report/index.js";
 
+export { createWebSecurityToolRegistry } from "./web/index.js";
+export { createIrSecurityToolRegistry } from "./ir/index.js";
+
 export type {
   CapabilityDetector,
   CapabilitySource,
@@ -90,10 +93,22 @@ export function registerBuiltinSecurityDetectors(): void {
       binary: "nuclei",
       versionArgs: ["-version"],
       versionPattern: /nuclei\s+v[\d.]+/i,
+      builtinFallback: false,
+    }),
+    createBinaryCapabilityDetector({
+      name: "strings",
+      label: "GNU strings",
+      binary: "strings",
+      versionArgs: ["--version"],
       builtinFallback: true,
     }),
-    createBuiltinOnlyCapability({ name: "strings", label: "strings (builtin)" }),
-    createBuiltinOnlyCapability({ name: "ghidra", label: "ghidra headless (unavailable)" }),
+    createBinaryCapabilityDetector({
+      name: "ghidra",
+      label: "Ghidra headless",
+      binary: "analyzeHeadless",
+      versionArgs: ["-help"],
+      builtinFallback: false,
+    }),
     createBuiltinOnlyCapability({ name: "cve-feed", label: "offline CVE fixture feed" }),
   ];
   for (const detector of detectors) {
@@ -172,6 +187,20 @@ export {
 } from "./capability-registry.js";
 export type { EgressPolicy } from "./sandbox/boundary.js";
 export { enforceEgressAllowlist, redactSecrets, DEFAULT_EGRESS_POLICY } from "./sandbox/boundary.js";
+export {
+  builtinReceipt,
+  executeExternalBinary,
+  getToolHealthRecord,
+  listToolHealthRecords,
+  recordToolExecution,
+  recordToolProbe,
+  type ToolCapabilityStatus,
+  type ToolExecutionReceipt,
+  type ToolHealthRecord,
+  type ToolRecovery,
+  type ToolRuntimeAdapter,
+  type ToolRuntimeProbe,
+} from "./runtime-adapter.js";
 export type { ParsedLogRecord } from "./parsers/log-parser.js";
 export { parseLogEntries, buildIncidentTimeline, detectAnomalies } from "./parsers/log-parser.js";
 export { summarizePcap } from "./parsers/pcap-parser.js";

@@ -92,7 +92,9 @@ describe("chat model provider", () => {
 
     expect(result.decision).toBe("ok");
     expect(String(url)).toBe("https://api.minimaxi.com/anthropic/v1/messages");
-    expect((init?.headers as Record<string, string>).authorization).toBe("Bearer test-key");
+    expect((init?.headers as Record<string, string>)["x-api-key"]).toBe("test-key");
+    expect((init?.headers as Record<string, string>)["anthropic-version"]).toBe("2023-06-01");
+    expect((init?.headers as Record<string, string>).authorization).toBeUndefined();
     expect(body.model).toBe("MiniMax-M3");
     expect(body.max_tokens).toBe(4096);
     expect(body.system).toBe("Return JSON only.");

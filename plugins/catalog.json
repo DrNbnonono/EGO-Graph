@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "plugins": [
+    {
+      "name": "ego-web-toolkit",
+      "manifest": "ego-web-toolkit/ego.plugin.json",
+      "checksum": "sha256:d2db6dc27c1de339e0bbfc468fd2f2b93585341b8debfc42d3e3a7d9d2747136",
+      "category": "Web Security"
+    },
+    {
+      "name": "ego-forensics-toolkit",
+      "manifest": "ego-forensics-toolkit/ego.plugin.json",
+      "checksum": "sha256:94ce66ebd19d12df112c3fce80fa4c1b098d12543bdf04e36d243ab98a43bfef",
+      "category": "Forensics"
+    },
+    {
+      "name": "ego-reverse-toolkit",
+      "manifest": "ego-reverse-toolkit/ego.plugin.json",
+      "checksum": "sha256:8c9bc67f321567cbcd6c414633a1e5977f3ca4f4b188003c96ac19356bfd7d2b",
+      "category": "Reverse Engineering"
+    }
+  ]
+}

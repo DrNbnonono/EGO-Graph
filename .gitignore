@@ -38,8 +38,10 @@ docker/*.tar
 
 *.tsbuildinfo
 output/playwright
+output/
 .playwright-cli/
 opencode/
 .zread/
 prompt.md
+test-model.mjs
 .qoder/

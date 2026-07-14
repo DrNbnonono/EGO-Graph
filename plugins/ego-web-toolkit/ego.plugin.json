@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "ego-web-toolkit",
+  "version": "0.1.0",
+  "tools": [
+    "security.web.crawl",
+    "security.web.forms",
+    "security.web.headers",
+    "security.web.params"
+  ],
+  "runtime": {
+    "binaries": ["nmap", "nuclei", "nikto", "sqlmap"],
+    "images": [{ "name": "ego-toolkit-core", "digest": "required-at-build" }]
+  },
+  "fixtures": ["scenarios/web_pentest/idor/task.json"],
+  "source": "built-in",
+  "enabledByDefault": false
+}

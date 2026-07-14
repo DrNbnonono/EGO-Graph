@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { readdir, readFile } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { classifyShellCommand, isDestructiveCommand } from "./shell-command-policy.js";
+import { assertReadonlyWorkspaceSafe } from "./shell-command-policy.js";
 import { z } from "zod";
 import {
   createGitBranchTool,
@@ -12,7 +12,10 @@ import {
   createGitStatusTool,
 } from "./git-tools.js";
 import { detectDocker, executeInDocker } from "./security/sandbox/docker-executor.js";
+import { runControlledProcess } from "./process-runner.js";
 import type { ToolDefinition } from "./tool-definition.js";
+import { createArchiveInspectTool } from "./archive-ingest.js";
+import { createSecurityToolRegistry } from "./security/index.js";
 import { ToolRegistry } from "./tool-registry.js";
 import {
   createLspDefinitionTool,
@@ -68,8 +71,8 @@ const grepOutputSchema = z.object({
 });
 
 const shellReadonlyInputSchema = z.object({
-  command: z.string().min(1),
-  args: z.array(z.string()).optional(),
+  program: z.string().min(1).regex(/^[A-Za-z0-9._+-]+$/u),
+  args: z.array(z.string()).default([]),
   timeoutMs: z.number().int().min(250).max(120_000).optional(),
 });
 
@@ -154,6 +157,10 @@ export function createTerminalAgentToolRegistry(): TerminalAgentToolRegistry {
   registry.register(createGitLogTool());
   registry.register(createGitBranchTool());
   registry.register(createGitCommitTool());
+  registry.register(createArchiveInspectTool());
+  for (const tool of createSecurityToolRegistry().list()) {
+    if (!registry.has(tool.name)) registry.register(tool);
+  }
   return registry;
 }
 
@@ -288,12 +295,13 @@ export function createShellReadonlyTool(): ToolDefinition<
     sandboxProfile: "process",
     timeoutMs: 120_000,
     async execute(input, context) {
-      assertReadonlyCommand(input.command, input.args ?? []);
+      assertReadonlyWorkspaceSafe(input.program, input.args, context.workspaceRoot);
       return runReadonlyCommand(
         context.workspaceRoot,
-        input.command,
-        input.args ?? [],
+        input.program,
+        input.args,
         input.timeoutMs,
+        context.signal,
       );
     },
     evidenceMapper(output) {
@@ -322,7 +330,7 @@ export function createCheckTool(
     sandboxProfile: "process",
     timeoutMs: 120_000,
     async execute(_input, context) {
-      return runReadonlyCommand(context.workspaceRoot, "pnpm", args, 120_000);
+      return runReadonlyCommand(context.workspaceRoot, "pnpm", args, 120_000, context.signal);
     },
     evidenceMapper(output) {
       return output.findings.map((summary) => ({
@@ -553,7 +561,8 @@ export function createWorkspaceGlobTool(): ToolDefinition<
 }
 
 const shellWriteInputSchema = z.object({
-  command: z.string().min(1).describe("Shell command with arguments, e.g. 'pnpm build' or 'git status'."),
+  program: z.string().min(1).regex(/^[A-Za-z0-9._+-]+$/u),
+  args: z.array(z.string()).default([]),
   timeoutMs: z.number().int().min(250).max(120_000).optional(),
 });
 
@@ -582,60 +591,32 @@ export function createShellWriteTool(): ToolDefinition<
     timeoutMs: 120_000,
     requiresApproval: true,
     async execute(input, context) {
-      const rendered = input.command;
-      // Try Docker sandbox first if available.
+      const rendered = [input.program, ...input.args].join(" ");
       const docker = await detectDocker();
-      if (docker.available) {
-        const shell = process.platform === "win32" ? "cmd.exe" : "/bin/sh";
-        const shellArgs = process.platform === "win32"
-          ? ["/c", input.command]
-          : ["-c", input.command];
-        const result = await executeInDocker(shell, shellArgs, {
-          workspaceRoot: context.workspaceRoot,
-          timeoutMs: input.timeoutMs ?? 30_000,
-          mountMode: "rw",
-        });
-        if (result.sandboxed) {
-          return {
-            command: rendered,
-            status: result.status,
-            exitCode: result.exitCode,
-            stdout: result.stdout,
-            stderr: result.stderr,
-            findings: [`[${result.status}] (sandboxed) ${rendered}`],
-          };
-        }
-      }
-      // Fallback to direct execution.
-      try {
-        const result = await execFileAsync(
-          process.platform === "win32" ? "cmd.exe" : "/bin/sh",
-          process.platform === "win32" ? ["/c", input.command] : ["-c", input.command],
-          {
-            cwd: context.workspaceRoot,
-            maxBuffer: 4_000_000,
-            timeout: input.timeoutMs ?? 30_000,
-          },
-        );
-        return {
-          command: rendered,
-          status: "passed",
-          exitCode: 0,
-          stdout: result.stdout,
-          stderr: result.stderr,
-          findings: [`Command passed: ${rendered}`],
-        };
-      } catch (error) {
-        const failed = error as { stdout?: string; stderr?: string; exitCode?: number; code?: number };
+      if (!docker.available) {
         return {
           command: rendered,
           status: "failed",
-          exitCode: failed.exitCode ?? failed.code ?? 1,
-          stdout: failed.stdout ?? "",
-          stderr: failed.stderr ?? String(error),
-          findings: [`Command failed: ${rendered}`],
+          exitCode: -1,
+          stdout: "",
+          stderr: `Docker is required for shell.write: ${docker.reason ?? "unavailable"}`,
+          findings: [`Blocked unsandboxed command: ${rendered}`],
         };
       }
+      const result = await executeInDocker(input.program, input.args, {
+        workspaceRoot: context.workspaceRoot,
+        timeoutMs: input.timeoutMs ?? 30_000,
+        mountMode: "rw",
+        ...(context.signal ? { signal: context.signal } : {}),
+      });
+      return {
+        command: rendered,
+        status: result.status,
+        exitCode: result.exitCode,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        findings: [`[${result.status}] (sandboxed) ${rendered}`],
+      };
     },
     evidenceMapper(output) {
       return output.findings.map((summary) => ({
@@ -756,53 +737,28 @@ function isMatch(line: string, pattern: RegExp | string, ignoreCase: boolean, is
     : line.includes(pattern as string);
 }
 
-function assertReadonlyCommand(command: string, args: string[]): void {
-  // Check destructive commands first.
-  const destructive = isDestructiveCommand(command, args);
-  if (destructive.destructive) {
-    throw new Error(`Destructive command blocked: ${destructive.reason ?? command}`);
-  }
-  // Use the policy classifier to determine if the command is readonly-safe.
-  const classification = classifyShellCommand(command, args);
-  if (classification.readonlySafe) {
-    return;
-  }
-  throw new Error(`Command is not allowed in shell-readonly mode: ${command} ${args.join(" ")}`);
-}
-
 async function runReadonlyCommand(
   workspaceRoot: string,
   command: string,
   args: string[],
   timeoutMs = 30_000,
+  signal?: AbortSignal,
 ): Promise<z.output<typeof shellReadonlyOutputSchema>> {
   const rendered = [command, ...args].join(" ");
-  try {
-    const result = await execFileAsync(command, args, {
-      cwd: workspaceRoot,
-      maxBuffer: 2_000_000,
-      timeout: timeoutMs,
-      shell: process.platform === "win32",
-    });
-    return {
-      command: rendered,
-      status: "passed",
-      exitCode: 0,
-      stdout: result.stdout,
-      stderr: result.stderr,
-      findings: [`Command passed: ${rendered}`],
-    };
-  } catch (error) {
-    const failed = error as { stdout?: string; stderr?: string; exitCode?: number; code?: number };
-    return {
-      command: rendered,
-      status: "failed",
-      exitCode: failed.exitCode ?? failed.code ?? 1,
-      stdout: failed.stdout ?? "",
-      stderr: failed.stderr ?? String(error),
-      findings: [`Command failed: ${rendered}`],
-    };
-  }
+  const result = await runControlledProcess(command, args, {
+    cwd: workspaceRoot,
+    timeoutMs,
+    ...(signal ? { signal } : {}),
+  });
+  const status = result.exitCode === 0 && !result.timedOut && !result.cancelled ? "passed" : "failed";
+  return {
+    command: rendered,
+    status,
+    exitCode: result.exitCode,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    findings: [`Command ${status}: ${rendered}`],
+  };
 }
 
 function resolveWorkspacePath(workspaceRoot: string, relativePath: string): string {

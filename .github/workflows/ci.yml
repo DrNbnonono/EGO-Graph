@@ -7,7 +7,11 @@ on:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -24,10 +28,11 @@ jobs:
       - run: pnpm smoke
       - run: pnpm eval:smoke
       - run: pnpm eval:hardness:smoke
+      - run: pnpm eval:contract
       - name: Upload hardness artifact
-        if: always()
+        if: always() && matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: hardness-report
+          name: hardness-report-${{ matrix.os }}
           path: hardness-artifacts/
           retention-days: 30

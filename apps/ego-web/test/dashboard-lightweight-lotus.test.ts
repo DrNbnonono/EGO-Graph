@@ -29,10 +29,13 @@ describe("dashboard lightweight lotus UI", () => {
 
     expect(html).toContain("Lightweight Lotus Console");
     expect(html).toContain('data-inspector-tab="context"');
-    expect(html).toContain('data-inspector-tab="plan"');
-    expect(html).toContain('data-inspector-tab="diff"');
-    expect(html).toContain('data-inspector-tab="checks"');
-    expect(html).toContain('data-inspector-tab="runs"');
+    expect(html).toContain('data-inspector-tab="strategy"');
+    expect(html).toContain('data-inspector-tab="evidence"');
+    expect(html).toContain('data-inspector-tab="approvals"');
+    expect(html).toContain('data-inspector-tab="scope"');
+    expect(html).toContain('data-inspector-tab="tools"');
+    expect(html).toContain('data-inspector-tab="risk"');
+    expect(html).toContain('data-inspector-tab="report"');
     expect(html).toContain('data-inspector-tab="settings"');
     expect(html).toContain('data-mobile-target="threads"');
     expect(html).toContain('data-mobile-target="chat"');
@@ -73,7 +76,7 @@ describe("dashboard lightweight lotus UI", () => {
 
   it("exposes typed frontend view-state aliases for future modules", () => {
     const panel: PanelKind = "inspector";
-    const tab: InspectorTab = "diff";
+    const tab: InspectorTab = "evidence";
     const command: CommandAction = {
       name: "/status",
       category: "session",
@@ -90,6 +93,6 @@ describe("dashboard lightweight lotus UI", () => {
     };
 
     expect(viewModel.activePanel).toBe("inspector");
-    expect(viewModel.activeInspectorTab).toBe("diff");
+    expect(viewModel.activeInspectorTab).toBe("evidence");
   });
 });

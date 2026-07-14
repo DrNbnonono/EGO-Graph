@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "../src/server.js";
@@ -38,6 +38,20 @@ describe("ego api server", () => {
 
     expect(response.status).toBe(200);
     expect(body).toEqual({ ok: true, service: "ego-api" });
+  });
+
+  it("reports truthful real-tool capability states", async () => {
+    const app = createServer();
+    const response = await app.request("/api/tool-capabilities");
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.capabilities.length).toBeGreaterThan(0);
+    expect(body.capabilities.every((item: { status?: string }) =>
+      ["unavailable", "degraded", "ready", "verified", "failed"].includes(item.status ?? ""),
+    )).toBe(true);
+    expect(body.summary.total).toBe(body.capabilities.length);
   });
 
   it("serves the visual dashboard and project status API", async () => {
@@ -117,17 +131,60 @@ describe("ego api server", () => {
     const workbench = await app.request("/api/workbench").then((result) => result.json());
     const configFile = JSON.parse(
       await readFile(join(workspaceRoot, ".ego", "config.json"), "utf8"),
-    ) as { model: { apiKey: string; model: string } };
+    ) as { model: { apiKey?: string; apiKeyEnv?: string; apiKeyFile?: string; model: string } };
 
     expect(["none", "environment"]).toContain(before.model.source);
     expect(saveResponse.status).toBe(200);
     expect(saved.model.source).toBe("workspace-local");
     expect(saved.model.apiKeyConfigured).toBe(true);
     expect(saved.model.apiKey).toBeUndefined();
-    expect(configFile.model.apiKey).toBe("local-secret-key");
+    expect(configFile.model.apiKey).toBeUndefined();
+    expect(configFile.model.apiKeyEnv).toBeUndefined();
+    expect(configFile.model.apiKeyFile).toBe(".ego/runtime/model-api-key");
     expect(configFile.model.model).toBe("lotus-test-model");
     expect(workbench.workbench.model.configured).toBe(true);
     expect(["workspace-local", "environment"]).toContain(workbench.workbench.model.source);
+  });
+
+  it("recovers from malformed workspace model config through the config API", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "ego-api-bad-model-config-"));
+    const egoHome = await mkdtemp(join(tmpdir(), "ego-api-bad-model-config-home-"));
+    await writeFile(join(workspaceRoot, "package.json"), '{"name":"bad-model-config-fixture"}', "utf8");
+    await mkdir(join(workspaceRoot, ".ego"), { recursive: true });
+    await writeFile(
+      join(workspaceRoot, ".ego", "config.json"),
+      '{"model":{"provider":"minimax"}}\n{"model":{"provider":"openai-compatible"}}\n',
+      "utf8",
+    );
+    const app = createServer({ workspaceRoot, egoHome });
+
+    const beforeResponse = await app.request("/api/config/model");
+    const before = await beforeResponse.json();
+    const saveResponse = await app.request("/api/config/model", {
+      method: "POST",
+      body: JSON.stringify({
+        provider: "minimax",
+        baseUrl: "https://api.minimaxi.com/anthropic",
+        chatPath: "/v1/messages",
+        wireApi: "anthropic-messages",
+        apiKey: "fixed-secret-key",
+        model: "MiniMax-M3",
+      }),
+      headers: { "content-type": "application/json" },
+    });
+    const saved = await saveResponse.json();
+    const configFile = JSON.parse(
+      await readFile(join(workspaceRoot, ".ego", "config.json"), "utf8"),
+    ) as { model: { provider: string; apiKey?: string; apiKeyEnv?: string; apiKeyFile?: string } };
+
+    expect(beforeResponse.status).toBe(200);
+    expect(before.model.provider).toBe("disabled");
+    expect(saveResponse.status).toBe(200);
+    expect(saved.model.apiKeyConfigured).toBe(true);
+    expect(configFile.model.provider).toBe("minimax");
+    expect(configFile.model.apiKey).toBeUndefined();
+    expect(configFile.model.apiKeyEnv).toBeUndefined();
+    expect(configFile.model.apiKeyFile).toBe(".ego/runtime/model-api-key");
   });
 
   it("rejects contradictory disabled model settings through the config API", async () => {

@@ -16,6 +16,15 @@ const state = {
   uiPreferences: loadUiPreferences(),
   railWidths: loadRailWidths(),
   currentRun: null,
+  runEvents: [],
+  secure: {
+    scopes: [],
+    grants: [],
+    replayEvents: [],
+    reproBundle: null,
+    evalArtifacts: null,
+    toolCapabilities: null,
+  },
 };
 
 const legacyAgentEndpoints = ["/agent/runs", "/agent/plans"];
@@ -391,15 +400,19 @@ function createRunBubble() {
   const details = document.createElement("details");
   details.className = "thinking-block";
   details.innerHTML = '<summary><span class="status-dot warning"></span>思考与执行过程</summary><div class="event-flow"></div>';
+  const thinking = document.createElement("details");
+  thinking.className = "stream-thinking";
+  thinking.hidden = true;
+  thinking.innerHTML = '<summary>思考过程</summary><div class="stream-thinking-body"></div>';
   const answer = document.createElement("div");
   answer.className = "stream-answer markdown-body";
   answer.textContent = "正在读取当前会话与项目上下文...";
-  bubble.append(details, answer);
+  bubble.append(details, thinking, answer);
   content.append(bubble);
   row.append(avatar, content);
   conversation.append(row);
   conversation.scrollTop = conversation.scrollHeight;
-  return { row, details, flow: details.querySelector(".event-flow"), answer };
+  return { row, details, flow: details.querySelector(".event-flow"), thinking, thinkingBody: thinking.querySelector(".stream-thinking-body"), answer, answerBuffer: "", thinkingBuffer: "", hasStreamed: false };
 }
 
 function permissionModeToLevel(mode = state.permissionMode) {
@@ -412,6 +425,10 @@ function modeLabel(mode = state.activeMode) {
   if (mode === "patch") return "生成 Patch";
   if (mode === "security") return "安全任务";
   return "对话";
+}
+
+function modelDisplayName(model) {
+  return model?.activeModel || model?.model || model?.label || model?.name || "未配置";
 }
 
 function addTimelineEvent(event) {
@@ -455,20 +472,44 @@ function toStringMessage(value) {
 
 function handleHarnessLine(line, runUi) {
   if (!line || !runUi) return;
-  addTimelineEvent(line);
-  appendRunEvent(runUi.flow, line);
+  const isDelta = line.type === "agent.event" && line.event === "assistant.delta";
+  if (!isDelta) {
+    state.runEvents.push(normalizeHarnessEvent(line));
+    state.secure.replayEvents = state.runEvents.slice(-300);
+    renderSecureAutonomyPanels();
+  }
+  // Streaming deltas are incremental token fragments; recording each one into the
+  // timeline/event-flow would flood the page with garbled fragments.
+  if (!isDelta) {
+    addTimelineEvent(line);
+    appendRunEvent(runUi.flow, line);
+  }
   if (line.runId) state.currentRun = line.runId;
 
   if (line.type === "agent.event") {
-    if (line.event === "assistant.delta" || line.event === "assistant.message" || line.event === "assistant.completed") {
+    if (line.event === "assistant.delta") {
+      // Reasoning arrives as a cumulative snapshot; show it in a collapsed
+      // "思考过程" area that stays hidden until the user clicks to expand.
       const text = toStringMessage(line.message);
-      if (text) renderMarkdown(runUi.answer, text);
+      if (text) {
+        runUi.thinkingBuffer = text;
+        runUi.hasStreamed = true;
+        if (runUi.thinkingBody) runUi.thinkingBody.textContent = text;
+        if (runUi.thinking) runUi.thinking.hidden = false;
+        scrollConversationToBottom();
+      }
+    } else if (line.event === "assistant.message" || line.event === "assistant.completed") {
+      const text = toStringMessage(line.message);
+      if (text) {
+        runUi.answerBuffer = text;
+        renderMarkdown(runUi.answer, text);
+      }
     }
     if (line.event === "permission.requested") {
-      setInspectorTab("checks");
-      const checks = byId("inspector-checks");
-      if (checks) {
-        checks.innerHTML =
+      setInspectorTab("approvals");
+      const approvals = byId("inspector-approvals");
+      if (approvals) {
+        approvals.innerHTML =
           '<div class="approval-card"><strong>需要批准</strong><p>' +
           escapeHtml(toStringMessage(line.message) || "Agent 请求权限") +
           '</p><button class="confirm-action" type="button" data-approve-run="' +
@@ -506,10 +547,18 @@ async function submitChatGoal(goal) {
   const session = await ensureServerSession();
   if (!session) return;
   appendMessage("user", goal, { skipPersist: true });
+  state.runEvents = [];
+  state.secure.replayEvents = [];
+  state.secure.reproBundle = null;
   const runUi = createRunBubble();
   const button = byId("start-run");
   if (button) button.disabled = true;
   try {
+    await fetchJson("/api/sessions/" + encodeURIComponent(session.id) + "/policy", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ preset: permissionModeToLevel() }),
+    });
     const response = await fetch("/agent/harness/runs/stream", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -517,7 +566,6 @@ async function submitChatGoal(goal) {
         sessionId: session.id,
         message: goal,
         mode: state.activeMode,
-        permissionLevel: permissionModeToLevel(),
       }),
     });
     if (!response.ok || !response.body) {
@@ -565,27 +613,272 @@ async function submitChatGoal(goal) {
 function renderRuns(runs = []) {
   const count = byId("run-count-label");
   if (count) count.textContent = (runs.length || 0) + " runs";
-  const list = byId("run-list");
+  const list = byId("report-list");
   if (!list) return;
   list.innerHTML = runs.length
     ? runs.map(createRunSummaryDetails).join("")
-    : '<div class="empty-state">暂无运行记录</div>';
+    : '<div class="empty-state">暂无运行记录。完成一次运行后会显示证据包入口。</div>';
 }
 
 function createRunSummaryDetails(run) {
+  const id = run.id || run.runId || "";
   return (
     '<div class="detail-card"><small>' +
     escapeHtml(run.status || "run") +
     '</small><strong>' +
-    escapeHtml(run.id || run.runId || "run") +
+    escapeHtml(id || "run") +
     '</strong><span>' +
     escapeHtml(formatRelativeTime(run.updatedAt || run.createdAt)) +
-    "</span></div>"
+    '</span><button class="mini-action" type="button" data-load-run="' +
+    escapeHtml(id) +
+    '">载入证据包</button></div>'
   );
 }
 
 function detailCard(title, value) {
   return '<div class="detail-card"><small>' + escapeHtml(title) + '</small><strong>' + escapeHtml(value || "暂无") + "</strong></div>";
+}
+
+function normalizeHarnessEvent(line) {
+  if (line.type === "agent.event") {
+    return {
+      type: line.event || "agent.event",
+      runId: line.runId || state.currentRun || "web-run",
+      sessionId: line.sessionId || currentSession()?.id || "web-session",
+      message: toStringMessage(line.message),
+      createdAt: line.createdAt,
+      payload: line.payload || {},
+    };
+  }
+  return {
+    type: line.type || "event",
+    runId: line.runId || state.currentRun || "web-run",
+    sessionId: line.sessionId || currentSession()?.id || "web-session",
+    message: toStringMessage(line.message),
+    createdAt: line.createdAt,
+    payload: line.payload || {},
+  };
+}
+
+function eventList() {
+  return state.secure.replayEvents?.length ? state.secure.replayEvents : state.runEvents;
+}
+
+function latestStrategyGraph() {
+  const events = eventList();
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const graph = events[index]?.payload?.strategyGraph;
+    if (graph) return graph;
+  }
+  return null;
+}
+
+function statusClass(status) {
+  if (status === "ok" || status === "passed" || status === "closed") return "status-ok";
+  if (status === "blocked" || status === "failed" || status === "violation") return "status-danger";
+  if (status === "pending" || status === "warning") return "status-warning";
+  return "status-muted";
+}
+
+function renderSecureOverview() {
+  const scopes = state.secure.scopes || [];
+  const activeScopes = scopes.filter((entry) => !entry.scope?.revokedAt);
+  const approvals = eventList().filter((event) => event.type === "permission.requested");
+  const graph = latestStrategyGraph();
+  const p0 = (graph?.evidenceGaps || []).filter((gap) => gap.priority === "p0");
+  const closed = p0.filter((gap) => String(gap.verification || "").startsWith("[closed]"));
+  const evalArtifacts = state.secure.evalArtifacts || {};
+  const scores = [evalArtifacts.contract?.averageScore, evalArtifacts.model?.averageScore].filter((score) => typeof score === "number");
+  const bestScore = scores.length ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length) : undefined;
+  setOverviewCard("overview-policy", permissionModeToLevel(), "ok");
+  setOverviewCard("overview-scopes", String(activeScopes.length), activeScopes.length ? "ok" : "muted");
+  setOverviewCard("overview-approvals", String(approvals.length), approvals.length ? "pending" : "ok");
+  setOverviewCard("overview-gaps", p0.length ? closed.length + "/" + p0.length : "未知", p0.length && closed.length === p0.length ? "closed" : p0.length ? "pending" : "muted");
+  setOverviewCard("overview-eval", bestScore === undefined ? "未运行" : bestScore + "/100", bestScore === undefined ? "muted" : bestScore >= 85 ? "ok" : "warning");
+  const detail = byId("overview-eval-detail");
+  if (detail) {
+    const contractSafetyViolations = evalArtifacts.contract?.safetyViolations?.length ?? 0;
+    const modelSafetyViolations = evalArtifacts.model?.safetyViolations?.length ?? 0;
+    detail.textContent = [
+      evalArtifacts.contract ? "contract " + evalArtifacts.contract.averageScore + " · safetyViolations " + contractSafetyViolations : "contract 未运行",
+      evalArtifacts.model ? "model " + evalArtifacts.model.averageScore + " · safetyViolations " + modelSafetyViolations : "model 未运行",
+    ].join(" · ");
+  }
+}
+
+function setOverviewCard(id, value, status) {
+  const node = byId(id);
+  if (!node) return;
+  node.textContent = value;
+  const card = node.closest(".secure-overview-card");
+  if (card) {
+    card.classList.remove("status-ok", "status-warning", "status-danger", "status-muted");
+    card.classList.add(statusClass(status));
+  }
+}
+
+function renderSecureAutonomyPanels() {
+  renderSecureOverview();
+  renderStrategyPanel();
+  renderEvidencePanel();
+  renderApprovalPanel();
+  renderScopePanel();
+  renderToolBatchPanel();
+  renderRiskPanel();
+  renderReportPanel(state.workbench?.recentRuns || []);
+}
+
+function renderStrategyPanel() {
+  const target = byId("inspector-strategy");
+  if (!target) return;
+  const graph = latestStrategyGraph();
+  if (!graph) {
+    target.innerHTML = '<div class="empty-state">策略图会在运行开始后显示。</div>';
+    return;
+  }
+  const gaps = graph.evidenceGaps || [];
+  target.innerHTML =
+    '<div class="detail-list">' +
+    detailCard("Domain", graph.domain || "general") +
+    detailCard("Risk posture", graph.riskPosture || "unknown") +
+    detailCard("P0 gaps", gaps.filter((gap) => gap.priority === "p0").length) +
+    gaps
+      .map((gap) =>
+        '<div class="secure-row ' +
+        (String(gap.verification || "").startsWith("[closed]") ? "is-ok" : "is-pending") +
+        '"><small>' +
+        escapeHtml(gap.priority || "gap") +
+        '</small><strong>' +
+        escapeHtml(gap.question || gap.id) +
+        '</strong><span>' +
+        escapeHtml(gap.verification || "待验证") +
+        "</span></div>",
+      )
+      .join("") +
+    "</div>";
+}
+
+function renderEvidencePanel() {
+  const target = byId("inspector-evidence");
+  if (!target) return;
+  const bundle = state.secure.reproBundle;
+  const graph = bundle?.evidenceGraph;
+  const claimEvents = eventList().filter((event) => event.type === "observation.created" || event.type === "evidence.created");
+  const nodes = graph?.nodes || [];
+  if (!nodes.length && !claimEvents.length) {
+    target.innerHTML = '<div class="empty-state">暂无结构化证据。工具 observation 会在这里沉淀为 claim / artifact。</div>';
+    return;
+  }
+  target.innerHTML =
+    '<div class="detail-list">' +
+    nodes
+      .slice(0, 12)
+      .map((node) => detailCard(node.kind || "evidence", node.summary || node.id))
+      .join("") +
+    claimEvents
+      .slice(-8)
+      .map((event) => detailCard(event.type, event.message || JSON.stringify(event.payload || {})))
+      .join("") +
+    "</div>";
+}
+
+function renderApprovalPanel() {
+  const target = byId("inspector-approvals");
+  if (!target) return;
+  const grants = state.secure.grants || [];
+  const permissionEvents = eventList().filter((event) => event.type === "permission.requested" || event.type === "permission.replied" || event.type === "tool.blocked");
+  target.innerHTML =
+    '<div class="detail-list">' +
+    detailCard("PermissionGrantV2", grants.length) +
+    (permissionEvents.length
+      ? permissionEvents
+          .slice(-12)
+          .map((event) => detailCard(event.type, event.message || event.payload?.approvalReason || "approval event"))
+          .join("")
+      : '<div class="empty-state">暂无待审批工具调用。高风险工具必须使用一次性 OperationApproval。</div>') +
+    "</div>";
+}
+
+function renderScopePanel() {
+  const target = byId("inspector-scope");
+  if (!target) return;
+  const scopes = state.secure.scopes || [];
+  target.innerHTML = scopes.length
+    ? '<div class="detail-list">' +
+      scopes
+        .map((entry) => {
+          const scope = entry.scope || {};
+          const targetLabel = (scope.targets || []).map((item) => [item.scheme, item.host, (item.ports || []).join(",")].filter(Boolean).join("://")).join(" · ");
+          return detailCard(scope.revokedAt ? "revoked scope" : scope.targetType || "scope", targetLabel || scope.scopeId);
+        })
+        .join("") +
+      "</div>"
+    : '<div class="empty-state">暂无活跃 SecurityScope。安全任务必须先声明目标、路径、端口、配额和风险等级。</div>';
+}
+
+function renderToolBatchPanel() {
+  const target = byId("inspector-tools");
+  if (!target) return;
+  const toolEventTypes = ["tool.requested", "tool.started", "tool.completed", "tool.failed", "tool.timeout", "tool.cancelled", "tool.blocked"];
+  const events = eventList().filter((event) => toolEventTypes.includes(event.type) || event.type.startsWith("scheduler."));
+  const capabilities = state.secure.toolCapabilities?.capabilities || [];
+  const capabilityRows = capabilities.length
+    ? capabilities.map((item) => {
+        const status = item.status || "unavailable";
+        const css = status === "verified" ? "is-ok" : status === "ready" || status === "degraded" ? "is-pending" : "is-danger";
+        const detail = [item.source, item.version, item.binaryPath].filter(Boolean).join(" · ");
+        return '<div class="secure-row ' + css + '"><small>' + escapeHtml(status) + '</small><strong>' + escapeHtml(item.name) + '</strong><span>' + escapeHtml(detail) + "</span></div>";
+      }).join("")
+    : '<div class="empty-state">尚未完成真实工具探测。</div>';
+  const eventRows = events.length
+    ? events
+        .slice(-16)
+        .map((event) => {
+          const tool = event.payload?.tool?.name || event.payload?.tool || event.payload?.toolName || event.type;
+          const status = event.type.includes("blocked") ? "blocked" : event.type.includes("completed") ? "completed" : event.type;
+          return '<div class="secure-row ' + (status === "blocked" ? "is-danger" : status === "completed" ? "is-ok" : "is-pending") + '"><small>' + escapeHtml(status) + '</small><strong>' + escapeHtml(tool) + '</strong><span>' + escapeHtml(event.message || "") + "</span></div>";
+        })
+        .join("")
+    : '<div class="empty-state">暂无工具批次。只读工具可并行，写入/网络/审批任务串行。</div>';
+  target.innerHTML = '<div class="detail-list">' + capabilityRows + eventRows + "</div>";
+}
+
+function renderRiskPanel() {
+  const target = byId("inspector-risk");
+  if (!target) return;
+  const risks = state.secure.reproBundle?.residualRisks || [];
+  const blocked = eventList().filter((event) => event.type === "tool.blocked" || event.type === "run.blocked");
+  target.innerHTML =
+    '<div class="detail-list">' +
+    (risks.length
+      ? risks.map((risk) => detailCard(risk.severity || "risk", risk.description || risk.id)).join("")
+      : '<div class="empty-state">暂无残余风险。未解决问题会随证据包记录。</div>') +
+    blocked.slice(-6).map((event) => detailCard(event.type, event.message || "blocked")).join("") +
+    "</div>";
+}
+
+function renderReportPanel(runs = []) {
+  const target = byId("report-list");
+  if (!target) return;
+  const bundle = state.secure.reproBundle;
+  const evalArtifacts = state.secure.evalArtifacts || {};
+  const contractSafetyViolations = evalArtifacts.contract?.safetyViolations?.length ?? 0;
+  const modelSafetyViolations = evalArtifacts.model?.safetyViolations?.length ?? 0;
+  const evalCards =
+    detailCard("Web IDOR 场景", evalArtifacts.contract ? "contract " + evalArtifacts.contract.averageScore + "/100 · safetyViolations " + contractSafetyViolations : "未运行") +
+    detailCard("Incident Response 场景", evalArtifacts.model ? "model " + evalArtifacts.model.averageScore + "/100 · safetyViolations " + modelSafetyViolations : "未运行");
+  const bundleCard = bundle
+    ? detailCard("当前证据包", (bundle.toolInvocations?.length || 0) + " tools · " + (bundle.evidenceGraph?.nodes?.length || 0) + " evidence nodes")
+    : "";
+  target.innerHTML =
+    '<div class="scenario-grid">' +
+    '<div class="scenario-card"><small>本地 IDOR</small><strong>Alice/Bob 订单越权验证</strong><span>loopback /api scope，最多 20 次请求，只读复现。</span></div>' +
+    '<div class="scenario-card"><small>应急响应 ZIP</small><strong>198.51.100.23 -> shell.php -> 203.0.113.9</strong><span>安全 ZIP 摄取，区分 SSH 噪声，输出 IOC 与恢复建议。</span></div>' +
+    "</div><div class=\"detail-list\">" +
+    evalCards +
+    bundleCard +
+    (runs.length ? runs.slice(0, 6).map(createRunSummaryDetails).join("") : "") +
+    "</div>";
 }
 
 function renderInspector(workbench) {
@@ -598,16 +891,10 @@ function renderInspector(workbench) {
       detailCard("路径", project?.path || "") +
       detailCard("模式", modeLabel()) +
       detailCard("权限", permissionModeToLevel()) +
-      detailCard("模型", workbench?.model?.activeModel || workbench?.model?.model || "未配置") +
+      detailCard("模型", modelDisplayName(workbench?.model)) +
       "</div>";
   }
-  const checks = byId("inspector-checks");
-  if (checks && !checks.innerHTML.trim()) checks.innerHTML = '<div class="empty-state">暂无检查输出</div>';
-  const plan = byId("inspector-plan");
-  if (plan && !plan.innerHTML.trim()) plan.innerHTML = '<div class="empty-state">计划会在生成后显示在这里。</div>';
-  const diff = byId("inspector-diff");
-  if (diff && !diff.innerHTML.trim()) diff.innerHTML = '<div class="empty-state">Patch Diff 会在批准前显示在这里。</div>';
-  renderRuns(workbench?.recentRuns || []);
+  renderSecureAutonomyPanels();
 }
 
 function renderWorkbench(payload) {
@@ -615,7 +902,7 @@ function renderWorkbench(payload) {
   state.workbench = workbench;
   if (byId("mode-label")) byId("mode-label").textContent = modeLabel();
   if (byId("network-label")) byId("network-label").textContent = workbench?.mcp?.status === "not_configured" ? "本地" : "连接";
-  if (byId("model-chip")) byId("model-chip").textContent = workbench?.model?.activeModel || workbench?.model?.model || "未配置";
+  if (byId("model-chip")) byId("model-chip").textContent = modelDisplayName(workbench?.model);
   renderCommands(workbench);
   renderInspector(workbench);
   renderModelManager(workbench);
@@ -762,8 +1049,8 @@ function setMode(mode) {
     button.classList.toggle("active", button.dataset.mode === mode);
   });
   if (byId("mode-label")) byId("mode-label").textContent = modeLabel(mode);
-  if (mode === "patch") setInspectorTab("plan");
-  if (mode === "security") setInspectorTab("checks");
+  if (mode === "patch") setInspectorTab("strategy");
+  if (mode === "security") setInspectorTab("scope");
   renderInspector(state.workbench);
 }
 
@@ -777,7 +1064,7 @@ function setInspectorTab(tab) {
   });
   if (tab === "memory") loadMemoryPanel();
   if (tab === "mcp") loadMcpInspector();
-  if (tab === "runs") renderRuns(state.workbench?.recentRuns || []);
+  if (tab === "report") renderReportPanel(state.workbench?.recentRuns || []);
 }
 
 async function loadMemoryPanel() {
@@ -815,10 +1102,154 @@ async function loadMcpInspector() {
 function renderModelManager(workbench) {
   const target = byId("model-manager");
   if (!target) return;
+  if (byId("model-config-form")) {
+    renderModelProfiles({ model: workbench?.model || {} });
+    return;
+  }
   target.innerHTML =
     '<div class="detail-card"><small>当前全局模型</small><strong>' +
-    escapeHtml(workbench?.model?.activeModel || workbench?.model?.model || "未配置") +
+    escapeHtml(modelDisplayName(workbench?.model)) +
     "</strong><p>项目切换不会改变这里的模型配置。</p></div>";
+}
+
+async function loadModelSettings() {
+  const status = byId("model-config-status");
+  if (status) status.textContent = "正在读取模型配置...";
+  try {
+    const payload = await fetchJson("/api/config/model");
+    applyModelConfigToForm(payload.model || payload);
+    renderModelProfiles(payload);
+    if (status) {
+      const model = payload.model || payload;
+      status.textContent = model.apiKeyConfigured
+        ? "已保存 API Key：" + (model.apiKeyPreview || "已配置")
+        : "尚未保存 API Key。保存前无法调用模型。";
+    }
+  } catch (error) {
+    renderModelProfiles({ error: error.message });
+    if (status) status.textContent = "模型配置读取失败：" + error.message;
+  }
+}
+
+function applyModelConfigToForm(model) {
+  const provider = model?.provider || "disabled";
+  const preset = modelProviderPreset(provider);
+  setFieldValue("model-provider-select", provider);
+  setFieldValue("model-name-input", model?.model || preset.model || "");
+  setFieldValue("model-base-url-input", model?.baseUrl || preset.baseUrl || "");
+  setFieldValue("model-chat-path-input", model?.chatPath || preset.chatPath || "/v1/chat/completions");
+  setFieldValue("model-wire-api-select", model?.wireApi || preset.wireApi || "openai-chat-completions");
+  setFieldValue("model-max-tokens-input", String(model?.maxTokens || preset.maxTokens || 4096));
+  setFieldValue("model-api-key-input", "");
+}
+
+function setFieldValue(id, value) {
+  const field = byId(id);
+  if (field) field.value = value;
+}
+
+function modelProviderPreset(provider) {
+  const presets = {
+    disabled: { chatPath: "/v1/chat/completions", wireApi: "openai-chat-completions", maxTokens: 4096 },
+    "openai-compatible": { chatPath: "/v1/chat/completions", wireApi: "openai-chat-completions", maxTokens: 4096 },
+    deepseek: {
+      baseUrl: "https://api.deepseek.com",
+      chatPath: "/v1/chat/completions",
+      model: "deepseek-chat",
+      wireApi: "openai-chat-completions",
+      maxTokens: 4096,
+    },
+    minimax: {
+      baseUrl: "https://api.minimaxi.com/anthropic",
+      chatPath: "/v1/messages",
+      model: "MiniMax-M3",
+      wireApi: "anthropic-messages",
+      maxTokens: 4096,
+    },
+  };
+  return presets[provider] || presets.disabled;
+}
+
+function applyModelProviderPreset() {
+  const provider = byId("model-provider-select")?.value || "disabled";
+  const preset = modelProviderPreset(provider);
+  if (!byId("model-name-input")?.value) setFieldValue("model-name-input", preset.model || "");
+  setFieldValue("model-base-url-input", preset.baseUrl || "");
+  setFieldValue("model-chat-path-input", preset.chatPath || "/v1/chat/completions");
+  setFieldValue("model-wire-api-select", preset.wireApi || "openai-chat-completions");
+  setFieldValue("model-max-tokens-input", String(preset.maxTokens || 4096));
+}
+
+function collectModelConfigFromForm() {
+  const provider = byId("model-provider-select")?.value || "disabled";
+  if (provider === "disabled") {
+    return { provider: "disabled" };
+  }
+  const apiKey = byId("model-api-key-input")?.value.trim();
+  const maxTokens = Number(byId("model-max-tokens-input")?.value || 4096);
+  return {
+    provider,
+    baseUrl: byId("model-base-url-input")?.value.trim(),
+    chatPath: byId("model-chat-path-input")?.value.trim() || "/v1/chat/completions",
+    wireApi: byId("model-wire-api-select")?.value || "openai-chat-completions",
+    model: byId("model-name-input")?.value.trim(),
+    maxTokens: Number.isFinite(maxTokens) && maxTokens > 0 ? maxTokens : 4096,
+    ...(apiKey ? { apiKey } : {}),
+  };
+}
+
+function renderModelProfiles(payload) {
+  const target = byId("model-manager");
+  if (!target) return;
+  const model = payload?.model || payload || {};
+  if (payload?.error) {
+    target.innerHTML = '<div class="empty-state">模型配置读取失败：' + escapeHtml(payload.error) + "</div>";
+    return;
+  }
+  target.innerHTML =
+    '<div class="connector-item model-summary"><div><strong>' +
+    escapeHtml(modelDisplayName(model)) +
+    '</strong><small>' +
+    escapeHtml((model.provider || "disabled") + " · " + (model.source || "workspace")) +
+    '</small></div><span class="connector-status ' +
+    (model.apiKeyConfigured ? "online" : "muted") +
+    '">' +
+    (model.apiKeyConfigured ? "key saved" : "missing key") +
+    "</span></div>";
+}
+
+async function saveModelConfig(event) {
+  event?.preventDefault();
+  const status = byId("model-config-status");
+  if (status) status.textContent = "正在保存模型配置...";
+  try {
+    const payload = await fetchJson("/api/config/model", {
+      method: "POST",
+      body: JSON.stringify(collectModelConfigFromForm()),
+    });
+    applyModelConfigToForm(payload.model || payload);
+    renderModelProfiles(payload);
+    if (status) status.textContent = "模型配置已保存。";
+    await refreshStatus();
+  } catch (error) {
+    if (status) status.textContent = "模型配置保存失败：" + error.message;
+  }
+}
+
+async function testModelConfig() {
+  const status = byId("model-config-status");
+  if (status) status.textContent = "正在测试模型连接...";
+  try {
+    const payload = await fetchJson("/api/config/model/test", { method: "POST" });
+    if (status) {
+      status.textContent =
+        payload.status === "connected"
+          ? "模型连接成功。"
+          : "模型连接失败：" + (payload.message || payload.error || "unknown");
+    }
+  } catch (error) {
+    if (status) status.textContent = "模型连接失败：" + error.message;
+  }
 }
 
 function renderSettingsManagers(workbench) {
@@ -969,32 +1400,37 @@ async function runTerminalCommand() {
   output.textContent += "\n$ " + command + "\n";
   input.value = "";
   try {
-    const response = await fetch("/api/terminal/commands", {
+    const argv = parseStructuredArgv(command);
+    if (argv.length === 0) return;
+    await fetchJson("/api/sessions/" + encodeURIComponent(session.id) + "/policy", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ preset: permissionModeToLevel() }),
+    });
+    const readonlyPrograms = new Set(["ls", "pwd", "cat", "head", "tail", "grep", "rg", "find", "wc", "file", "stat", "du", "df", "which", "where", "tree", "sort", "cut", "sed", "git", "uname", "hostname", "whoami", "date", "uptime", "free", "top", "ps"]);
+    const tool = readonlyPrograms.has(argv[0].toLowerCase()) ? "shell.readonly" : "shell.write";
+    let payload = await fetchJson("/api/tool-calls", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         sessionId: session.id,
-        command,
-        cwd: state.project?.path,
-        permissionLevel: permissionModeToLevel(),
+        tool,
+        input: { program: argv[0], args: argv.slice(1) },
       }),
     });
-    if (!response.ok || !response.body) {
-      const payload = await response.json().catch(() => ({}));
-      throw new Error(payload.error || response.statusText || "command failed");
+    if (payload.status === "pending_approval") {
+      if (!window.confirm("该工具调用需要一次性审批。是否执行此精确调用？")) {
+        await fetchJson("/api/tool-calls/" + encodeURIComponent(payload.call.id) + "/deny", { method: "POST" });
+        output.textContent += "[denied]\n";
+        return;
+      }
+      payload = await fetchJson("/api/tool-calls/" + encodeURIComponent(payload.call.id) + "/approve", { method: "POST" });
     }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (true) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      buffer += decoder.decode(chunk.value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-      for (const raw of lines) appendTerminalLine(raw, output);
-    }
-    if (buffer.trim()) appendTerminalLine(buffer, output);
+    const result = payload.result || payload;
+    const toolOutput = result.output || result.result?.output || {};
+    if (toolOutput.stdout) output.textContent += toolOutput.stdout;
+    if (toolOutput.stderr) output.textContent += toolOutput.stderr;
+    output.textContent += "\n[" + (payload.status || result.status || "complete") + "]\n";
   } catch (error) {
     output.textContent += "Error: " + error.message + "\n";
   } finally {
@@ -1014,9 +1450,95 @@ async function refreshStatus() {
   try {
     const payload = await fetchJson("/api/workbench");
     renderWorkbench(payload);
+    await loadSecureAutonomyState();
   } catch (error) {
     appendMessage("system", "状态读取失败：" + error.message, { skipPersist: true });
   }
+}
+
+async function loadSecureAutonomyState() {
+  const session = currentSession();
+  const sessionId = session?.id || "";
+  const [scopes, grants, evalArtifacts, toolCapabilities] = await Promise.all([
+    loadSecurityScopes(sessionId),
+    loadPermissionGrants(),
+    loadEvalArtifacts(),
+    loadToolCapabilities(),
+  ]);
+  state.secure.scopes = scopes;
+  state.secure.grants = grants;
+  state.secure.evalArtifacts = evalArtifacts;
+  state.secure.toolCapabilities = toolCapabilities;
+  if (state.currentRun) {
+    state.secure.replayEvents = await loadRunReplay(state.currentRun);
+    state.secure.reproBundle = await loadReproBundle(state.currentRun);
+  }
+  renderSecureAutonomyPanels();
+}
+
+async function loadSecurityScopes(sessionId) {
+  try {
+    const url = sessionId ? "/api/security-scopes?sessionId=" + encodeURIComponent(sessionId) : "/api/security-scopes";
+    const payload = await fetchJson(url);
+    return payload.scopes || [];
+  } catch {
+    return [];
+  }
+}
+
+async function loadPermissionGrants() {
+  try {
+    const payload = await fetchJson("/api/permission-grants");
+    return payload.grants || [];
+  } catch {
+    return [];
+  }
+}
+
+async function loadRunReplay(runId) {
+  if (!runId) return [];
+  try {
+    const payload = await fetchJson("/agent/harness/runs/" + encodeURIComponent(runId) + "/replay");
+    return payload.events || [];
+  } catch {
+    return state.runEvents.slice(-300);
+  }
+}
+
+async function loadReproBundle(runId) {
+  if (!runId) return null;
+  try {
+    const payload = await fetchJson("/api/runs/" + encodeURIComponent(runId) + "/repro-bundle");
+    return payload.bundle || null;
+  } catch {
+    return null;
+  }
+}
+
+async function loadEvalArtifacts() {
+  try {
+    const payload = await fetchJson("/api/eval-artifacts");
+    return payload.artifacts || null;
+  } catch {
+    return null;
+  }
+}
+
+async function loadToolCapabilities() {
+  try {
+    return await fetchJson("/api/tool-capabilities");
+  } catch {
+    return null;
+  }
+}
+
+async function loadRunEvidenceBundle(runId) {
+  if (!runId) return;
+  state.currentRun = runId;
+  state.secure.replayEvents = await loadRunReplay(runId);
+  state.secure.reproBundle = await loadReproBundle(runId);
+  renderSecureAutonomyPanels();
+  setInspectorTab("evidence");
 }
 
 async function refreshMetrics() {
@@ -1229,8 +1751,36 @@ function setSettingsTab(tab) {
   const pair = titles[tab] || titles.general;
   if (byId("settings-title")) byId("settings-title").textContent = pair[0];
   if (byId("settings-subtitle")) byId("settings-subtitle").textContent = pair[1];
+  if (tab === "models") loadModelSettings();
   if (tab === "mcp") loadMcpSettings();
   if (tab === "skills") loadSkillsSettings();
+}
+
+function parseStructuredArgv(command) {
+  if (/[|;&<>\x60]|\$\(|[\r\n]/.test(command)) {
+    throw new Error("不支持 shell 运算符；请输入单个程序及其参数。");
+  }
+  const args = [];
+  let current = "";
+  let quote = "";
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index];
+    if (quote) {
+      if (char === quote) quote = "";
+      else current += char;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+    } else if (/\s/.test(char)) {
+      if (current) { args.push(current); current = ""; }
+    } else {
+      current += char;
+    }
+  }
+  if (quote) throw new Error("命令包含未闭合的引号。");
+  if (current) args.push(current);
+  return args;
 }
 
 function loadUiPreferences() {
@@ -1264,6 +1814,9 @@ function wireEvents() {
   byId("start-run")?.addEventListener("click", submitMission);
   byId("permission-trigger")?.addEventListener("click", togglePermissionMenu);
   byId("open-project-button")?.addEventListener("click", openProjectFromInput);
+  byId("model-config-form")?.addEventListener("submit", saveModelConfig);
+  byId("test-model-config")?.addEventListener("click", testModelConfig);
+  byId("model-provider-select")?.addEventListener("change", applyModelProviderPreset);
   byId("mcp-server-form")?.addEventListener("submit", saveMcpServer);
   byId("test-mcp-server")?.addEventListener("click", testMcpServerFromForm);
   byId("skill-form")?.addEventListener("submit", saveSkill);
@@ -1348,9 +1901,10 @@ function wireEvents() {
     if (target.dataset.testMcp) testNamedMcp(target.dataset.testMcp);
     if (target.dataset.deleteMcp) deleteMcpServer(target.dataset.deleteMcp);
     if (target.dataset.deleteSkill) deleteSkill(target.dataset.deleteSkill);
-    if (target.dataset.inspectorTab) setInspectorTab(target.dataset.inspectorTab);
-    if (target.dataset.inspectorTabShortcut) setInspectorTab(target.dataset.inspectorTabShortcut);
-    if (target.dataset.mobileTarget) setMobileSection(target.dataset.mobileTarget);
+     if (target.dataset.inspectorTab) setInspectorTab(target.dataset.inspectorTab);
+     if (target.dataset.inspectorTabShortcut) setInspectorTab(target.dataset.inspectorTabShortcut);
+     if (target.dataset.loadRun) loadRunEvidenceBundle(target.dataset.loadRun);
+     if (target.dataset.mobileTarget) setMobileSection(target.dataset.mobileTarget);
     if (target.dataset.railToggle) toggleRail(target.dataset.railToggle);
     if (target.classList?.contains("session-group-toggle")) {
       const toggle = target;

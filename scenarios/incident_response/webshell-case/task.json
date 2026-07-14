@@ -1,0 +1,6 @@
+{
+  "scenario": "incident_response",
+  "goal": "Reconstruct the intrusion path from the supplied case archive and provide evidence-backed containment guidance.",
+  "targets": ["file://scenarios/incident_response/webshell-case.zip"],
+  "constraints": ["Read-only analysis", "Preserve timestamps", "Separate confirmed facts from hypotheses"]
+}

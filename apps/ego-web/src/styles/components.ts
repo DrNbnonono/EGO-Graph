@@ -905,13 +905,17 @@ body.rail-right-collapsed .right-rail-toggle {
    of align-items-on-flex; the original align-items: flex-end was a no-op. */
 .message-row.role-user .message-content {
   justify-items: end;
+  width: fit-content;
+  min-width: min(360px, calc(100% - 52px));
+  max-width: min(760px, 78%);
 }
 
 /* Cap the user bubble tighter than the assistant's to keep the chat-bubble silhouette.
    The previous max-width on .message-bubble was dead (lost specificity tie with
    .message-content defined later); placing the cap here works. */
 .message-row.role-user .message-content .message-bubble {
-  max-width: min(560px, 80%);
+  width: 100%;
+  max-width: 100%;
   background: var(--accent);
   border-color: var(--accent);
   color: var(--button-text-on-accent);
@@ -1093,6 +1097,32 @@ body.rail-right-collapsed .right-rail-toggle {
 .run-event-line span {
   color: var(--muted);
   overflow-wrap: anywhere;
+}
+
+.stream-thinking {
+  margin-top: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-left: 2px solid var(--line-strong);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  opacity: 0.85;
+}
+
+.stream-thinking:empty {
+  display: none;
+}
+
+.stream-thinking:not(:empty)::before {
+  content: "思考过程";
+  display: block;
+  margin-bottom: var(--sp-1);
+  font-family: var(--mono-font);
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+  opacity: 0.7;
 }
 
 .stream-answer {
@@ -1997,6 +2027,12 @@ dd {
   font-weight: var(--weight-medium);
 }
 
+.connector-note {
+  margin-top: var(--sp-3);
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
 .connector-actions {
   display: flex;
   justify-content: flex-end;
@@ -2535,8 +2571,127 @@ dd {
   background: var(--line);
 }
 
+/* ---------- Secure Autonomy cockpit ---------- */
+.secure-overview {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--gap) 0;
+  background: var(--surface-0);
+}
+
+.secure-overview-card,
+.secure-row,
+.scenario-card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+}
+
+.secure-overview-card {
+  display: grid;
+  gap: 2px;
+  padding: var(--sp-2) var(--sp-3);
+  border-left-width: 3px;
+}
+
+.secure-overview-card small,
+.secure-row small,
+.scenario-card small {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.secure-overview-card strong,
+.secure-row strong,
+.scenario-card strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.secure-overview-card span,
+.secure-row span,
+.scenario-card span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+}
+
+.status-ok,
+.secure-row.is-ok {
+  border-left-color: var(--success);
+  background: linear-gradient(90deg, var(--success-tint), var(--surface-1) 42%);
+}
+
+.status-warning,
+.secure-row.is-pending {
+  border-left-color: var(--warning);
+  background: linear-gradient(90deg, var(--warning-tint), var(--surface-1) 42%);
+}
+
+.status-danger,
+.secure-row.is-danger {
+  border-left-color: var(--danger);
+  background: linear-gradient(90deg, var(--danger-tint), var(--surface-1) 42%);
+}
+
+.status-muted {
+  border-left-color: var(--line-strong);
+}
+
+.secure-row {
+  display: grid;
+  gap: 2px;
+  padding: var(--sp-2) var(--sp-3);
+  border-left-width: 3px;
+}
+
+.scenario-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+
+.scenario-card {
+  display: grid;
+  gap: var(--sp-1);
+  padding: var(--sp-3);
+}
+
+.mini-action {
+  justify-self: start;
+  min-height: 28px;
+  margin-top: var(--sp-2);
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+}
+
+.mini-action:hover {
+  border-color: var(--accent-ring);
+}
+
 /* ---------- Responsive refinements living with the component layer ---------- */
 @media (max-width: 1180px) {
+  .secure-overview {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .rail-resizer,
   .rail-toggle-icon {
     display: none;
@@ -2548,6 +2703,10 @@ dd {
 }
 
 @media (max-width: 720px) {
+  .secure-overview {
+    grid-template-columns: 1fr;
+  }
+
   .center-stage {
     height: auto;
     grid-template-rows: auto auto auto;
@@ -2560,6 +2719,11 @@ dd {
 
   .conversation-scroll {
     min-height: 220px;
+  }
+
+  .message-row.role-user .message-content {
+    min-width: 0;
+    max-width: calc(100% - 52px);
   }
 
   .composer {

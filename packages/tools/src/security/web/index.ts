@@ -1,6 +1,12 @@
 import { z } from "zod";
+import { createHash } from "node:crypto";
 import type { ToolDefinition } from "../../tool-definition.js";
 import { enforceEgressAllowlist, redactSecrets, DEFAULT_EGRESS_POLICY } from "../sandbox/boundary.js";
+import {
+  authorizeSecurityRequest,
+  consumeSecurityRequest,
+  type SecurityScopeV2,
+} from "@ego-graph/security-tools";
 
 /**
  * Web security tool adapters (security.web.*).
@@ -14,6 +20,8 @@ import { enforceEgressAllowlist, redactSecrets, DEFAULT_EGRESS_POLICY } from "..
 const crawlInput = z.object({
   url: z.string().url(),
   depth: z.number().int().min(1).max(3).optional(),
+  method: z.enum(["GET", "HEAD"]).default("GET"),
+  headers: z.record(z.string()).default({}),
 });
 const webOutput = z.object({
   findings: z.array(z.string()),
@@ -23,6 +31,8 @@ const webOutput = z.object({
   links: z.array(z.string()).optional(),
   forms: z.array(z.record(z.string())).optional(),
   bodyPreview: z.string().optional(),
+  requestHash: z.string().optional(),
+  responseHash: z.string().optional(),
 });
 
 export type WebFetchOptions = {
@@ -55,7 +65,7 @@ function makeWebTool(
         { summary: output.findings[0] ?? `${name} on ${output.url}`, kind: "fact" as const, confidence: 0.6, raw: { url: output.url, status: output.status } },
       ];
     },
-    async execute(input) {
+    async execute(input, context) {
       const policy = { ...DEFAULT_EGRESS_POLICY, allowlist: options.egressAllowlist ?? [] };
       const egress = enforceEgressAllowlist(input.url, policy);
       if (!egress.allowed) {
@@ -64,8 +74,40 @@ function makeWebTool(
           url: input.url,
         };
       }
-      const response = await fetcher(input.url);
+      const scope = context.securityScope as SecurityScopeV2 | undefined;
+      const authorization = authorizeSecurityRequest({ scope, url: input.url, method: input.method });
+      if (!authorization.allowed) {
+        return { findings: [`Scope denied: ${authorization.reason}`], url: input.url };
+      }
+      consumeSecurityRequest(scope!);
+      const response = await fetcher(input.url, {
+        method: input.method,
+        headers: input.headers,
+        redirect: "manual",
+        ...(context.signal ? { signal: context.signal } : {}),
+      });
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        if (location) {
+          const redirected = new URL(location, input.url).toString();
+          const redirectAuthorization = authorizeSecurityRequest({ scope, url: redirected, method: "GET" });
+          if (!redirectAuthorization.allowed || scope!.limits.maxRedirects < 1) {
+            return { findings: [`Redirect denied: ${redirectAuthorization.allowed ? "redirect budget is zero" : redirectAuthorization.reason}`], url: input.url, status: response.status };
+          }
+        }
+      }
       const result = await run({ url: input.url, fetcher, response });
+      result.requestHash = createHash("sha256")
+        .update(JSON.stringify({ url: input.url, method: input.method, headers: input.headers }))
+        .digest("hex");
+      const responseHeaders: Array<[string, string]> = [];
+      response.headers.forEach((value, key) => responseHeaders.push([key, value]));
+      result.responseHash = createHash("sha256")
+        .update(JSON.stringify({ status: response.status, headers: responseHeaders, bodyPreview: result.bodyPreview ?? "" }))
+        .digest("hex");
+      if (result.bodyPreview && Buffer.byteLength(result.bodyPreview, "utf8") > scope!.limits.maxResponseBytes) {
+        result.bodyPreview = result.bodyPreview.slice(0, scope!.limits.maxResponseBytes);
+      }
       return redactSecrets(result);
     },
   };

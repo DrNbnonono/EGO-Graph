@@ -129,6 +129,7 @@ Check local readiness:
 
 ```bash
 ego doctor
+ego doctor --tools
 ```
 
 ## LLM Settings
@@ -141,7 +142,7 @@ Use the Web Workbench:
 ego serve
 ```
 
-Open `http://127.0.0.1:4317`, then use the right-side model settings panel. Saved keys are written to local `.ego/config.json`.
+Open `http://127.0.0.1:4317`, then use the right-side model settings panel. Saved keys are written to a user-local key file under `.ego/runtime/`; `.ego/config.json` stores only its relative `apiKeyFile` reference.
 Use **Test connection** after saving to verify the current provider without starting a Patch run.
 
 The Web Workbench has three modes:
@@ -172,7 +173,7 @@ Local JSON configuration:
   "model": {
     "provider": "openai-compatible",
     "baseUrl": "https://api.example.com",
-    "apiKey": "sk-your-key",
+    "apiKeyFile": ".ego/runtime/model-api-key",
     "model": "your-model",
     "chatPath": "/v1/chat/completions",
     "wireApi": "openai-chat-completions",
@@ -225,7 +226,9 @@ Provider profiles in the Web UI auto-fill the matching endpoint/protocol default
 cannot be saved together with `baseUrl`, `apiKey`, or `model`; choose a real provider or clear those fields.
 
 Never commit API keys. Use shell environment variables, `.env.local`, or a secret manager.
-`.ego/` is ignored by git and is the recommended place for local persisted keys.
+`.ego/` is ignored by git and may hold local persisted keys. EGO requests user-only filesystem modes and `ego doctor` reports legacy plaintext keys; filesystems that ignore POSIX modes remain a release blocker.
+
+The repository also contains an offline curated plugin catalog for the Web, forensics, and reverse toolkits. Catalog installation verifies package checksums, but plugin tools still enter the same Executor, permission, scope, sandbox, and audit chain.
 
 ## Architecture
 

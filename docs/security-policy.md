@@ -9,13 +9,16 @@ Execution rules:
   action/resource rules with `allow`, `ask`, and `deny`; the last matching rule wins.
 - High-risk or network-scoped security tools must pass SecurityScope checks before execution.
 - The first shipped scenario uses `fixture://web-pentest/basic`.
-- API keys are read from environment variables.
+- API keys are read from environment variables or user-local key files referenced by `apiKeyFile`; public APIs must never return key contents.
 - The default model profile is MiniMax M3 through the domestic Anthropic-compatible endpoint; keys must never be committed.
 - MCP stdio and Streamable HTTP tools are remote capability boundaries, not trusted code by default.
 - Unknown MCP tools default to approval-gated medium risk. Per-tool policy may only reduce risk when the server config explicitly declares the allowed scope, risk, approval, and sandbox profile.
 - HTTP MCP OAuth bearer tokens stay in local `.ego/config.json` or environment-managed config and must never be returned by public API responses.
 - Trajectory events record planning, safety checks, tool execution, evidence, and reports.
 - Reports must include limitations and reproduction context.
+- A registered or probed tool is not automatically usable. Only a successful standard fixture may promote it to `verified`; builtin parsers are `degraded` and absent executors are `unavailable`.
+- Every real external execution records an argv digest, exit code, stdout/stderr digests, version or image identity, artifact references, timing, and scope/approval references when applicable.
+- Offline plugins are checksum-verified and declarative. They may not spawn processes, fetch data, or bypass the unified Tool Executor directly.
 
 Real network scanners, exploit tools, fuzzers, and reverse-engineering tools must run through sandbox profiles and explicit scope checks.
 Active public SRC/vulnerability scanning and exploitation automation is disabled by default. The system may prepare plans, collect local evidence, and work inside controlled fixtures, but public targets require explicit authorization scope, risk acknowledgement, permission elevation, approval, and audit.

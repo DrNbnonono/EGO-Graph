@@ -11,6 +11,8 @@
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { randomBytes } from "node:crypto";
+import { runControlledProcess } from "../../process-runner.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -37,6 +39,12 @@ export type DockerSandboxOptions = {
   workspaceRoot: string;
   /** Mount mode for workspace. Default: "rw". */
   mountMode?: "ro" | "rw";
+  /** Abort the docker client and remove the named container. */
+  signal?: AbortSignal;
+  /** Maximum processes in the container. Default: 128. */
+  pidsLimit?: number;
+  /** Container UID:GID. Default: 65532:65532. */
+  user?: string;
 };
 
 export type DockerSandboxResult = {
@@ -110,16 +118,24 @@ export async function executeInDocker(
   const memoryLimit = options.memoryLimit ?? "512m";
   const cpuLimit = options.cpuLimit ?? 1;
   const timeoutMs = options.timeoutMs ?? 60_000;
-  const mountMode = options.mountMode ?? "rw";
+  const mountMode = options.mountMode ?? "ro";
+  const pidsLimit = options.pidsLimit ?? 128;
+  const user = options.user ?? "65532:65532";
+  const containerName = `ego-sandbox-${randomBytes(8).toString("hex")}`;
 
   const dockerArgs = [
     "run",
     "--rm",
+    `--name=${containerName}`,
     `--network=${networkMode}`,
     `--memory=${memoryLimit}`,
     `--cpus=${cpuLimit}`,
+    `--pids-limit=${pidsLimit}`,
+    "--cap-drop=ALL",
+    "--security-opt=no-new-privileges",
+    `--user=${user}`,
     "--read-only",
-    "--tmpfs", "/tmp",
+    "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=64m",
     "-v", `${options.workspaceRoot}:/workspace:${mountMode}`,
     "-w", "/workspace",
     image,
@@ -129,28 +145,21 @@ export async function executeInDocker(
 
   const rendered = `${command} ${args.join(" ")}`;
 
-  try {
-    const { stdout, stderr } = await execFileAsync("docker", dockerArgs, {
-      maxBuffer: 4_000_000,
-      timeout: timeoutMs,
-    });
-    return {
-      command: rendered,
-      status: "passed",
-      exitCode: 0,
-      stdout,
-      stderr,
-      sandboxed: true,
-    };
-  } catch (error) {
-    const failed = error as { stdout?: string; stderr?: string; exitCode?: number; code?: number };
-    return {
-      command: rendered,
-      status: "failed",
-      exitCode: failed.exitCode ?? failed.code ?? 1,
-      stdout: failed.stdout ?? "",
-      stderr: failed.stderr ?? String(error),
-      sandboxed: true,
-    };
+  const result = await runControlledProcess("docker", dockerArgs, {
+    cwd: options.workspaceRoot,
+    timeoutMs,
+    maxOutputBytes: 4_000_000,
+    ...(options.signal ? { signal: options.signal } : {}),
+  });
+  if (result.timedOut || result.cancelled) {
+    await execFileAsync("docker", ["rm", "-f", containerName], { timeout: 5_000 }).catch(() => undefined);
   }
+  return {
+    command: rendered,
+    status: result.exitCode === 0 && !result.timedOut && !result.cancelled ? "passed" : "failed",
+    exitCode: result.exitCode,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    sandboxed: true,
+  };
 }

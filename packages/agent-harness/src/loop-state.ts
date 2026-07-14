@@ -10,7 +10,17 @@ export type LoopIntent =
   | "unknown";
 
 export type PlannerNextAction =
-  "answer" | "call_tool" | "propose_plan" | "propose_patch" | "ask_user" | "stop";
+  "answer" | "call_tool" | "call_tools" | "propose_plan" | "propose_patch" | "ask_user" | "stop";
+
+export type ToolBatchPlan = {
+  calls: Array<{
+    id: string;
+    name: string;
+    arguments: Record<string, unknown>;
+    dependsOn?: string[];
+  }>;
+  maxConcurrent: number;
+};
 
 export type PlannerAction = {
   thoughtSummary: string;
@@ -20,6 +30,7 @@ export type PlannerAction = {
     name: string;
     arguments: Record<string, unknown>;
   };
+  toolBatch?: ToolBatchPlan;
   riskLevel: "low" | "medium" | "high";
   requiredPermission: PermissionLevel;
   userVisibleMessage: string;

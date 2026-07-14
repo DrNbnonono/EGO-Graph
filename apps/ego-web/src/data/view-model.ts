@@ -1,6 +1,17 @@
 export type PanelKind = "threads" | "chat" | "inspector" | "manage";
 
-export type InspectorTab = "context" | "plan" | "diff" | "checks" | "memory" | "mcp" | "settings";
+export type InspectorTab =
+  | "context"
+  | "strategy"
+  | "evidence"
+  | "approvals"
+  | "scope"
+  | "tools"
+  | "risk"
+  | "memory"
+  | "mcp"
+  | "report"
+  | "settings";
 
 export type CommandAction = {
   name: string;

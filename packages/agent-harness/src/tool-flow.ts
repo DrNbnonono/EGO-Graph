@@ -2,10 +2,12 @@ import type {
   createTerminalAgentToolRegistry,
   ToolDefinition,
   ToolEvidenceCandidate,
+  EvidenceClaim,
 } from "@ego-graph/tools";
 import { type ZodTypeAny, type z } from "zod";
 import type { AgentRunEvent, AgentRunEventType, PermissionLevel } from "./session.js";
-import { createToolCall, executeToolCall, type SecurityScopeGate } from "./tool-executor.js";
+import { createToolCall, executeToolCall, type SecurityScopeGate, type ToolCallProtocol } from "./tool-executor.js";
+import type { OperationApproval } from "./permissions/grants-v2.js";
 import type { PermissionLifecycleState } from "./permissions/permission-lifecycle.js";
 import type { PermissionRule } from "./permission-rules.js";
 
@@ -37,6 +39,8 @@ export type ExecuteHarnessToolStepInput = {
   securityScope?: SecurityScopeGate;
   /** Persistent permission grants honored before falling back to a prompt. */
   permissionLifecycle?: PermissionLifecycleState;
+  approveOperation?(call: ToolCallProtocol): OperationApproval | undefined;
+  signal?: AbortSignal;
   emit(event: HarnessToolEventInput): Promise<AgentRunEvent>;
   emitEvidence(event: HarnessEvidenceEventInput): Promise<AgentRunEvent>;
 };
@@ -46,6 +50,7 @@ export async function* executeHarnessToolStep(
 ): AsyncIterable<AgentRunEvent> {
   const tool = input.toolRegistry.get(input.toolName);
   const toolCall = createToolCall(tool, input.toolInput);
+  const operationApproval = input.approveOperation?.(toolCall);
 
   yield await input.emit({
     type: "tool.requested",
@@ -69,7 +74,8 @@ export async function* executeHarnessToolStep(
     call: toolCall,
     workspaceRoot: input.workspaceRoot,
     permissionLevel: input.permissionLevel,
-    approvalGranted: !toolCall.requiresApproval || input.permissionLevel === "security-active",
+    ...(operationApproval ? { operationApproval } : {}),
+    ...(input.signal ? { signal: input.signal } : {}),
     ...(input.securityScope ? { securityScope: input.securityScope } : {}),
     ...(input.permissionLifecycle ? { permissionLifecycle: input.permissionLifecycle } : {}),
     onAutoApprovedPermission(detail) {
@@ -142,12 +148,25 @@ export async function* executeHarnessToolStep(
 
   const output = result.output ?? {};
   const findings = Array.isArray(output.findings) ? output.findings.map(String) : [];
+  const candidates: ToolEvidenceCandidate[] =
+    tool.evidenceMapper?.(output as z.output<ZodTypeAny>) ??
+    findings.map((summary) => ({ summary, raw: output }));
+  const claims: EvidenceClaim[] = candidates.map((candidate, index) => ({
+    id: `${toolCall.id}-claim-${index + 1}`,
+    claim: candidate.summary,
+    artifactRefs: candidate.artifactRefs?.length
+      ? candidate.artifactRefs
+      : [`tool-call:${toolCall.id}`],
+    confidence: candidate.confidence ?? 0.7,
+    relation: candidate.relation ?? "neutral",
+    ...(candidate.hypothesisId ? { hypothesisId: candidate.hypothesisId } : {}),
+  }));
   yield await input.emit({
     type: "observation.created",
     runId: input.runId,
     sessionId: input.sessionId,
     message: findings[0] ?? `Observed ${tool.name} output.`,
-    payload: { tool: tool.name, findings, output },
+    payload: { tool: tool.name, findings, output, claims },
   });
 
   // When the model proposes a patch via the workspace.edit tool inside the
@@ -178,9 +197,6 @@ export async function* executeHarnessToolStep(
     });
   }
 
-  const candidates =
-    tool.evidenceMapper?.(output as z.output<ZodTypeAny>) ??
-    findings.map((summary) => ({ summary, raw: output }));
   for (const candidate of candidates) {
     yield await input.emitEvidence({
       runId: input.runId,

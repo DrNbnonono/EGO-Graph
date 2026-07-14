@@ -77,6 +77,21 @@ describe("dashboard product polish", () => {
     expect(js).toContain("/api/projects/open");
   });
 
+  it("renders a usable model configuration form in settings", () => {
+    const html = renderDashboardHtml();
+    const js = renderDashboardJs();
+
+    expect(html).toContain('id="model-provider-select"');
+    expect(html).toContain('id="model-base-url-input"');
+    expect(html).toContain('id="model-api-key-input"');
+    expect(html).toContain('id="model-name-input"');
+    expect(html).toContain('id="save-model-config"');
+    expect(html).toContain('id="test-model-config"');
+    expect(js).toContain("/api/config/model");
+    expect(js).toContain("/api/config/model/test");
+    expect(js).toContain("saveModelConfig");
+  });
+
   it("lets each new conversation choose its own workspace directory", () => {
     const html = renderDashboardHtml();
     const js = renderDashboardJs();
@@ -121,6 +136,60 @@ describe("dashboard product polish", () => {
     expect(css).toContain(".terminal-output");
     expect(js).toContain("/agent/harness/runs/stream");
     expect(js).toContain("permissionModeToLevel");
-    expect(js).toContain("/api/terminal/commands");
+    expect(js).toContain("/api/tool-calls");
+    expect(js).toContain("/api/tool-capabilities");
+  });
+
+  it("renders the Secure Autonomy workbench inspector and safety overview", () => {
+    const html = renderDashboardHtml();
+    const css = renderDashboardCss();
+
+    expect(html).toContain('class="secure-overview"');
+    expect(html).toContain('id="overview-policy"');
+    expect(html).toContain('id="overview-scopes"');
+    expect(html).toContain('id="overview-approvals"');
+    expect(html).toContain('id="overview-gaps"');
+    expect(html).toContain('id="overview-eval"');
+    expect(html).toContain('data-inspector-tab="strategy"');
+    expect(html).toContain('data-inspector-tab="evidence"');
+    expect(html).toContain('data-inspector-tab="approvals"');
+    expect(html).toContain('data-inspector-tab="scope"');
+    expect(html).toContain('data-inspector-tab="tools"');
+    expect(html).toContain('data-inspector-tab="risk"');
+    expect(html).toContain('data-inspector-tab="report"');
+    expect(css).toContain(".secure-overview");
+    expect(css).toContain(".secure-row");
+    expect(css).toContain(".scenario-card");
+  });
+
+  it("loads Secure Autonomy state through structured, read-only APIs", () => {
+    const js = renderDashboardJs();
+
+    expect(js).toContain("loadSecurityScopes");
+    expect(js).toContain("loadPermissionGrants");
+    expect(js).toContain("loadRunReplay");
+    expect(js).toContain("loadReproBundle");
+    expect(js).toContain("loadEvalArtifacts");
+    expect(js).toContain("/api/security-scopes");
+    expect(js).toContain("/api/permission-grants");
+    expect(js).toContain("/agent/harness/runs/");
+    expect(js).toContain("/api/runs/");
+    expect(js).toContain("/repro-bundle");
+    expect(js).toContain("/api/eval-artifacts");
+    expect(js).toContain("/api/tool-calls");
+    expect(js).not.toContain("/api/terminal/commands");
+  });
+
+  it("routes permission requests, tool events, and eval artifacts into the safety panels", () => {
+    const js = renderDashboardJs();
+
+    expect(js).toContain("permission.requested");
+    expect(js).toContain("inspector-approvals");
+    expect(js).toContain("tool.completed");
+    expect(js).toContain("inspector-tools");
+    expect(js).toContain("strategyGraph");
+    expect(js).toContain("inspector-strategy");
+    expect(js).toContain("safetyViolations");
+    expect(js).toContain("未运行");
   });
 });

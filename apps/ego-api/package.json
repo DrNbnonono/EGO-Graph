@@ -23,6 +23,7 @@
     "@ego-graph/overlays": "workspace:*",
     "@ego-graph/report": "workspace:*",
     "@ego-graph/shared": "workspace:*",
+    "@ego-graph/security-tools": "workspace:*",
     "@ego-graph/storage": "workspace:*",
     "@ego-graph/tools": "workspace:*",
     "@ego-graph/workbench": "workspace:*",

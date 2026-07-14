@@ -48,6 +48,13 @@ export type StrategyObservation = {
   findings: string[];
   /** Optional raw observation payload used to refine domain-specific heuristics. */
   output?: Record<string, unknown>;
+  claims?: Array<{
+    claim: string;
+    artifactRefs: string[];
+    confidence: number;
+    relation: "supports" | "contradicts" | "neutral";
+    hypothesisId?: string;
+  }>;
 };
 
 export type StrategyUpdateResult = {
@@ -131,7 +138,7 @@ export function closeEvidenceGap(input: {
   });
   let riskPosture = input.graph.riskPosture;
   if (gap.id === "g3" && input.graph.riskPosture === "blocked") {
-    riskPosture = advancePosture(input.graph.domain);
+    riskPosture = advancePosture();
     updates.push({
       kind: "posture_advanced",
       ref: "riskPosture",
@@ -205,7 +212,7 @@ export function applyObservationToStrategy(input: {
   const evidenceGap = findGapByPriority(input.graph, "g2");
   const leadingHypothesis = findLeadingHypothesis(input.graph);
 
-  if (isContextTool(observation.tool) && contextGap) {
+  if (hasQualifiedEvidence(observation) && isContextTool(observation.tool) && contextGap) {
     result = mergeResults(
       result,
       closeEvidenceGap({
@@ -216,7 +223,7 @@ export function applyObservationToStrategy(input: {
     );
   }
 
-  if (isDomainTool(observation.tool, input.graph.domain) && domainGap) {
+  if (hasQualifiedEvidence(observation) && isDomainTool(observation.tool, input.graph.domain) && domainGap) {
     result = mergeResults(
       result,
       closeEvidenceGap({
@@ -227,7 +234,7 @@ export function applyObservationToStrategy(input: {
     );
   }
 
-  if (isEvidenceOrReportTool(observation.tool) && evidenceGap) {
+  if (hasQualifiedEvidence(observation) && isEvidenceOrReportTool(observation.tool) && evidenceGap) {
     result = mergeResults(
       result,
       closeEvidenceGap({
@@ -296,7 +303,7 @@ function evidenceReferencesGap(evidence: string, gap: StrategyEvidenceGap): bool
   );
 }
 
-function advancePosture(_domain: StrategyDomain): StrategyRiskPosture {
+function advancePosture(): StrategyRiskPosture {
   // Closing the authorization gap means the user supplied a SecurityScope,
   // so the posture is no longer blocked. The exact target posture depends on
   // the scope's risk level, which is enforced separately by the
@@ -352,6 +359,12 @@ function isEvidenceOrReportTool(tool: string): boolean {
 
 function hasSubstantiveFindings(observation: StrategyObservation): boolean {
   return observation.findings.some((finding) => finding.trim().length > 0);
+}
+
+function hasQualifiedEvidence(observation: StrategyObservation): boolean {
+  return Boolean(observation.claims?.some(
+    (claim) => claim.confidence >= 0.7 && claim.artifactRefs.length > 0,
+  ));
 }
 
 function confidenceBump(observation: StrategyObservation): number {

@@ -473,7 +473,8 @@ function openAiHeaders(config: ModelConfig): Record<string, string> {
 
 function anthropicHeaders(config: ModelConfig): Record<string, string> {
   return {
-    authorization: `Bearer ${config.apiKey}`,
+    "x-api-key": config.apiKey!,
+    "anthropic-version": "2023-06-01",
     "content-type": "application/json",
     ...config.headers,
   };

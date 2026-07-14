@@ -2,6 +2,7 @@ import type { ToolDefinition } from "@ego-graph/tools";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { createToolCall, executeToolCall } from "../src/tool-executor.js";
+import { createOperationApproval } from "../src/permissions/grants-v2.js";
 
 const inputSchema = z.object({ value: z.string().default("ok") });
 const outputSchema = z.object({
@@ -26,6 +27,25 @@ function createTool(
       return { result: "ok" };
     },
     ...overrides,
+  };
+}
+
+function createApprovedCall(
+  tool: ToolDefinition<typeof inputSchema, typeof outputSchema>,
+  input: unknown,
+  sessionId: string,
+  workspaceId: string,
+) {
+  const call = createToolCall(tool, input);
+  return {
+    call,
+    operationApproval: createOperationApproval({
+      call,
+      sessionId,
+      workspaceId,
+      source: "api",
+      createdBy: "test",
+    }),
   };
 }
 
@@ -59,7 +79,6 @@ describe("tool executor", () => {
       input: { value: "x" },
       workspaceRoot: process.cwd(),
       permissionLevel: "read-only",
-      approvalGranted: true,
       runId: "run-tool-1",
       sessionId: "session-tool-1",
     });
@@ -80,7 +99,6 @@ describe("tool executor", () => {
       input: { value: "pnpm test" },
       workspaceRoot: process.cwd(),
       permissionLevel: "security-active",
-      approvalGranted: false,
       permissionRules: [
         { action: "*", resource: "*", effect: "deny" },
         { action: "shell.write", resource: "pnpm test", effect: "ask" },
@@ -118,7 +136,6 @@ describe("tool executor", () => {
       },
       workspaceRoot: process.cwd(),
       permissionLevel: "read-only",
-      approvalGranted: true,
       runId: "run-stale",
       sessionId: "session-stale",
     });
@@ -137,7 +154,6 @@ describe("tool executor", () => {
       input: {},
       workspaceRoot: process.cwd(),
       permissionLevel: "shell-readonly",
-      approvalGranted: true,
       runId: "run-tool-2",
       sessionId: "session-tool-2",
     });
@@ -159,7 +175,6 @@ describe("tool executor", () => {
       input: {},
       workspaceRoot: process.cwd(),
       permissionLevel: "shell-readonly",
-      approvalGranted: true,
       runId: "run-tool-3",
       sessionId: "session-tool-3",
       maxOutputChars: 20,
@@ -182,7 +197,6 @@ describe("tool executor", () => {
       input: {},
       workspaceRoot: process.cwd(),
       permissionLevel: "shell-readonly",
-      approvalGranted: true,
       runId: "run-tool-4",
       sessionId: "session-tool-4",
       maxOutputChars: 20,
@@ -198,16 +212,19 @@ describe("tool executor", () => {
   });
 
   it("blocks network security tools when no SecurityScope is provided", async () => {
+    const tool = createTool({
+      name: "security.scan",
+      riskLevel: "high",
+      permission: { scope: "network", risk: "high", requiresSandbox: false },
+    });
+    const approved = createApprovedCall(tool, { value: "x" }, "session-scope-1", process.cwd());
     const result = await executeToolCall({
-      tool: createTool({
-        name: "security.scan",
-        riskLevel: "high",
-        permission: { scope: "network", risk: "high", requiresSandbox: false },
-      }),
+      tool,
       input: { value: "x" },
+      call: approved.call,
       workspaceRoot: process.cwd(),
       permissionLevel: "security-active",
-      approvalGranted: true,
+      operationApproval: approved.operationApproval,
       runId: "run-scope-1",
       sessionId: "session-scope-1",
       // no securityScope
@@ -217,16 +234,19 @@ describe("tool executor", () => {
   });
 
   it("blocks network security tools when the SecurityScope has expired", async () => {
+    const tool = createTool({
+      name: "security.scan",
+      riskLevel: "high",
+      permission: { scope: "network", risk: "high", requiresSandbox: false },
+    });
+    const approved = createApprovedCall(tool, { value: "x" }, "session-scope-2", process.cwd());
     const result = await executeToolCall({
-      tool: createTool({
-        name: "security.scan",
-        riskLevel: "high",
-        permission: { scope: "network", risk: "high", requiresSandbox: false },
-      }),
+      tool,
       input: { value: "x" },
+      call: approved.call,
       workspaceRoot: process.cwd(),
       permissionLevel: "security-active",
-      approvalGranted: true,
+      operationApproval: approved.operationApproval,
       runId: "run-scope-2",
       sessionId: "session-scope-2",
       securityScope: {
@@ -241,16 +261,19 @@ describe("tool executor", () => {
   });
 
   it("runs a network security tool when the scope authorizes the action", async () => {
+    const tool = createTool({
+      name: "security.fingerprint",
+      riskLevel: "high",
+      permission: { scope: "network", risk: "high", requiresSandbox: false },
+    });
+    const approved = createApprovedCall(tool, { value: "x" }, "session-scope-3", process.cwd());
     const result = await executeToolCall({
-      tool: createTool({
-        name: "security.fingerprint",
-        riskLevel: "high",
-        permission: { scope: "network", risk: "high", requiresSandbox: false },
-      }),
+      tool,
       input: { value: "x" },
+      call: approved.call,
       workspaceRoot: process.cwd(),
       permissionLevel: "security-active",
-      approvalGranted: true,
+      operationApproval: approved.operationApproval,
       runId: "run-scope-3",
       sessionId: "session-scope-3",
       securityScope: {
@@ -264,16 +287,19 @@ describe("tool executor", () => {
   });
 
   it("blocks when the required action is forbidden even if the scope is otherwise valid", async () => {
+    const tool = createTool({
+      name: "security.exploit_target",
+      riskLevel: "high",
+      permission: { scope: "network", risk: "high", requiresSandbox: false },
+    });
+    const approved = createApprovedCall(tool, { value: "x" }, "session-scope-4", process.cwd());
     const result = await executeToolCall({
-      tool: createTool({
-        name: "security.exploit_target",
-        riskLevel: "high",
-        permission: { scope: "network", risk: "high", requiresSandbox: false },
-      }),
+      tool,
       input: { value: "x" },
+      call: approved.call,
       workspaceRoot: process.cwd(),
       permissionLevel: "security-active",
-      approvalGranted: true,
+      operationApproval: approved.operationApproval,
       runId: "run-scope-4",
       sessionId: "session-scope-4",
       securityScope: {
@@ -289,17 +315,20 @@ describe("tool executor", () => {
 
   it("does not gate local high-risk tools (e.g. manifest audit) on SecurityScope", async () => {
     // Local static analysis reads workspace files only; it must remain usable
-    // with security-active permission even when no network scope is declared.
+    // after a call-bound approval even when no network scope is declared.
+    const tool = createTool({
+      name: "security.package_manifest_audit",
+      riskLevel: "high",
+      permission: { scope: "file", risk: "high", requiresSandbox: false },
+    });
+    const approved = createApprovedCall(tool, { value: "x" }, "session-scope-5", process.cwd());
     const result = await executeToolCall({
-      tool: createTool({
-        name: "security.package_manifest_audit",
-        riskLevel: "high",
-        permission: { scope: "file", risk: "high", requiresSandbox: false },
-      }),
+      tool,
       input: { value: "x" },
+      call: approved.call,
       workspaceRoot: process.cwd(),
       permissionLevel: "security-active",
-      approvalGranted: true,
+      operationApproval: approved.operationApproval,
       runId: "run-scope-5",
       sessionId: "session-scope-5",
       // no securityScope — must still run

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "releaseReady": false,
+  "reason": "Resolve and record immutable image digests in the release environment before publishing.",
+  "images": {
+    "core": {
+      "name": "ego-toolkit-core",
+      "base": "debian:bookworm-slim",
+      "digest": null
+    },
+    "reverse": {
+      "name": "ego-toolkit-reverse",
+      "base": "debian:bookworm-slim",
+      "digest": null
+    }
+  }
+}

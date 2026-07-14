@@ -57,10 +57,10 @@ describe("classifyShellCommand", () => {
     }
   });
 
-  it("classifies pnpm readonly scripts", () => {
+  it("rejects pnpm through shell-readonly; checks use dedicated tools", () => {
     for (const sub of ["typecheck", "test", "build", "lint", "--version"]) {
       const result = classifyShellCommand("pnpm", [sub]);
-      expect(result.readonlySafe).toBe(true);
+      expect(result.readonlySafe).toBe(false);
     }
   });
 
@@ -79,9 +79,9 @@ describe("classifyShellCommand", () => {
     }
   });
 
-  it("classifies node --version as readonly", () => {
+  it("rejects node even for version checks because it is an arbitrary code entrypoint", () => {
     const result = classifyShellCommand("node", ["--version"]);
-    expect(result.readonlySafe).toBe(true);
+    expect(result.readonlySafe).toBe(false);
   });
 
   it("classifies node script as non-readonly", () => {
@@ -106,7 +106,7 @@ describe("assertReadonlySafe", () => {
   it("passes for readonly commands", () => {
     expect(() => assertReadonlySafe("ls", ["-la"])).not.toThrow();
     expect(() => assertReadonlySafe("git", ["status"])).not.toThrow();
-    expect(() => assertReadonlySafe("pnpm", ["test"])).not.toThrow();
+    expect(() => assertReadonlySafe("rg", ["lotus"])).not.toThrow();
   });
 
   it("throws for non-readonly commands", () => {

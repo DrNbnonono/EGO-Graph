@@ -12,6 +12,9 @@ export type ToolPermission = {
 
 export type ToolExecutionContext = {
   workspaceRoot: string;
+  signal?: AbortSignal;
+  deadlineAt?: string;
+  securityScope?: unknown;
 };
 
 export type ToolEvidenceCandidate = {
@@ -19,6 +22,18 @@ export type ToolEvidenceCandidate = {
   kind?: "fact" | "hypothesis" | "artifact" | "human_hint" | "decision_trace";
   confidence?: number;
   raw?: Record<string, unknown>;
+  artifactRefs?: string[];
+  relation?: "supports" | "contradicts" | "neutral";
+  hypothesisId?: string;
+};
+
+export type EvidenceClaim = {
+  id: string;
+  claim: string;
+  artifactRefs: string[];
+  confidence: number;
+  relation: "supports" | "contradicts" | "neutral";
+  hypothesisId?: string;
 };
 
 export type ToolDefinition<InputSchema extends ZodTypeAny, OutputSchema extends ZodTypeAny> = {

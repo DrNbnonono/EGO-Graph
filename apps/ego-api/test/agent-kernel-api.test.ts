@@ -208,7 +208,7 @@ setInterval(() => {}, 1 << 30);
     expect(body.tools.map((tool: { name: string }) => tool.name)).toContain("mcp.fixture.lookup");
   });
 
-  it("executes approved MCP tool calls through the agent harness", async () => {
+  it("rejects direct MCP tool execution outside the normalized tool-call executor", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "ego-mcp-call-api-workspace-"));
     const egoHome = await mkdtemp(join(tmpdir(), "ego-mcp-call-api-home-"));
     const serverPath = join(workspaceRoot, "mcp-server.mjs");
@@ -282,11 +282,9 @@ setInterval(() => {}, 1 << 30);
     });
     const body = await callResponse.json();
 
-    expect(rejectedResponse.status).toBe(403);
-    expect(callResponse.status).toBe(200);
-    expect(body.status).toBe("complete");
-    expect(body.events.map((event: { type: string }) => event.type)).toContain("tool.completed");
-    expect(JSON.stringify(body.events)).toContain("lookup:lotus");
+    expect(rejectedResponse.status).toBe(410);
+    expect(callResponse.status).toBe(410);
+    expect(body.error).toContain("/api/tool-calls");
   });
 
   it("exposes harness policy, cancel, and btw control endpoints", async () => {

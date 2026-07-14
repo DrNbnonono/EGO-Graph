@@ -1,5 +1,10 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import {
+  getToolHealthRecord,
+  recordToolProbe,
+  type ToolCapabilityStatus,
+} from "./runtime-adapter.js";
 
 /**
  * Security tool capability registry.
@@ -37,6 +42,8 @@ export type ToolCapability = {
   available: boolean;
   /** How the capability is being satisfied. */
   source: CapabilitySource;
+  /** Runtime truth: only a successful fixture execution advances ready to verified. */
+  status: ToolCapabilityStatus;
   /** Path to the external binary, when source === "external". */
   binaryPath?: string;
   /** Detected version string, when known. */
@@ -101,11 +108,23 @@ export async function detectCapability(name: string, now: string = new Date().to
   }
   const cached = detectionCache.get(name);
   if (cached) {
-    return cached;
+    return getToolHealthRecord(name)?.status === "verified"
+      ? { ...cached, status: "verified" }
+      : cached;
   }
   const result = await detector.detect().catch(() => unavailableCapability(detector, now));
-  detectionCache.set(name, result);
-  return result;
+  recordToolProbe(name, {
+    status: result.status,
+    source: result.source === "unavailable" ? "builtin" : result.source,
+    ...(result.binaryPath ? { binaryPath: result.binaryPath } : {}),
+    ...(result.version ? { version: result.version } : {}),
+    ...(result.source === "unavailable" ? { reason: `${result.label} is unavailable` } : {}),
+    checkedAt: result.detectedAt,
+  });
+  const health = getToolHealthRecord(name);
+  const current = health?.status === "verified" ? { ...result, status: "verified" as const } : result;
+  detectionCache.set(name, current);
+  return current;
 }
 
 /**
@@ -201,6 +220,7 @@ export function createBinaryCapabilityDetector(input: {
           label: input.label,
           available: true,
           source: "external",
+          status: "ready",
           binaryPath: input.binary,
           ...(version ? { version } : {}),
           detectedAt: now,
@@ -232,6 +252,7 @@ export function builtinCapability(name: string, label: string, detectedAt: strin
     label,
     available: true,
     source: "builtin",
+    status: "degraded",
     detectedAt,
   };
 }
@@ -245,6 +266,7 @@ export function unavailableCapability(
     label: detector.label ?? detector.name,
     available: false,
     source: "unavailable",
+    status: "unavailable",
     detectedAt,
   };
 }

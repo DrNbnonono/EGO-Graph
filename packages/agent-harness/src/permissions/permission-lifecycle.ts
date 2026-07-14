@@ -71,7 +71,7 @@ export function replyToPermissionRequest(input: {
   };
   const savedRules =
     input.reply.save || input.mode === "always"
-      ? [...input.state.savedRules, permissionRuleFromResolved(resolved)]
+      ? [...input.state.savedRules, ...permissionRulesFromResolved(resolved)]
       : input.state.savedRules;
   return {
     pending,
@@ -108,10 +108,10 @@ function replyEffectToStatus(effect: PermissionEffect): PermissionRequestStatus 
   return effect === "allow" ? "approved" : "rejected";
 }
 
-function permissionRuleFromResolved(entry: PermissionLifecycleEntry): PermissionRule {
-  return {
+function permissionRulesFromResolved(entry: PermissionLifecycleEntry): PermissionRule[] {
+  return [...new Set(entry.resources.filter(Boolean))].map((resource) => ({
     action: entry.action,
-    resource: entry.resources.length === 1 ? (entry.resources[0] ?? "*") : "*",
+    resource,
     effect: entry.reply?.effect ?? "ask",
-  };
+  }));
 }

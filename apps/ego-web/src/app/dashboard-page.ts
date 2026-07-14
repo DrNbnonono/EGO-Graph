@@ -83,6 +83,34 @@ export function renderDashboardHtml(): string {
         </div>
       </header>
 
+      <section class="secure-overview" aria-label="安全闭环概览">
+        <div class="secure-overview-card status-muted">
+          <small>会话策略</small>
+          <strong id="overview-policy">read-only</strong>
+          <span>服务端持久化</span>
+        </div>
+        <div class="secure-overview-card status-muted">
+          <small>SecurityScope</small>
+          <strong id="overview-scopes">0</strong>
+          <span>活跃授权范围</span>
+        </div>
+        <div class="secure-overview-card status-muted">
+          <small>待审批</small>
+          <strong id="overview-approvals">0</strong>
+          <span>精确工具调用</span>
+        </div>
+        <div class="secure-overview-card status-muted">
+          <small>P0 缺口</small>
+          <strong id="overview-gaps">未知</strong>
+          <span>证据闭合状态</span>
+        </div>
+        <div class="secure-overview-card status-muted">
+          <small>评测</small>
+          <strong id="overview-eval">未运行</strong>
+          <span id="overview-eval-detail">contract / model</span>
+        </div>
+      </section>
+
       <nav class="mobile-section-nav" aria-label="移动端工作区">
         ${mobileSections
           .map(
@@ -196,10 +224,12 @@ export function renderDashboardHtml(): string {
               </div>
             </div>
             <div class="inspector-panel" id="inspector-context"></div>
-            <div class="inspector-panel" id="inspector-plan" hidden></div>
-            <div class="inspector-panel" id="inspector-diff" hidden></div>
-            <div class="inspector-panel" id="inspector-checks" hidden></div>
-            <div class="inspector-panel" id="inspector-runs" hidden><div class="detail-list" id="run-list"></div></div>
+            <div class="inspector-panel" id="inspector-strategy" hidden></div>
+            <div class="inspector-panel" id="inspector-evidence" hidden></div>
+            <div class="inspector-panel" id="inspector-approvals" hidden></div>
+            <div class="inspector-panel" id="inspector-scope" hidden></div>
+            <div class="inspector-panel" id="inspector-tools" hidden></div>
+            <div class="inspector-panel" id="inspector-risk" hidden></div>
             <div class="inspector-panel" id="inspector-memory" hidden></div>
             <div class="inspector-panel" id="inspector-mcp" hidden></div>
             <div class="inspector-panel" id="inspector-report" hidden><div class="detail-list" id="report-list"><p class="muted">选择完成的 run 查看报告。</p></div></div>
@@ -290,7 +320,52 @@ function renderSettingsPage(): string {
       <section class="settings-section" data-settings-panel="models" hidden>
         <h3>全局模型</h3>
         <p class="muted">当前项目继承全局模型配置；切换项目不会改变 active model。</p>
-        <div id="model-manager" class="settings-card"></div>
+        <form id="model-config-form" class="settings-card connector-form">
+          <div class="connector-form-grid">
+            <label>
+              <span>Provider</span>
+              <select id="model-provider-select">
+                <option value="disabled">禁用</option>
+                <option value="minimax">MiniMax</option>
+                <option value="deepseek">DeepSeek</option>
+                <option value="openai-compatible">OpenAI compatible</option>
+              </select>
+            </label>
+            <label>
+              <span>模型名</span>
+              <input id="model-name-input" placeholder="MiniMax-M3 / deepseek-chat / gpt-4.1" />
+            </label>
+            <label>
+              <span>Base URL</span>
+              <input id="model-base-url-input" placeholder="https://api.minimaxi.com/anthropic" />
+            </label>
+            <label>
+              <span>Chat Path</span>
+              <input id="model-chat-path-input" placeholder="/v1/messages 或 /v1/chat/completions" />
+            </label>
+            <label>
+              <span>Wire API</span>
+              <select id="model-wire-api-select">
+                <option value="openai-chat-completions">OpenAI Chat Completions</option>
+                <option value="anthropic-messages">Anthropic Messages</option>
+              </select>
+            </label>
+            <label>
+              <span>Max Tokens</span>
+              <input id="model-max-tokens-input" type="number" min="1" step="1" placeholder="4096" />
+            </label>
+            <label class="wide">
+              <span>API Key</span>
+              <input id="model-api-key-input" type="password" autocomplete="off" placeholder="留空则保留已保存的 Key" />
+            </label>
+          </div>
+          <div id="model-config-status" class="connector-note">正在读取模型配置...</div>
+          <div class="connector-actions">
+            <button class="soft-action" type="button" id="test-model-config">测试连接</button>
+            <button class="confirm-action" type="submit" id="save-model-config">保存模型</button>
+          </div>
+        </form>
+        <div id="model-manager" class="connector-list"></div>
       </section>
       <section class="settings-section" data-settings-panel="mcp" hidden>
         <div class="settings-group-title"><h3>MCP 服务器</h3><p>Web 和 CLI 共用同一份 MCP 配置。</p></div>

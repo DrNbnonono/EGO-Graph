@@ -10,8 +10,13 @@ export * from "./security-tool-bridge.js";
 export * from "./lsp-tools.js";
 export * from "./git-tools.js";
 export * from "./shell-command-policy.js";
+export * from "./process-runner.js";
+export * from "./archive-ingest.js";
+export * from "./plugin-manager.js";
 export {
   createSecurityToolRegistry,
+  createIrSecurityToolRegistry,
+  createWebSecurityToolRegistry,
   detectSecurityCapabilities,
   listSecurityTools,
   registerBuiltinSecurityDetectors,
@@ -21,8 +26,14 @@ export {
   unregisterCapabilityDetector,
   detectCapability,
   clearCapabilityCache,
+  listToolHealthRecords,
+  getToolHealthRecord,
   type CapabilityDetector,
   type CapabilitySource,
   type CapabilitySummary,
   type ToolCapability,
+  type ToolCapabilityStatus,
+  type ToolExecutionReceipt,
+  type ToolHealthRecord,
+  type ToolRuntimeAdapter,
 } from "./security/index.js";

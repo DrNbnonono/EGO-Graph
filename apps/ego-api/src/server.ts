@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { spawn } from "node:child_process";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   draftAgentPlan,
@@ -13,9 +12,16 @@ import {
 } from "@ego-graph/agent";
 import {
   createTerminalAgentSession,
+  createOperationApproval,
+  createPermissionGrantsV2,
+  createToolCall,
+  executeToolCall,
+  hasHarnessPermission,
+  permissionRulesForLevel,
   type AgentRunEvent,
   type LoopPolicy,
   type PermissionLevel,
+  type PermissionGrantV2,
   type TerminalAgentSession,
 } from "@ego-graph/agent-harness";
 import {
@@ -45,6 +51,11 @@ import {
 import { createHermesEvent } from "@ego-graph/hermes";
 import { createMemoryService, type MemoryRecord as RuntimeMemoryRecord } from "@ego-graph/memory";
 import {
+  createSecurityScopeV2,
+  revokeSecurityScope,
+  type SecurityScopeV2,
+} from "@ego-graph/security-tools";
+import {
   deleteMcpServer,
   listMcpRuntimeTools,
   listMcpServers,
@@ -54,10 +65,18 @@ import {
 } from "@ego-graph/mcp";
 import {
   createBuiltinSkillRegistry,
+  createTerminalAgentToolRegistry,
+  detectSecurityCapabilities,
   deleteLocalSkill,
+  listToolHealthRecords,
+  listCuratedPlugins,
   listLocalSkills,
   loadPluginManifests,
+  installCuratedPlugin,
   saveLocalSkill,
+  setPluginEnabled,
+  uninstallPlugin,
+  verifyInstalledPlugin,
 } from "@ego-graph/tools";
 import {
   readDashboardStatus,
@@ -73,6 +92,7 @@ import {
 } from "@ego-graph/workbench";
 import { loadOverlay } from "@ego-graph/overlays";
 import {
+  buildReproBundleFromEvents,
   extractReportDecisions,
   extractReportObservations,
   extractReportPolicyDecisions,
@@ -92,11 +112,37 @@ import {
 } from "@ego-graph/storage";
 import type { WorkspaceEditPlan } from "@ego-graph/workspace";
 import { Hono } from "hono";
+import {
+  capabilityCookie,
+  isAllowedLocalHost,
+  isAllowedOrigin,
+  isPublicAssetPath,
+  requestHasCapability,
+  type ApiAuthMode,
+} from "./auth.js";
+
+export { ensureCapabilityToken } from "./auth.js";
 
 export type CreateServerOptions = {
   workspaceRoot?: string;
   egoHome?: string;
   modelProvider?: ChatModelProvider | null;
+  authMode?: ApiAuthMode;
+  capabilityToken?: string;
+};
+
+type EvalArtifactSummary = {
+  mode?: string;
+  generatedAt?: string;
+  averageScore?: number;
+  safetyViolations: unknown[];
+  results: Array<{
+    scenario?: string;
+    score?: number;
+    seedScores?: number[];
+    confirmed?: string[];
+    safetyViolations: unknown[];
+  }>;
 };
 
 export function createServer(options: CreateServerOptions = {}): Hono {
@@ -105,9 +151,50 @@ export function createServer(options: CreateServerOptions = {}): Hono {
     ? resolve(options.workspaceRoot)
     : findWorkspaceRoot(process.cwd());
   const egoHome = options.egoHome ?? defaultEgoHome();
+  const authMode = options.authMode ?? (process.env.NODE_ENV === "test" ? "disabled" : "required");
+  const capabilityToken = options.capabilityToken ?? process.env.EGO_API_TOKEN ?? "";
+  if (authMode === "required" && capabilityToken.length < 32) {
+    throw new Error("Secure API mode requires a capability token of at least 32 characters.");
+  }
   const metricsSampler = createRuntimeMetricsSampler();
   const activeHarnessSessions = new Map<string, TerminalAgentSession>();
+  const sessionPolicies = new Map<string, PermissionLevel>();
+  const pendingToolCalls = new Map<string, {
+    call: ReturnType<typeof createToolCall>;
+    sessionId: string;
+    permissionLevel: PermissionLevel;
+    securityScope?: SecurityScopeV2;
+  }>();
+  const securityScopes = new Map<string, { sessionId: string; scope: SecurityScopeV2 }>();
+  const permissionGrants = new Map<string, PermissionGrantV2>();
   const defaultProject = toProjectRecord(workspaceRoot, true);
+
+  app.use("*", async (context, next) => {
+    if (authMode === "disabled") {
+      await next();
+      return;
+    }
+    if (!isAllowedLocalHost(context.req.raw)) {
+      return context.json({ ok: false, error: "invalid host" }, 403);
+    }
+    const pathname = new URL(context.req.url).pathname;
+    if (pathname === "/") {
+      await next();
+      context.header("set-cookie", capabilityCookie(capabilityToken));
+      return;
+    }
+    if (isPublicAssetPath(pathname)) {
+      await next();
+      return;
+    }
+    if (!isAllowedOrigin(context.req.raw)) {
+      return context.json({ ok: false, error: "invalid origin" }, 403);
+    }
+    if (!requestHasCapability(context.req.raw, capabilityToken)) {
+      return context.json({ ok: false, error: "capability token required" }, 401);
+    }
+    await next();
+  });
 
   async function withStore<T>(callback: (store: SqliteEgoStore) => Promise<T>): Promise<T> {
     const store = new SqliteEgoStore(sqlitePath(egoHome));
@@ -120,6 +207,15 @@ export function createServer(options: CreateServerOptions = {}): Hono {
     } finally {
       store.close();
     }
+  }
+
+  async function getSessionPolicy(sessionId: string): Promise<PermissionLevel> {
+    const cached = sessionPolicies.get(sessionId);
+    if (cached) return cached;
+    const persisted = await withStore((store) => store.getSessionPolicy(sessionId));
+    const preset = persisted?.preset ?? "read-only";
+    sessionPolicies.set(sessionId, preset);
+    return preset;
   }
 
   app.get("/health", (context) => {
@@ -242,9 +338,137 @@ export function createServer(options: CreateServerOptions = {}): Hono {
           return { ok: false, error: "project not found" };
         }
         const session = await store.createSession({ projectId, title });
+        sessionPolicies.set(session.id, "read-only");
+        await store.saveSessionPolicy({ sessionId: session.id, preset: "read-only", updatedAt: new Date().toISOString() });
         return { ok: true, session };
       }),
     );
+  });
+
+  app.patch("/api/sessions/:id/policy", async (context) => {
+    const body = (await context.req.json().catch(() => ({}))) as { preset?: unknown };
+    const preset = parsePermissionLevel(body.preset);
+    if (!preset) return context.json({ ok: false, error: "invalid permission preset" }, 400);
+    const sessionId = context.req.param("id");
+    const exists = await withStore(async (store) => Boolean(await store.getSession(sessionId)));
+    if (!exists) return context.json({ ok: false, error: "session not found" }, 404);
+    sessionPolicies.set(sessionId, preset);
+    await withStore(async (store) => {
+      await store.saveSessionPolicy({ sessionId, preset, updatedAt: new Date().toISOString() });
+      await store.saveHermesEvent(createHermesEvent({
+        type: "session.policy.changed",
+        sessionId,
+        source: "api.sessions.policy",
+        payload: { preset },
+      }));
+    });
+    return context.json({ ok: true, sessionId, preset });
+  });
+
+  app.get("/api/security-scopes", async (context) => {
+    const sessionId = context.req.query("sessionId");
+    const persisted = await withStore((store) => store.listSecurityScopes(sessionId));
+    for (const record of persisted) {
+      if (!securityScopes.has(record.id)) {
+        securityScopes.set(record.id, { sessionId: record.sessionId, scope: record.payload as unknown as SecurityScopeV2 });
+      }
+    }
+    const scopes = [...securityScopes.values()].filter((entry) => !sessionId || entry.sessionId === sessionId).map((entry) => ({ sessionId: entry.sessionId, scope: entry.scope }));
+    return context.json({ ok: true, scopes });
+  });
+
+  app.post("/api/security-scopes", async (context) => {
+    const body = (await context.req.json().catch(() => ({}))) as {
+      sessionId?: string;
+      targetType?: SecurityScopeV2["targetType"];
+      targets?: SecurityScopeV2["targets"];
+      allowedActions?: string[];
+      forbiddenActions?: string[];
+      riskLevel?: SecurityScopeV2["riskLevel"];
+      limits?: Partial<SecurityScopeV2["limits"]>;
+      network?: Partial<SecurityScopeV2["network"]>;
+      expiresAt?: string;
+    };
+    if (!body.sessionId || !body.targetType || !body.targets?.length) {
+      return context.json({ ok: false, error: "sessionId, targetType and targets are required" }, 400);
+    }
+    const sessionExists = await withStore(async (store) => Boolean(await store.getSession(body.sessionId!)));
+    if (!sessionExists) return context.json({ ok: false, error: "session not found" }, 404);
+    try {
+      const scope = createSecurityScopeV2({
+        workspaceId: defaultProject.id,
+        targetType: body.targetType,
+        targets: body.targets,
+        ...(body.allowedActions ? { allowedActions: body.allowedActions } : {}),
+        ...(body.forbiddenActions ? { forbiddenActions: body.forbiddenActions } : {}),
+        ...(body.riskLevel ? { riskLevel: body.riskLevel } : {}),
+        ...(body.limits ? { limits: body.limits } : {}),
+        ...(body.network ? { network: body.network } : {}),
+        ...(body.expiresAt ? { expiresAt: body.expiresAt } : {}),
+      });
+      securityScopes.set(scope.scopeId, { sessionId: body.sessionId, scope });
+      await withStore((store) => store.saveSecurityScope({
+        id: scope.scopeId,
+        sessionId: body.sessionId!,
+        workspaceId: defaultProject.id,
+        status: "active",
+        payload: scope as unknown as Record<string, unknown>,
+        createdAt: scope.createdAt,
+        updatedAt: scope.createdAt,
+      }));
+      return context.json({ ok: true, scope }, 201);
+    } catch (error) {
+      return context.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400);
+    }
+  });
+
+  app.post("/api/security-scopes/:id/revoke", async (context) => {
+    const scopeId = context.req.param("id");
+    let entry = securityScopes.get(scopeId);
+    if (!entry) {
+      const persisted = await withStore((store) => store.getSecurityScope(scopeId));
+      if (persisted) entry = { sessionId: persisted.sessionId, scope: persisted.payload as unknown as SecurityScopeV2 };
+    }
+    if (!entry) return context.json({ ok: false, error: "scope not found" }, 404);
+    revokeSecurityScope(entry.scope);
+    await withStore((store) => store.saveSecurityScope({
+      id: entry.scope.scopeId,
+      sessionId: entry.sessionId,
+      workspaceId: entry.scope.workspaceId,
+      status: "revoked",
+      payload: entry.scope as unknown as Record<string, unknown>,
+      createdAt: entry.scope.createdAt,
+      updatedAt: entry.scope.revokedAt ?? new Date().toISOString(),
+    }));
+    return context.json({ ok: true, scope: entry.scope });
+  });
+
+  app.get("/api/permission-grants", async (context) => {
+    const persisted = await withStore((store) => store.listPermissionGrants(defaultProject.id));
+    for (const record of persisted) permissionGrants.set(record.id, record.payload as unknown as PermissionGrantV2);
+    return context.json({ ok: true, grants: [...permissionGrants.values()] });
+  });
+
+  app.post("/api/permission-grants/:id/revoke", async (context) => {
+    const id = context.req.param("id");
+    let grant = permissionGrants.get(id);
+    if (!grant) {
+      const persisted = (await withStore((store) => store.listPermissionGrants(defaultProject.id))).find((item) => item.id === id);
+      if (persisted) grant = persisted.payload as unknown as PermissionGrantV2;
+    }
+    if (!grant) return context.json({ ok: false, error: "grant not found" }, 404);
+    grant.revokedAt = new Date().toISOString();
+    permissionGrants.set(grant.id, grant);
+    await withStore((store) => store.savePermissionGrant({
+      id: grant!.id,
+      sessionId: "permission-grant",
+      workspaceId: grant!.workspaceId,
+      status: "revoked",
+      payload: grant as unknown as Record<string, unknown>,
+      createdAt: grant!.createdAt,
+      updatedAt: grant!.revokedAt!,
+    }));
+    return context.json({ ok: true, grant });
   });
 
   app.get("/api/sessions/:id/messages", async (context) => {
@@ -307,6 +531,77 @@ export function createServer(options: CreateServerOptions = {}): Hono {
 
   app.get("/api/runtime/metrics", (context) => {
     return context.json({ ok: true, ...metricsSampler.sample() });
+  });
+
+  app.get("/api/tool-capabilities", async (context) => {
+    const capabilities = await detectSecurityCapabilities();
+    const health = listToolHealthRecords();
+    return context.json({
+      ok: true,
+      capabilities,
+      health,
+      summary: {
+        total: capabilities.length,
+        verified: capabilities.filter((item) => item.status === "verified").length,
+        ready: capabilities.filter((item) => item.status === "ready").length,
+        degraded: capabilities.filter((item) => item.status === "degraded").length,
+        unavailable: capabilities.filter(
+          (item) => item.status === "unavailable" || item.status === "failed",
+        ).length,
+      },
+    });
+  });
+
+  app.get("/api/plugins/catalog", async (context) => {
+    try {
+      return context.json({ ok: true, plugins: await listCuratedPlugins(workspaceRoot) });
+    } catch (error) {
+      return context.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);
+    }
+  });
+
+  app.post("/api/plugins/:name/install", async (context) => {
+    try {
+      const installed = await installCuratedPlugin(workspaceRoot, context.req.param("name"));
+      return context.json({ ok: true, plugin: installed.manifest });
+    } catch (error) {
+      return context.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400);
+    }
+  });
+
+  app.delete("/api/plugins/:name", async (context) => {
+    await uninstallPlugin(workspaceRoot, context.req.param("name"));
+    return context.json({ ok: true });
+  });
+
+  app.post("/api/plugins/:name/enable", async (context) => {
+    try {
+      return context.json({
+        ok: true,
+        plugin: await setPluginEnabled(workspaceRoot, context.req.param("name"), true),
+      });
+    } catch (error) {
+      return context.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 404);
+    }
+  });
+
+  app.post("/api/plugins/:name/disable", async (context) => {
+    try {
+      return context.json({
+        ok: true,
+        plugin: await setPluginEnabled(workspaceRoot, context.req.param("name"), false),
+      });
+    } catch (error) {
+      return context.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 404);
+    }
+  });
+
+  app.get("/api/plugins/:name/verify", async (context) => {
+    try {
+      return context.json(await verifyInstalledPlugin(workspaceRoot, context.req.param("name")));
+    } catch (error) {
+      return context.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 404);
+    }
   });
 
   app.get("/api/config/model", (context) => {
@@ -1061,34 +1356,10 @@ export function createServer(options: CreateServerOptions = {}): Hono {
   });
 
   app.post("/api/mcp/tools/call", async (context) => {
-    const body = (await context.req.json()) as {
-      name?: string;
-      args?: Record<string, unknown>;
-      approved?: boolean;
-      permissionLevel?: PermissionLevel;
-    };
-    if (!body.name) {
-      return context.json({ ok: false, error: "name is required" }, 400);
-    }
-    if (!body.approved) {
-      return context.json(
-        { ok: false, error: "MCP tool calls require explicit approved=true." },
-        403,
-      );
-    }
-    const session = createTerminalAgentSession({
-      workspaceRoot,
-      egoHome,
-      permissionLevel: body.permissionLevel ?? "security-active",
-      ...(options.modelProvider !== undefined ? { modelProvider: options.modelProvider } : {}),
-    });
-    const events = await collectHarnessEvents(session.callMcpTool(body.name, body.args ?? {}));
     return context.json({
-      ok: true,
-      runId: events[0]?.runId,
-      events,
-      status: events.some((event) => event.type === "tool.blocked") ? "blocked" : "complete",
-    });
+      ok: false,
+      error: "Direct MCP approval flags were removed. Submit a normalized tool call through /api/tool-calls.",
+    }, 410);
   });
 
   app.post("/agent/harness/runs/stream", async (context) => {
@@ -1096,14 +1367,13 @@ export function createServer(options: CreateServerOptions = {}): Hono {
       sessionId?: string;
       message?: string;
       mode?: "chat" | "patch" | "security";
-      permissionLevel?: PermissionLevel;
     };
     const message = body.message?.trim();
     if (!message) {
       return context.json({ ok: false, error: "message is required" }, 400);
     }
     const sessionId = body.sessionId?.trim() || `web-harness-${Date.now()}`;
-    const permissionLevel = normalizePermissionLevel(body.permissionLevel);
+    const permissionLevel = await getSessionPolicy(sessionId);
     const mode = body.mode ?? "chat";
     const modelProviderOption = options.modelProvider;
 
@@ -1119,6 +1389,7 @@ export function createServer(options: CreateServerOptions = {}): Hono {
           projectId: project.id,
           title: normalizeSessionTitle(message),
         });
+        sessionPolicies.set(sessionId, "read-only");
       }
       await store.appendMessage({
         sessionId,
@@ -1244,102 +1515,162 @@ export function createServer(options: CreateServerOptions = {}): Hono {
     });
   });
 
-  app.post("/api/terminal/commands", async (context) => {
+  app.post("/api/terminal/commands", (context) => context.json({
+    ok: false,
+    error: "Raw terminal commands were removed. Use /api/tool-calls with structured argv.",
+  }, 410));
+
+  app.post("/api/tool-calls", async (context) => {
     const body = (await context.req.json().catch(() => ({}))) as {
       sessionId?: string;
-      command?: string;
-      cwd?: string;
-      permissionLevel?: PermissionLevel;
+      tool?: string;
+      input?: unknown;
+      scopeId?: string;
     };
-    const command = body.command?.trim();
-    if (!command) {
-      return context.json({ ok: false, error: "command is required" }, 400);
+    const sessionId = body.sessionId?.trim();
+    const toolName = body.tool?.trim();
+    if (!sessionId || !toolName) return context.json({ ok: false, error: "sessionId and tool are required" }, 400);
+    const sessionExists = await withStore(async (store) => Boolean(await store.getSession(sessionId)));
+    if (!sessionExists) return context.json({ ok: false, error: "session not found" }, 404);
+    const registry = createTerminalAgentToolRegistry();
+    if (!registry.has(toolName)) return context.json({ ok: false, error: "tool is not registered" }, 404);
+    const tool = registry.get(toolName);
+    const call = createToolCall(tool, body.input ?? {});
+    const programInput = body.input as { program?: unknown; args?: unknown } | undefined;
+    if ((toolName === "shell.readonly" || toolName === "shell.write") && programInput) {
+      const args = Array.isArray(programInput.args) ? programInput.args.map(String) : [];
+      call.permissionResources = [[String(programInput.program ?? ""), ...args].join(" ")];
     }
-    const permissionLevel = normalizePermissionLevel(body.permissionLevel);
-    if (permissionLevel === "read-only") {
-      return context.json(
-        { ok: false, error: "terminal commands require shell-readonly or higher permission" },
-        403,
-      );
+    const permissionLevel = await getSessionPolicy(sessionId);
+    let securityScope = body.scopeId ? securityScopes.get(body.scopeId)?.scope : undefined;
+    if (body.scopeId && !securityScope) {
+      const persisted = await withStore((store) => store.getSecurityScope(body.scopeId!));
+      if (persisted?.status === "active") securityScope = persisted.payload as unknown as SecurityScopeV2;
     }
-    const cwdOptions: Parameters<typeof resolveCommandCwd>[0] = {
-      storeHome: egoHome,
+    if (body.scopeId && !securityScope) return context.json({ ok: false, error: "security scope not found" }, 404);
+    if (call.requiresApproval || !hasHarnessPermission(permissionLevel, call.permissionRequired)) {
+      pendingToolCalls.set(call.id, { call, sessionId, permissionLevel, ...(securityScope ? { securityScope } : {}) });
+      return context.json({ ok: true, status: "pending_approval", call }, 202);
+    }
+    const now = Date.now();
+    const persistedGrants = await withStore((store) => store.listPermissionGrants(defaultProject.id));
+    for (const record of persistedGrants) permissionGrants.set(record.id, record.payload as unknown as PermissionGrantV2);
+    const activeGrantRules = [...permissionGrants.values()]
+      .filter((grant) => !grant.revokedAt && Date.parse(grant.expiresAt) > now && grant.useCount < grant.maxUses && grant.toolIdentity === call.toolIdentity)
+      .map((grant) => ({ action: grant.action, resource: grant.resource, effect: grant.effect } as const));
+    const result = await executeToolCall({
+      tool,
+      input: body.input ?? {},
+      call,
       workspaceRoot,
-    };
-    if (body.sessionId !== undefined) cwdOptions.sessionId = body.sessionId;
-    if (body.cwd !== undefined) cwdOptions.cwd = body.cwd;
-    const cwd = await resolveCommandCwd(cwdOptions);
-
-    return createNdjsonStreamResponse(async (write) => {
-      const commandId = `terminal-${Date.now()}`;
-      write({
-        type: "terminal.started",
-        commandId,
-        command,
-        cwd,
-        permissionLevel,
-        createdAt: new Date().toISOString(),
-      });
-      await new Promise<void>((resolvePromise) => {
-        const child = spawn(command, {
-          cwd,
-          shell: true,
-          windowsHide: true,
-          env: process.env,
-        });
-        child.stdout?.on("data", (chunk: Buffer) => {
-          write({
-            type: "terminal.stdout",
-            commandId,
-            text: chunk.toString("utf8"),
-            createdAt: new Date().toISOString(),
-          });
-        });
-        child.stderr?.on("data", (chunk: Buffer) => {
-          write({
-            type: "terminal.stderr",
-            commandId,
-            text: chunk.toString("utf8"),
-            createdAt: new Date().toISOString(),
-          });
-        });
-        child.on("error", (error) => {
-          write({
-            type: "terminal.error",
-            commandId,
-            message: error.message,
-            createdAt: new Date().toISOString(),
-          });
-        });
-        child.on("close", async (exitCode) => {
-          if (body.sessionId) {
-            await withStore(async (store) => {
-              await store.saveHermesEvent(
-                createHermesEvent({
-                  type: "terminal.command.completed",
-                  sessionId: body.sessionId ?? commandId,
-                  source: "api.terminal.commands",
-                  payload: { command, cwd, exitCode, permissionLevel },
-                }),
-              );
-            });
-          }
-          write({
-            type: "terminal.completed",
-            commandId,
-            exitCode,
-            createdAt: new Date().toISOString(),
-          });
-          resolvePromise();
-        });
-      });
+      workspaceId: defaultProject.id,
+      permissionLevel,
+      permissionRules: [...permissionRulesForLevel(permissionLevel), ...activeGrantRules],
+      ...(securityScope ? { securityScope } : {}),
+      runId: call.id,
+      sessionId,
     });
+    if (result.status === "blocked") pendingToolCalls.set(call.id, { call, sessionId, permissionLevel, ...(securityScope ? { securityScope } : {}) });
+    return context.json({ ok: result.status === "completed", status: result.status, call, result }, result.status === "blocked" ? 202 : 200);
+  });
+
+  app.post("/api/tool-calls/:id/approve", async (context) => {
+    const body = (await context.req.json().catch(() => ({}))) as { savePermission?: boolean };
+    const pending = pendingToolCalls.get(context.req.param("id"));
+    if (!pending) return context.json({ ok: false, error: "pending tool call not found or already consumed" }, 404);
+    const registry = createTerminalAgentToolRegistry();
+    if (!registry.has(pending.call.name)) return context.json({ ok: false, error: "tool is no longer registered" }, 409);
+    const tool = registry.get(pending.call.name);
+    const currentPolicy = await getSessionPolicy(pending.sessionId);
+    const resource = pending.call.permissionResources?.[0] ?? "*";
+    const operationApproval = createOperationApproval({
+      call: pending.call,
+      sessionId: pending.sessionId,
+      workspaceId: defaultProject.id,
+      source: "web",
+      createdBy: "local-capability",
+    });
+    if (body.savePermission) {
+      const grants = createPermissionGrantsV2({
+        workspaceId: defaultProject.id,
+        toolIdentity: pending.call.toolIdentity ?? `${pending.call.name}@1`,
+        action: pending.call.permissionAction ?? pending.call.name,
+        resources: pending.call.permissionResources ?? [resource],
+        effect: "allow",
+        source: "web",
+        createdBy: "local-capability",
+      });
+      for (const grant of grants) {
+        permissionGrants.set(grant.id, grant);
+        await withStore((store) => store.savePermissionGrant({
+          id: grant.id,
+          sessionId: pending.sessionId,
+          workspaceId: grant.workspaceId,
+          status: "active",
+          payload: grant as unknown as Record<string, unknown>,
+          createdAt: grant.createdAt,
+          updatedAt: grant.createdAt,
+        }));
+      }
+    }
+    await withStore((store) => store.saveOperationApproval({
+      id: operationApproval.id,
+      sessionId: pending.sessionId,
+      workspaceId: defaultProject.id,
+      status: "approved",
+      payload: operationApproval as unknown as Record<string, unknown>,
+      createdAt: operationApproval.createdAt,
+      updatedAt: operationApproval.createdAt,
+    }));
+    const result = await executeToolCall({
+      tool,
+      input: pending.call.input,
+      call: pending.call,
+      workspaceRoot,
+      workspaceId: defaultProject.id,
+      permissionLevel: currentPolicy,
+      operationApproval,
+      ...(pending.securityScope ? { securityScope: pending.securityScope } : {}),
+      permissionRules: [
+        ...permissionRulesForLevel(currentPolicy),
+        { action: pending.call.permissionAction ?? pending.call.name, resource, effect: "allow" },
+      ],
+      runId: pending.call.id,
+      sessionId: pending.sessionId,
+    });
+    pendingToolCalls.delete(pending.call.id);
+    await withStore((store) => store.saveOperationApproval({
+      id: operationApproval.id,
+      sessionId: pending.sessionId,
+      workspaceId: defaultProject.id,
+      status: operationApproval.usedAt ? "consumed" : result.status,
+      payload: operationApproval as unknown as Record<string, unknown>,
+      createdAt: operationApproval.createdAt,
+      updatedAt: operationApproval.usedAt ?? new Date().toISOString(),
+    }));
+    await withStore(async (store) => {
+      await store.saveHermesEvent(createHermesEvent({
+        type: "tool.call.resolved",
+        sessionId: pending.sessionId,
+        runId: pending.call.id,
+        source: "api.tool-calls",
+        payload: { tool: pending.call.name, status: result.status, inputDigest: operationApproval.inputDigest },
+      }));
+    });
+    return context.json({ ok: result.status === "completed", status: result.status, result });
+  });
+
+  app.post("/api/tool-calls/:id/deny", async (context) => {
+    const pending = pendingToolCalls.get(context.req.param("id"));
+    if (!pending) return context.json({ ok: false, error: "pending tool call not found" }, 404);
+    pendingToolCalls.delete(pending.call.id);
+    return context.json({ ok: true, status: "denied", callId: pending.call.id });
   });
 
   app.post("/agent/harness/runs", async (context) => {
     const body = (await context.req.json()) as {
       message?: string;
-      permissionLevel?: PermissionLevel;
+      sessionId?: string;
     };
     const message = body.message?.trim();
     if (!message) {
@@ -1348,7 +1679,7 @@ export function createServer(options: CreateServerOptions = {}): Hono {
     const session = createTerminalAgentSession({
       workspaceRoot,
       egoHome,
-      permissionLevel: body.permissionLevel ?? "read-only",
+      permissionLevel: await getSessionPolicy(body.sessionId ?? ""),
       ...(options.modelProvider !== undefined ? { modelProvider: options.modelProvider } : {}),
     });
     await session.hydratePendingRuns();
@@ -1373,13 +1704,11 @@ export function createServer(options: CreateServerOptions = {}): Hono {
   });
 
   app.post("/agent/harness/runs/:id/plan/approve", async (context) => {
-    const body = (await context.req.json().catch(() => ({}))) as {
-      permissionLevel?: PermissionLevel;
-    };
+    const body = (await context.req.json().catch(() => ({}))) as { sessionId?: string };
     const session = createTerminalAgentSession({
       workspaceRoot,
       egoHome,
-      permissionLevel: body.permissionLevel ?? "workspace-write",
+      permissionLevel: await getSessionPolicy(body.sessionId ?? ""),
       ...(options.modelProvider !== undefined ? { modelProvider: options.modelProvider } : {}),
     });
     await session.hydratePendingRuns();
@@ -1389,13 +1718,11 @@ export function createServer(options: CreateServerOptions = {}): Hono {
   });
 
   app.post("/agent/harness/runs/:id/patch/approve", async (context) => {
-    const body = (await context.req.json().catch(() => ({}))) as {
-      permissionLevel?: PermissionLevel;
-    };
+    const body = (await context.req.json().catch(() => ({}))) as { sessionId?: string };
     const session = createTerminalAgentSession({
       workspaceRoot,
       egoHome,
-      permissionLevel: body.permissionLevel ?? "shell-readonly",
+      permissionLevel: await getSessionPolicy(body.sessionId ?? ""),
       ...(options.modelProvider !== undefined ? { modelProvider: options.modelProvider } : {}),
     });
     await session.hydratePendingRuns();
@@ -1438,6 +1765,38 @@ export function createServer(options: CreateServerOptions = {}): Hono {
     const body = (await context.req.json().catch(() => ({}))) as Partial<LoopPolicy>;
     const session = createTerminalAgentSession({ workspaceRoot, egoHome });
     return context.json({ ok: true, policy: await session.setPolicy(body) });
+  });
+
+  app.get("/api/eval-artifacts", async (context) => {
+    const [contract, model] = await Promise.all([
+      readEvalArtifactSummary(join(workspaceRoot, "hardness-artifacts", "security-eval-scripted_contract.json")),
+      readEvalArtifactSummary(join(workspaceRoot, "hardness-artifacts", "security-eval-model_live.json")),
+    ]);
+    return context.json({ ok: true, artifacts: { contract, model } });
+  });
+
+  app.get("/api/runs/:id/repro-bundle", async (context) => {
+    const runId = context.req.param("id");
+    const session = createTerminalAgentSession({ workspaceRoot, egoHome });
+    const events = await session.replayRun(runId);
+    if (events.length === 0) {
+      return context.json({ ok: false, error: "run not found" }, 404);
+    }
+    const evidenceEvents = events.map((event) => {
+      const payload = sanitizeReproPayload(event.payload);
+      return {
+        type: event.type,
+        runId: event.runId ?? runId,
+        message: event.message ?? event.type,
+        ...(event.createdAt ? { createdAt: event.createdAt } : {}),
+        ...(payload ? { payload } : {}),
+      };
+    });
+    return context.json({
+      ok: true,
+      runId,
+      bundle: buildReproBundleFromEvents({ events: evidenceEvents }),
+    });
   });
 
   app.get("/agent/harness/runs/:id/replay", async (context) => {
@@ -1837,6 +2196,89 @@ export function createServer(options: CreateServerOptions = {}): Hono {
   return app;
 }
 
+async function readEvalArtifactSummary(path: string): Promise<EvalArtifactSummary | null> {
+  if (!existsSync(path)) {
+    return null;
+  }
+  const parsed = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+  const sanitized = sanitizeSecretValue(parsed) as Record<string, unknown>;
+  return {
+    ...(typeof sanitized.mode === "string" ? { mode: sanitized.mode } : {}),
+    ...(typeof sanitized.generatedAt === "string" ? { generatedAt: sanitized.generatedAt } : {}),
+    ...(typeof sanitized.averageScore === "number" ? { averageScore: sanitized.averageScore } : {}),
+    safetyViolations: Array.isArray(sanitized.safetyViolations)
+      ? sanitized.safetyViolations
+      : [],
+    results: Array.isArray(sanitized.results)
+      ? sanitized.results.map((item) => summarizeEvalResult(item))
+      : [],
+  };
+}
+
+function summarizeEvalResult(value: unknown): EvalArtifactSummary["results"][number] {
+  const item = isRecord(value) ? value : {};
+  return {
+    ...(typeof item.scenario === "string" ? { scenario: item.scenario } : {}),
+    ...(typeof item.score === "number" ? { score: item.score } : {}),
+    ...(Array.isArray(item.seedScores) && item.seedScores.every((score) => typeof score === "number")
+      ? { seedScores: item.seedScores }
+      : {}),
+    ...(Array.isArray(item.confirmed)
+      ? { confirmed: item.confirmed.map((entry) => String(entry)).slice(0, 8) }
+      : {}),
+    safetyViolations: Array.isArray(item.safetyViolations)
+      ? item.safetyViolations
+      : [],
+  };
+}
+
+function sanitizeReproPayload(value: unknown): Record<string, unknown> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const sanitized = sanitizeSecretValue(value);
+  if (sanitized === undefined || sanitized === null) {
+    return undefined;
+  }
+  if (isRecord(sanitized)) {
+    return sanitized;
+  }
+  return { value: sanitized };
+}
+
+function sanitizeSecretValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeSecretValue(item));
+  }
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        isSensitiveKey(key) ? "[redacted]" : sanitizeSecretValue(entry),
+      ]),
+    );
+  }
+  if (typeof value === "string") {
+    return redactSensitiveText(value);
+  }
+  return value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isSensitiveKey(key: string): boolean {
+  return /api[-_]?key|authorization|bearer|cookie|token|secret|password|credential/i.test(key);
+}
+
+function redactSensitiveText(value: string): string {
+  return value
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [redacted]")
+    .replace(/\bsk-[A-Za-z0-9._-]{8,}\b/g, "sk-[redacted]")
+    .replace(/\b(api[-_]?key|token|secret|password|cookie)=([^;\s]+)/gi, "$1=[redacted]");
+}
+
 function findWorkspaceRoot(start: string): string {
   let current = resolve(start);
   while (true) {
@@ -1910,14 +2352,14 @@ function toWebMessage(message: {
   };
 }
 
-function normalizePermissionLevel(value: unknown): PermissionLevel {
+function parsePermissionLevel(value: unknown): PermissionLevel | undefined {
   return value === "read-only" ||
     value === "workspace-write" ||
     value === "shell-readonly" ||
     value === "network-low" ||
     value === "security-active"
     ? value
-    : "read-only";
+    : undefined;
 }
 
 function prefixHarnessModeMessage(message: string, mode: "chat" | "patch" | "security"): string {
@@ -1978,31 +2420,6 @@ function createNdjsonStreamResponse(
   });
 }
 
-async function resolveCommandCwd(input: {
-  storeHome: string;
-  workspaceRoot: string;
-  sessionId?: string;
-  cwd?: string;
-}): Promise<string> {
-  const requested = input.cwd?.trim();
-  if (requested) {
-    const resolved = resolve(requested);
-    if (existsSync(resolved)) return resolved;
-  }
-  if (input.sessionId) {
-    const store = new SqliteEgoStore(sqlitePath(input.storeHome));
-    try {
-      const session = await store.getSession(input.sessionId);
-      const project = session ? await store.getProject(session.projectId) : undefined;
-      if (project?.path && existsSync(project.path)) {
-        return project.path;
-      }
-    } finally {
-      store.close();
-    }
-  }
-  return input.workspaceRoot;
-}
 
 async function collectHarnessEvents(
   stream: AsyncIterable<AgentRunEvent>,

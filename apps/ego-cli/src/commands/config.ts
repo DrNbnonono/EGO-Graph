@@ -10,6 +10,7 @@ export type ConfigModelCommandOptions = {
   provider?: string;
   baseUrl?: string;
   apiKey?: string;
+  apiKeyEnv?: string;
   model?: string;
   chatPath?: string;
   wireApi?: string;
@@ -108,6 +109,7 @@ function buildModelConfigUpdate(options: ConfigModelCommandOptions): PersistedMo
     provider: options.provider,
     baseUrl: options.baseUrl,
     apiKey: options.apiKey,
+    apiKeyEnv: options.apiKeyEnv,
     model: options.model,
     chatPath: options.chatPath,
     wireApi: options.wireApi,

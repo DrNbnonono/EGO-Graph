@@ -50,6 +50,14 @@ describe("strategy graph lifecycle updates", () => {
       observation: {
         tool: "workspace.list",
         findings: ["found 42 source files under src/"],
+        claims: [
+          {
+            claim: "Workspace listing found source files under src/",
+            artifactRefs: ["tool-call://workspace.list/output"],
+            confidence: 0.75,
+            relation: "supports",
+          },
+        ],
       },
     });
     expect(result.updates.some((u) => u.kind === "gap_closed" && u.ref === "g1")).toBe(true);

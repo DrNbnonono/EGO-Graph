@@ -27,14 +27,16 @@ describe("ego config model", () => {
       { cwd: root },
     );
     const config = JSON.parse(await readFile(join(root, ".ego", "config.json"), "utf8")) as {
-      model: { provider: string; apiKey: string; model: string };
+      model: { provider: string; apiKey?: string; apiKeyEnv?: string; apiKeyFile?: string; model: string };
     };
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Model provider openai-compatible");
     expect(result.stdout).toContain("workspace-local");
     expect(config.model.provider).toBe("openai-compatible");
-    expect(config.model.apiKey).toBe("cli-secret-key");
+    expect(config.model.apiKey).toBeUndefined();
+    expect(config.model.apiKeyEnv).toBeUndefined();
+    expect(config.model.apiKeyFile).toBe(".ego/runtime/model-api-key");
     expect(config.model.model).toBe("cli-model");
   });
 

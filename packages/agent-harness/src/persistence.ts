@@ -120,6 +120,7 @@ function normalizePersistedEventType(type: string): AgentRunEventType {
     "tool.completed",
     "tool.failed",
     "tool.timeout",
+    "tool.cancelled",
     "tool.blocked",
     "observation.created",
     "evidence.created",

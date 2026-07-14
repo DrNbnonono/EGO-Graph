@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 
 export const modelProviderNameSchema = z.enum([
@@ -21,6 +21,8 @@ export const modelConfigSchema = z.object({
   baseUrl: z.string().url().optional(),
   chatPath: z.string().min(1).default("/v1/chat/completions"),
   apiKey: z.string().min(1).optional(),
+  apiKeyEnv: z.string().regex(/^[A-Z_][A-Z0-9_]*$/u).optional(),
+  apiKeyFile: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
   headers: z.record(z.string()).default({}),
   timeoutMs: z.coerce.number().int().positive().default(30_000),
@@ -162,7 +164,13 @@ export function loadModelConfigWithSource(
       ? undefined
       : (env.EGO_MODEL_BASE_URL ?? persisted?.baseUrl ?? defaults.baseUrl),
     chatPath: env.EGO_MODEL_CHAT_PATH ?? persisted?.chatPath ?? defaults.chatPath,
-    apiKey: disabled ? undefined : (resolveApiKey(provider, env) ?? persisted?.apiKey),
+    apiKey: disabled
+      ? undefined
+      : (resolveApiKey(provider, env) ??
+        (persisted?.apiKeyEnv ? env[persisted.apiKeyEnv] : undefined) ??
+        resolveApiKeyFile(options.workspaceRoot, persisted?.apiKeyFile) ??
+        persisted?.apiKey),
+    apiKeyEnv: persisted?.apiKeyEnv,
     model: disabled ? undefined : (env.EGO_MODEL_NAME ?? persisted?.model ?? defaults.model),
     headers:
       env.EGO_MODEL_HEADERS !== undefined
@@ -192,9 +200,21 @@ export async function saveModelConfig(input: SaveModelConfigInput): Promise<Load
   const model = Object.fromEntries(
     Object.entries(input).filter(([key]) => key !== "workspaceRoot"),
   ) as PersistedModelConfig;
-  const normalized = normalizePersistedModelConfig(model);
+  const normalized = await securePersistedModelConfig(
+    normalizePersistedModelConfig(model),
+    input.workspaceRoot,
+  );
   validatePersistedModelConfig(normalized);
-  const existingModel = isObject(existing.model) ? existing.model : {};
+  const existingModel = isObject(existing.model) ? { ...existing.model } : {};
+  if (
+    typeof existingModel.apiKey === "string" &&
+    existingModel.apiKey.length > 0 &&
+    normalized.apiKeyEnv === undefined
+  ) {
+    const secured = await persistModelSecret(input.workspaceRoot, existingModel.apiKey);
+    existingModel.apiKeyFile = secured.apiKeyFile;
+  }
+  delete existingModel.apiKey;
   const content = {
     ...existing,
     model:
@@ -206,8 +226,9 @@ export async function saveModelConfig(input: SaveModelConfigInput): Promise<Load
           }),
   };
 
-  await writeFile(path, `${JSON.stringify(content, null, 2)}\n`, "utf8");
-  return loadModelConfigWithSource({ workspaceRoot: input.workspaceRoot, env: {} });
+  if (isObject(content.model)) delete content.model.apiKey;
+  await writeFile(path, `${JSON.stringify(content, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  return loadModelConfigWithSource({ workspaceRoot: input.workspaceRoot });
 }
 
 export async function listModelProfiles(
@@ -235,7 +256,7 @@ export async function listModelProfiles(
         : [];
   const activeProfileId =
     parsed.activeModelProfileId ?? (profiles.length === 1 ? profiles[0]?.id : undefined);
-  const publicProfiles = profiles.map((profile) => toPublicModelProfile(profile));
+  const publicProfiles = profiles.map((profile) => toPublicModelProfile(profile, workspaceRoot));
   const activeProfile = activeProfileId
     ? publicProfiles.find((profile) => profile.id === activeProfileId)
     : undefined;
@@ -255,7 +276,11 @@ export async function saveModelProfile(input: ModelProfileInput): Promise<ModelP
   const parsed = egoConfigFileSchema.parse(existing);
   const normalized = {
     ...input.profile,
-    config: normalizePersistedModelConfig(input.profile.config),
+    config: await securePersistedModelConfig(
+      normalizePersistedModelConfig(input.profile.config),
+      input.workspaceRoot,
+      input.profile.id,
+    ),
   };
   validatePersistedModelConfig(normalized.config);
   const withoutExisting = parsed.modelProfiles.filter((profile) => profile.id !== normalized.id);
@@ -273,8 +298,9 @@ export async function saveModelProfile(input: ModelProfileInput): Promise<ModelP
           : parsed.model,
   };
 
-  await writeFile(path, `${JSON.stringify(content, null, 2)}\n`, "utf8");
-  return listModelProfiles({ workspaceRoot: input.workspaceRoot, env: {} });
+  if (isObject(content.model)) delete content.model.apiKey;
+  await writeFile(path, `${JSON.stringify(content, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  return listModelProfiles({ workspaceRoot: input.workspaceRoot });
 }
 
 export async function selectModelProfile(input: ModelProfileIdInput): Promise<LoadedModelConfig> {
@@ -293,7 +319,7 @@ export async function selectModelProfile(input: ModelProfileIdInput): Promise<Lo
     model: removeUndefined(selected.config),
   };
   await writeFile(path, `${JSON.stringify(content, null, 2)}\n`, "utf8");
-  return loadModelConfigWithSource({ workspaceRoot: input.workspaceRoot, env: {} });
+  return loadModelConfigWithSource({ workspaceRoot: input.workspaceRoot });
 }
 
 export async function deleteModelProfile(input: ModelProfileIdInput): Promise<ModelProfilesState> {
@@ -309,7 +335,7 @@ export async function deleteModelProfile(input: ModelProfileIdInput): Promise<Mo
     modelProfiles: parsed.modelProfiles.filter((profile) => profile.id !== input.id),
   };
   await writeFile(path, `${JSON.stringify(content, null, 2)}\n`, "utf8");
-  return listModelProfiles({ workspaceRoot: input.workspaceRoot, env: {} });
+  return listModelProfiles({ workspaceRoot: input.workspaceRoot });
 }
 
 export function toPublicModelConfig(loaded: LoadedModelConfig): PublicModelConfig {
@@ -323,14 +349,16 @@ export function toPublicModelConfig(loaded: LoadedModelConfig): PublicModelConfi
   };
 }
 
-function toPublicModelProfile(profile: ModelProfile): PublicModelProfile {
+function toPublicModelProfile(profile: ModelProfile, workspaceRoot: string): PublicModelProfile {
   const { apiKey, ...config } = profile.config;
+  const envApiKey = config.apiKeyEnv ? process.env[config.apiKeyEnv] : undefined;
+  const configuredKey = apiKey ?? envApiKey ?? resolveApiKeyFile(workspaceRoot, config.apiKeyFile);
   return {
     id: profile.id,
     name: profile.name,
     config,
-    apiKeyConfigured: Boolean(apiKey),
-    ...(apiKey ? { apiKeyPreview: maskSecret(apiKey) } : {}),
+    apiKeyConfigured: Boolean(configuredKey),
+    ...(configuredKey ? { apiKeyPreview: maskSecret(configuredKey) } : {}),
   };
 }
 
@@ -379,12 +407,76 @@ function validatePersistedModelConfig(input: PersistedModelConfig): void {
     return;
   }
 
-  const hasModelFields = Boolean(input.baseUrl || input.apiKey || input.model);
+  const hasModelFields = Boolean(
+    input.baseUrl || input.apiKey || input.apiKeyEnv || input.apiKeyFile || input.model,
+  );
   if (hasModelFields) {
     throw new ModelConfigValidationError(
       "provider=disabled cannot be saved together with baseUrl, apiKey, or model",
     );
   }
+}
+
+async function securePersistedModelConfig(
+  input: PersistedModelConfig,
+  workspaceRoot: string,
+  secretName?: string,
+): Promise<PersistedModelConfig> {
+  if (!input.apiKey) return input;
+  if (input.apiKeyEnv) {
+    process.env[input.apiKeyEnv] = input.apiKey;
+    const safe = { ...input };
+    delete safe.apiKey;
+    return safe;
+  }
+  const persisted = await persistModelSecret(workspaceRoot, input.apiKey, secretName);
+  const safe = { ...input };
+  delete safe.apiKey;
+  return { ...safe, ...persisted };
+}
+
+async function persistModelSecret(
+  workspaceRoot: string,
+  apiKey: string,
+  secretName?: string,
+): Promise<Pick<PersistedModelConfig, "apiKeyFile">> {
+  const safeName = secretName?.replace(/[^A-Za-z0-9._-]/gu, "-");
+  const relative = safeName
+    ? join(".ego", "runtime", "model-keys", `${safeName}.key`)
+    : join(".ego", "runtime", "model-api-key");
+  const path = join(workspaceRoot, relative);
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  await writeFile(path, `${apiKey}\n`, { encoding: "utf8", mode: 0o600 });
+  return { apiKeyFile: relative };
+}
+
+function resolveApiKeyFile(
+  workspaceRoot: string | undefined,
+  apiKeyFile: string | undefined,
+): string | undefined {
+  if (!apiKeyFile) return undefined;
+  const root = workspaceRoot ?? process.cwd();
+  const path = join(root, apiKeyFile);
+  try {
+    return readFileSync(path, "utf8").trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function hasLegacyPlaintextModelSecret(workspaceRoot: string): boolean {
+  for (const path of [join(workspaceRoot, ".ego", "config.json"), join(workspaceRoot, "ego.config.json")]) {
+    try {
+      const parsed = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+      const model = isObject(parsed.model) ? parsed.model : {};
+      if (typeof model.apiKey === "string" && model.apiKey.length > 0) return true;
+      const profiles = Array.isArray(parsed.modelProfiles) ? parsed.modelProfiles : [];
+      if (profiles.some((profile) => isObject(profile) && isObject(profile.config) && typeof profile.config.apiKey === "string")) return true;
+    } catch {
+      // Missing or malformed configuration is reported elsewhere.
+    }
+  }
+  return false;
 }
 
 function normalizeLoadOptions(
@@ -410,7 +502,15 @@ function readPersistedModelConfig(
       continue;
     }
 
-    const parsed = egoConfigFileSchema.parse(JSON.parse(readFileSync(candidate.path, "utf8")));
+    let parsed: z.output<typeof egoConfigFileSchema>;
+    try {
+      parsed = egoConfigFileSchema.parse(JSON.parse(readFileSync(candidate.path, "utf8")));
+    } catch (error) {
+      if (isParseOrSchemaError(error)) {
+        continue;
+      }
+      throw error;
+    }
     const activeProfile =
       parsed.activeModelProfileId !== undefined
         ? parsed.modelProfiles.find((profile) => profile.id === parsed.activeModelProfileId)
@@ -441,8 +541,27 @@ async function readJsonObject(path: string): Promise<Record<string, unknown>> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return {};
     }
+    if (isParseOrSchemaError(error)) {
+      return {};
+    }
     throw error;
   }
+}
+
+function isParseOrSchemaError(error: unknown): boolean {
+  const name =
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    typeof (error as { name?: unknown }).name === "string"
+      ? (error as { name: string }).name
+      : undefined;
+  return (
+    error instanceof SyntaxError ||
+    error instanceof z.ZodError ||
+    name === "SyntaxError" ||
+    name === "ZodError"
+  );
 }
 
 function envHasModelConfig(env: NodeJS.ProcessEnv): boolean {

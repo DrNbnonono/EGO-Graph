@@ -56,7 +56,7 @@ describe("model config", () => {
       model: "persisted-model",
     });
 
-    const loaded = loadModelConfigWithSource({ workspaceRoot: root, env: {} });
+    const loaded = loadModelConfigWithSource({ workspaceRoot: root });
 
     expect(loaded.source).toBe("workspace-local");
     expect(loaded.path?.replaceAll("\\", "/")).toContain(".ego/config.json");
@@ -123,14 +123,19 @@ describe("model config", () => {
 
     const content = JSON.parse(await readFile(join(root, ".ego", "config.json"), "utf8")) as {
       mcpServers?: unknown;
-      model?: { apiKey?: string; model?: string };
+      model?: { apiKey?: string; apiKeyEnv?: string; apiKeyFile?: string; model?: string };
     };
     const publicConfig = toPublicModelConfig(
-      loadModelConfigWithSource({ workspaceRoot: root, env: {} }),
+      loadModelConfigWithSource({ workspaceRoot: root }),
     );
 
     expect(content.mcpServers).toBeDefined();
-    expect(content.model?.apiKey).toBe("mini-key");
+    expect(content.model?.apiKey).toBeUndefined();
+    expect(content.model?.apiKeyEnv).toBeUndefined();
+    expect(content.model?.apiKeyFile).toBe(".ego/runtime/model-api-key");
+    expect(await readFile(join(root, ".ego", "runtime", "model-api-key"), "utf8")).toBe(
+      "mini-key\n",
+    );
     expect(content.model?.model).toBe("MiniMax-M3");
     expect(publicConfig.apiKeyConfigured).toBe(true);
     expect(publicConfig.apiKeyPreview).toBe("****");
